@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""Stand-in for Playwright MCP (registered with Claude Code and Codex). Every thread spawns its MCP servers and
+Playwright's is ~130 MB even in threads that never browse, so this answers the handshake and tool list from a cache
+and starts the real server on the first browser call, stopping it after BROWSER_MCP_IDLE_MINUTES (15).
+If another thread holds ~/.chrome-profile, this thread gets an in-memory profile instead. Log: ~/logs/browser-mcp.log"""
+
+import contextlib
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+REAL = [os.path.expanduser('~/.npm-global/bin/playwright-mcp'), '--config', '/etc/agent/playwright-mcp.json']
+PROFILE = os.path.expanduser('~/.chrome-profile')
+CACHE_DIR = os.path.expanduser('~/.cache/agent-browser-mcp')
+CACHE = os.path.join(CACHE_DIR, 'handshake.json')
+IDLE_S = int(os.environ.get('BROWSER_MCP_IDLE_MINUTES', '15')) * 60
+DEFAULT_INIT = {
+    'protocolVersion': '2025-06-18',
+    'capabilities': {},
+    'clientInfo': {'name': 'browser-mcp-lazy', 'version': '1'},
+}
+
+
+def log(msg):
+    try:
+        with open(os.path.expanduser('~/logs/browser-mcp.log'), 'a') as f:
+            f.write(f'{time.strftime("%F %T")} [{os.getpid()}] {msg}\n')
+    except OSError:
+        pass
+
+
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def playwright_version():
+    try:
+        root = os.path.dirname(os.path.realpath(REAL[0]))  # .../@playwright/mcp (bin -> cli.js)
+        return read_json(os.path.join(root, 'package.json')).get('version', '?')
+    except (OSError, ValueError):
+        return '?'
+
+
+def profile_in_use():
+    """Chrome's SingletonLock points at 'host-PID' while a Chrome has the profile open."""
+    try:
+        pid = int(os.readlink(os.path.join(PROFILE, 'SingletonLock')).rsplit('-', 1)[1])
+        os.kill(pid, 0)
+    except (OSError, ValueError, IndexError):
+        return False
+    return True
+
+
+def isolated_command():
+    """Isolated mode refuses a userDataDir, so it gets a copy of the config without one."""
+    cfg = read_json(REAL[2])
+    cfg.get('browser', {}).pop('userDataDir', None)
+    path = os.path.join(CACHE_DIR, 'isolated-config.json')
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(path, 'w') as f:
+        json.dump(cfg, f)
+    return [REAL[0], '--config', path, '--isolated']
+
+
+class LazyServer:
+    def __init__(self):
+        self.real = None  # running Playwright MCP process
+        self.client_init = None  # the client's initialize params, replayed to each real server
+        self.last_use = time.time()
+        self.own = {}  # ids of requests this stand-in sent to the real server -> Event (+ .result)
+        self.out_lock, self.state_lock = threading.Lock(), threading.Lock()
+
+    def running(self):
+        return bool(self.real) and self.real.poll() is None
+
+    def to_client(self, msg):
+        with self.out_lock:
+            sys.stdout.write(json.dumps(msg) + '\n')
+            sys.stdout.flush()
+
+    def to_real(self, msg):
+        self.real.stdin.write(json.dumps(msg) + '\n')
+        self.real.stdin.flush()
+
+    def read_real(self, proc):
+        for line in proc.stdout:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            event = self.own.pop(msg.get('id'), None) if 'result' in msg or 'error' in msg else None
+            if event:
+                event.result = msg
+                event.set()
+            else:
+                self.to_client(msg)  # responses, notifications, server requests
+        log('real server exited')
+
+    def own_request(self, method, params, timeout=90):
+        event, rid = threading.Event(), f'lazy-{method}-{time.time()}'
+        self.own[rid] = event
+        self.to_real({'jsonrpc': '2.0', 'id': rid, 'method': method, 'params': params})
+        if not event.wait(timeout):
+            raise RuntimeError(f'Playwright MCP did not answer {method}')
+        return event.result
+
+    def ensure_real(self):
+        """Start Playwright MCP if needed and initialize it with the client's own parameters."""
+        with self.state_lock:
+            if self.running():
+                return None
+            command = list(REAL)
+            if profile_in_use():
+                command = isolated_command()
+                log('profile in use by another thread: this thread gets a private window')
+            self.real = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            threading.Thread(target=self.read_real, args=(self.real,), daemon=True).start()
+            result = self.own_request('initialize', self.client_init or DEFAULT_INIT)
+            self.to_real({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+            log(
+                f'started Playwright MCP {playwright_version()} (pid {self.real.pid})'
+                + (' isolated' if '--isolated' in command else '')
+            )
+            return result
+
+    def stop_real(self, why):
+        with self.state_lock:
+            if self.running():
+                try:
+                    os.killpg(self.real.pid, signal.SIGTERM)
+                    self.real.wait(10)
+                except (OSError, subprocess.TimeoutExpired):
+                    with contextlib.suppress(OSError):
+                        os.killpg(self.real.pid, signal.SIGKILL)
+                log(f'stopped Playwright MCP ({why})')
+            self.real = None
+
+    def handshake(self):
+        """Cached initialize result + tool list for this Playwright MCP version (fetched once if missing)."""
+        try:
+            cached = read_json(CACHE)
+            if cached.get('version') == playwright_version() and cached.get('config_mtime') == os.path.getmtime(
+                REAL[2]
+            ):
+                return cached
+        except (OSError, ValueError):
+            pass
+        started_here = not self.running()
+        init = self.ensure_real()
+        tools = self.own_request('tools/list', {})
+        if started_here:
+            self.stop_real('only needed for the tool list')  # the thread hasn't browsed yet
+        cached = {
+            'version': playwright_version(),
+            'config_mtime': os.path.getmtime(REAL[2]),
+            'init': (init or {}).get('result', {}),
+            'tools': tools.get('result', {'tools': []}),
+        }
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = f'{CACHE}.{os.getpid()}'
+        with open(tmp, 'w') as f:
+            json.dump(cached, f)
+        os.replace(tmp, CACHE)
+        log('cached the tool list')
+        return cached
+
+    def stop_when_idle(self):
+        while True:
+            time.sleep(30)
+            if self.running() and time.time() - self.last_use > IDLE_S:
+                self.stop_real(f'idle {IDLE_S // 60} min')
+
+    def dispatch(self, msg):
+        method, mid = msg.get('method'), msg.get('id')
+        if method == 'initialize':
+            self.client_init = msg.get('params') or {}
+            result = dict(self.handshake()['init'])
+            result['protocolVersion'] = self.client_init.get('protocolVersion', result.get('protocolVersion'))
+            self.to_client({'jsonrpc': '2.0', 'id': mid, 'result': result})
+        elif method == 'notifications/initialized':
+            pass  # the real server gets its own on start
+        elif method == 'tools/list' and not self.running():
+            self.to_client({'jsonrpc': '2.0', 'id': mid, 'result': self.handshake()['tools']})
+        elif method == 'ping' and not self.running():
+            self.to_client({'jsonrpc': '2.0', 'id': mid, 'result': {}})
+        elif method is None and not self.running():
+            pass  # a reply to a server request that no longer exists
+        else:
+            self.last_use = time.time()
+            if method == 'tools/call' or self.running():
+                self.ensure_real()
+                self.to_real(msg)
+            elif mid is not None:
+                self.to_client({'jsonrpc': '2.0', 'id': mid, 'result': {}})
+
+    def serve(self):
+        threading.Thread(target=self.stop_when_idle, daemon=True).start()
+        for line in sys.stdin:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            try:
+                self.dispatch(msg)
+            except Exception as e:  # never leave the client hanging
+                log(f'error on {msg.get("method")}: {e}')
+                if msg.get('id') is not None:
+                    self.to_client(
+                        {'jsonrpc': '2.0', 'id': msg['id'], 'error': {'code': -32603, 'message': f'browser tool: {e}'}}
+                    )
+        self.stop_real('session ended')
+
+
+if __name__ == '__main__':
+    LazyServer().serve()

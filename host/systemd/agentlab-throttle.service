@@ -1,0 +1,15 @@
+# Admission control for heavy jobs (installs, builds, tests) across all agents: see host/throttle/broker.py.
+[Unit]
+Description=agentlab: heavy-job throttle
+After=docker.service agentlab-disks.service
+
+[Service]
+WorkingDirectory=@REPO@/host
+Environment=PYTHONDONTWRITEBYTECODE=1 AGENTLAB_CLUSTER=@CLUSTER@ AGENTLAB_CONFIG=@CONFIG@
+ExecStart=/usr/bin/python3 -m throttle
+Restart=always
+RestartSec=3
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

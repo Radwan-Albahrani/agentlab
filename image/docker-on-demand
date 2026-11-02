@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""docker.sock on demand: the first client starts the rootless engine and is proxied to it; after
+DOCKER_IDLE_MINUTES (15) with no clients or running containers the engine stops (saves ~200 MB per agent)."""
+
+import asyncio
+import contextlib
+import os
+import subprocess
+import time
+
+SOCK = '/run/user/1000/docker.sock'  # what DOCKER_HOST points at
+ENGINE = '/run/user/1000/dockerd.sock'  # the engine's own socket (supervisord program "dockerd")
+IDLE_S = int(os.environ.get('DOCKER_IDLE_MINUTES', '15')) * 60
+SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
+
+
+def log(msg):
+    print(time.strftime('%H:%M:%S'), msg, flush=True)
+
+
+async def engine_up():
+    try:
+        _, writer = await asyncio.open_unix_connection(ENGINE)
+    except OSError:
+        return False
+    writer.close()
+    return True
+
+
+async def supervise(action):
+    await asyncio.to_thread(subprocess.run, [*SUPERVISOR, action, 'dockerd'], capture_output=True, check=False)
+
+
+async def pipe(src, dst):
+    with contextlib.suppress(ConnectionError, OSError):
+        while data := await src.read(65536):
+            dst.write(data)
+            await dst.drain()
+        if dst.can_write_eof():
+            dst.write_eof()
+
+
+class Proxy:
+    def __init__(self):
+        self.clients, self.last_used = 0, time.time()
+        self.starting = asyncio.Lock()
+
+    async def ensure_engine(self):
+        async with self.starting:
+            if await engine_up():
+                return
+            log('client connected, starting the Docker engine')
+            await supervise('start')
+            for _ in range(120):
+                if await engine_up():
+                    log('Docker engine ready')
+                    return
+                await asyncio.sleep(0.5)
+            log('Docker engine did not come up within 60 s (see ~/logs/dockerd.log)')
+
+    async def handle(self, reader, writer):
+        self.clients += 1
+        try:
+            await self.ensure_engine()
+            engine_reader, engine_writer = await asyncio.open_unix_connection(ENGINE)
+            await asyncio.gather(pipe(reader, engine_writer), pipe(engine_reader, writer))
+            engine_writer.close()
+        except OSError as e:
+            log(f'could not reach the Docker engine: {e}')
+        finally:
+            writer.close()
+            self.clients -= 1
+            self.last_used = time.time()
+
+    async def stop_when_idle(self):
+        while True:
+            await asyncio.sleep(60)
+            if self.clients or time.time() - self.last_used < IDLE_S or not await engine_up():
+                continue
+            ps = await asyncio.to_thread(
+                subprocess.run,
+                ['docker', '-H', f'unix://{ENGINE}', 'ps', '-q'],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if ps.returncode == 0 and not ps.stdout.strip():
+                log(f'no clients or running containers for {IDLE_S // 60} min, stopping the Docker engine')
+                await supervise('stop')
+
+
+async def main():
+    if os.path.exists(SOCK):
+        os.unlink(SOCK)
+    proxy = Proxy()
+    server = await asyncio.start_unix_server(proxy.handle, SOCK)
+    os.chmod(SOCK, 0o600)
+    log(f'listening on {SOCK}; engine starts on first use, stops after {IDLE_S // 60} idle min')
+    async with server:
+        await asyncio.gather(server.serve_forever(), proxy.stop_when_idle())
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

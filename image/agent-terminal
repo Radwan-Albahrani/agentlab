@@ -1,0 +1,9 @@
+#!/bin/bash
+# Web terminal entry (ttyd passes ?arg=): herdr by default, ?arg=shell for a persistent tmux shell.
+# shellcheck source=/dev/null
+. /etc/profile.d/zz-agent.sh
+cd /workspace || exit 1
+case "${1:-herdr}" in
+  shell) exec tmux new-session -A -s shell -c /workspace ;;
+  *) exec herdr ;;
+esac

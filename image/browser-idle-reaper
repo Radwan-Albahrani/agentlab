@@ -1,0 +1,42 @@
+#!/bin/bash
+# Close Chrome after BROWSER_IDLE_MINUTES (10) without real CPU use; turn the display off DISPLAY_OFF_MINUTES (2)
+# after Chrome is gone (a forgotten browser holds ~1 GB). Both come back on the agent's next browser action. The display
+# stays on while the Android emulator runs on it.
+IDLE_MINUTES=${BROWSER_IDLE_MINUTES:-10}
+DISPLAY_OFF_MINUTES=${DISPLAY_OFF_MINUTES:-2}
+BUSY_TICKS=200                                  # >2 s of Chrome CPU in a minute = in use
+CHROME=/opt/google/chrome/chrome
+
+sv() { supervisorctl -c /etc/agent-supervisord.conf "$@"; }
+
+chrome_cpu_ticks() {
+  local pid total=0 stat
+  for pid in $(pgrep -f "${CHROME}"); do
+    stat=$(cat "/proc/${pid}/stat" 2>/dev/null) || continue
+    read -ra fields <<<"${stat##*) }"
+    total=$((total + fields[11] + fields[12]))
+  done
+  echo "${total}"
+}
+
+idle=0 last=0 gone=0
+while sleep 60; do
+  if ! pgrep -f "${CHROME}" >/dev/null; then
+    idle=0 last=0 gone=$((gone + 1))
+    sv status android | grep -q RUNNING && continue   # the emulator draws on the same display
+    if ((gone >= DISPLAY_OFF_MINUTES)) && sv status xvfb | grep -q RUNNING; then
+      echo "$(date +%T) no browser for ${DISPLAY_OFF_MINUTES} min, turning the display off"
+      sv stop novnc vnc xvfb >/dev/null
+    fi
+    continue
+  fi
+  gone=0
+  now=$(chrome_cpu_ticks)
+  if ((now - last > BUSY_TICKS)); then idle=0; else idle=$((idle + 1)); fi
+  last=${now}
+  if ((idle >= IDLE_MINUTES)); then
+    echo "$(date +%T) Chrome idle ${IDLE_MINUTES} min, closing it"
+    pkill -TERM -f "${CHROME}"; sleep 5; pkill -KILL -f "${CHROME}"
+    idle=0 last=0
+  fi
+done

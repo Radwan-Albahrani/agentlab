@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Boot-time mount of the storage images listed in cluster.json (agentlab-disks.service, before Docker). Only mounts:
+creating and growing images is `agentctl apply`'s job. A mount point that already holds a mount (say, from fstab)
+is left alone."""
+
+import json
+import os
+import subprocess
+import sys
+
+PATH = os.environ.get('AGENTLAB_CLUSTER', '/srv/agentlab/rendered/cluster.json')
+
+
+def units(cfg):
+    st, data = cfg.get('storage') or {}, cfg.get('data', '/srv/agentlab')
+    if st.get('mode', 'shared') == 'shared':
+        return [(st['pool_image'], f'{data}/agents')] if st.get('pool_size') else []
+    mounts = sorted({a['storage_unit'] for a in cfg.get('agents') or [] if a.get('storage_unit')})
+    return [(f'{data}/disks/{os.path.basename(m)}.img', m) for m in mounts]
+
+
+def main():
+    try:
+        with open(PATH) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f'no cluster.json ({e}); nothing to mount')
+        return 0
+    failed = 0
+    for image, mount in units(cfg):
+        if os.path.ismount(mount):
+            continue
+        if not os.path.exists(image):
+            print(f'{image} missing: run agentctl apply', file=sys.stderr)
+            failed += 1
+            continue
+        os.makedirs(mount, exist_ok=True)
+        p = subprocess.run(['mount', '-o', 'loop,noatime', image, mount], capture_output=True, text=True, check=False)
+        print(f'mounted {image} at {mount}' if p.returncode == 0 else f'{image}: {p.stderr.strip()}')
+        failed += p.returncode != 0
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

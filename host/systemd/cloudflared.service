@@ -1,0 +1,14 @@
+# The tunnel: the one way in for cloudflared ingress. The token is read at start from a root-only file (not the
+# command line, where every local user could read it).
+[Unit]
+Description=cloudflared tunnel for agentlab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/bin/sh -c 'TUNNEL_TOKEN="$(cat @DATA@/secrets/cloudflare-tunnel.token)" exec /usr/bin/cloudflared --no-autoupdate tunnel run'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

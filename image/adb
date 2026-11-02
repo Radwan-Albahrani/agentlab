@@ -1,0 +1,4 @@
+#!/bin/sh
+# adb from the shared SDK; each call counts as use, so the idle emulator reaper leaves a phone that's being driven.
+mkdir -p "${HOME}/.local/state" && touch "${HOME}/.local/state/android-used"
+exec "${ANDROID_SDK_ROOT:-/opt/android-sdk}/platform-tools/adb" "$@"

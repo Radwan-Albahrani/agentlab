@@ -1,0 +1,22 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "/home/agent/.chrome-profile",
+    "launchOptions": {
+      "executablePath": "/usr/local/bin/chrome-on-demand",
+      "headless": false,
+      "chromiumSandbox": false,
+      "ignoreDefaultArgs": ["--enable-automation"],
+      "args": [
+        "--no-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--start-maximized",
+        "--window-size=1920,1080",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-dev-shm-usage"
+      ]
+    },
+    "contextOptions": { "viewport": null }
+  }
+}

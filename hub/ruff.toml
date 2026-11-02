@@ -1,0 +1,3 @@
+# The repo standard (../ruff.toml); the hub backend runs on Python 3.13.
+extend = "../ruff.toml"
+target-version = "py313"

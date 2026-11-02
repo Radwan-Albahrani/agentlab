@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.venv/
+/cluster.toml
+*.token
+*.pem
+.env
+test-results/
+playwright-report/
+.ruff_cache/
+.pytest_cache/

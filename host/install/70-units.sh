@@ -1,0 +1,28 @@
+#!/bin/bash
+# The host services as systemd units, rendered from host/systemd with this cluster's paths and limits.
+# shellcheck source=lib.sh
+source "$(dirname "$0")/lib.sh"
+src=${AGENTLAB_REPO}/host/systemd
+units=(agentlab.slice agentlab-disks.service agentlab-throttle.service agentlab-watch.service
+  agentlab-janitor.service agentlab-janitor.timer agentlab-backup.service agentlab-backup.timer
+  agentlab-firewall.service)
+[ "${AGENTLAB_INGRESS}" = cloudflared ] && units+=(cloudflared.service)
+any=""
+for u in "${units[@]}"; do
+  new=$(sed -e "s|@REPO@|${AGENTLAB_REPO}|g" -e "s|@DATA@|${AGENTLAB_DATA}|g" -e "s|@CONFIG@|${AGENTLAB_CONFIG}|g" \
+    -e "s|@CLUSTER@|${AGENTLAB_DATA}/rendered/cluster.json|g" -e "s|@MEMORY_HIGH@|${AGENTLAB_MEMORY_HIGH}|g" \
+    -e "s|@MEMORY_MAX@|${AGENTLAB_MEMORY_MAX}|g" -e "s|@BACKUP_TIME@|${AGENTLAB_BACKUP_TIME}|g" "${src}/${u}")
+  if [ "${new}" != "$(cat "/etc/systemd/system/${u}" 2>/dev/null)" ]; then
+    printf '%s\n' "${new}" > "/etc/systemd/system/${u}"
+    changed "${u}"
+    any=1
+  fi
+done
+[ -n "${any}" ] && systemctl daemon-reload
+systemctl start agentlab.slice
+for u in agentlab-disks.service agentlab-throttle.service agentlab-watch.service agentlab-janitor.timer \
+  agentlab-backup.timer; do
+  systemctl enable -q "${u}"
+  if [ -n "${any}" ] || ! systemctl is-active -q "${u}"; then systemctl restart "${u}"; fi
+done
+ok "agentlab units enabled"

@@ -1,0 +1,9 @@
+[Unit]
+Description=agentlab: back up T3 chats, companion databases and the config
+After=docker.service agentlab-disks.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 @REPO@/cli/agentctl --config @CONFIG@ backup run
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,9 @@
+# All agent containers together (cgroup_parent: agentlab.slice): at most limits.total_memory of RAM, so a burst of
+# builds across agents slows them down instead of starving the host, the edge and the hub.
+[Unit]
+Description=agentlab: memory pool for all agents
+
+[Slice]
+MemoryAccounting=yes
+MemoryHigh=@MEMORY_HIGH@
+MemoryMax=@MEMORY_MAX@

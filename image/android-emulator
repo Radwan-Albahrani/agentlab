@@ -1,0 +1,117 @@
+#!/bin/bash
+# Android emulator on demand. The SDK is one shared, read-only copy on the host (agentctl installs it into
+# <data>/shared/android-sdk), mounted at /opt/android-sdk; each agent's phone (AVD) lives in its own ~/.android.
+# A running emulator holds 2-4 GB, so it starts only when asked and `reap` (supervisord program android-reaper) stops
+# it after ANDROID_IDLE_MINUTES (30) without adb use. It draws on the browser's display :99 so the owner can watch it.
+#   android-emulator start | stop | status | wipe | available | run (supervisord) | reap (supervisord)
+set -u
+SDK=${ANDROID_SDK_ROOT:-/opt/android-sdk}
+IMAGE=${ANDROID_SYSTEM_IMAGE:-system-images;android-35;google_apis;x86_64}
+AVD=default
+AVD_HOME=${ANDROID_AVD_HOME:-${HOME}/.android/avd}
+USED=${HOME}/.local/state/android-used          # touched by the adb wrapper on every call
+IDLE_MINUTES=${ANDROID_IDLE_MINUTES:-30}
+BOOT_TIMEOUT_S=${ANDROID_BOOT_TIMEOUT:-300}
+ADB=${SDK}/platform-tools/adb
+
+sv() { supervisorctl -c /etc/agent-supervisord.conf "$@"; }
+image_dir() { echo "${SDK}/${IMAGE//;//}"; }
+
+why_unavailable() {
+  [[ "${ANDROID_ENABLED:-0}" == 1 ]] || { echo "Android is turned off for this cluster"; return; }
+  [[ -r /dev/kvm && -w /dev/kvm ]] || { echo "no usable /dev/kvm (the host needs KVM and must pass it in)"; return; }
+  [[ -x "${SDK}/emulator/emulator" ]] || { echo "the Android SDK is not installed on the host yet"; return; }
+  [[ -d "$(image_dir)" ]] || echo "system image ${IMAGE} is missing from the shared SDK"
+}
+
+available() { [[ -z "$(why_unavailable)" ]]; }
+
+ensure_avd() {   # written by hand: avdmanager needs Java, which the image doesn't carry
+  [[ -f "${AVD_HOME}/${AVD}.ini" ]] && return
+  local abi=${IMAGE##*;}
+  mkdir -p "${AVD_HOME}/${AVD}.avd"
+  printf 'avd.ini.encoding=UTF-8\npath=%s\npath.rel=avd/%s.avd\ntarget=%s\n' \
+    "${AVD_HOME}/${AVD}.avd" "${AVD}" "$(cut -d';' -f2 <<<"${IMAGE}")" >"${AVD_HOME}/${AVD}.ini"
+  cat >"${AVD_HOME}/${AVD}.avd/config.ini" <<EOF
+AvdId=${AVD}
+avd.ini.displayname=Phone
+abi.type=${abi}
+hw.cpu.arch=x86_64
+hw.cpu.ncore=2
+hw.ramSize=3072
+hw.lcd.width=1080
+hw.lcd.height=2400
+hw.lcd.density=420
+hw.keyboard=yes
+hw.gpu.enabled=yes
+hw.gpu.mode=swiftshader_indirect
+disk.dataPartition.size=6G
+image.sysdir.1=${IMAGE//;//}/
+tag.id=$(cut -d';' -f3 <<<"${IMAGE}")
+fastboot.forceColdBoot=yes
+EOF
+}
+
+booted() { [[ "$("${ADB}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; }
+
+start() {
+  local reason
+  reason=$(why_unavailable)
+  [[ -z "${reason}" ]] || { echo "Android emulator unavailable: ${reason}" >&2; exit 1; }
+  ensure_avd
+  mkdir -p "$(dirname "${USED}")" && touch "${USED}"
+  sv start xvfb vnc novnc >/dev/null 2>&1
+  sv start android >/dev/null 2>&1
+  echo "booting the emulator (first boot takes a minute or two)..."
+  "${ADB}" start-server >/dev/null 2>&1
+  local deadline=$((SECONDS + BOOT_TIMEOUT_S))
+  until booted; do
+    if ((SECONDS > deadline)); then echo "not booted after ${BOOT_TIMEOUT_S} s (see ~/logs/android.log)" >&2; exit 1; fi
+    sv status android | grep -q RUNNING || { echo "the emulator stopped (see ~/logs/android.log)" >&2; exit 1; }
+    sleep 3
+  done
+  echo "ready: $("${ADB}" devices | sed -n 2p)"
+}
+
+stop() {
+  "${ADB}" emu kill >/dev/null 2>&1
+  sv stop android >/dev/null 2>&1
+  echo "stopped"
+}
+
+status() {
+  local reason
+  reason=$(why_unavailable)
+  if [[ -n "${reason}" ]]; then echo "unavailable: ${reason}"
+  elif ! sv status android | grep -q RUNNING; then echo "off"
+  elif booted; then echo "running: $("${ADB}" devices | sed -n 2p)"
+  else echo "booting"
+  fi
+}
+
+run() {   # the supervisord program
+  ensure_avd
+  export DISPLAY=:99 ANDROID_SDK_ROOT=${SDK} ANDROID_AVD_HOME=${AVD_HOME}
+  exec "${SDK}/emulator/emulator" -avd "${AVD}" -no-audio -no-boot-anim -no-snapshot-save -no-metrics \
+    -gpu swiftshader_indirect
+}
+
+reap() {   # the supervisord program android-reaper
+  while sleep 60; do
+    sv status android | grep -q RUNNING || continue
+    [[ -n "$(find "${USED}" -mmin -"${IDLE_MINUTES}" 2>/dev/null)" ]] && continue
+    echo "$(date +%T) no adb use for ${IDLE_MINUTES} min, stopping the emulator"
+    stop >/dev/null
+  done
+}
+
+case "${1:-status}" in
+  start) start ;;
+  stop) stop ;;
+  status) status ;;
+  wipe) stop >/dev/null; rm -rf "${AVD_HOME:?}/${AVD}.avd" "${AVD_HOME}/${AVD}.ini"; ensure_avd; echo "wiped; start it again" ;;
+  available) available ;;
+  run) run ;;
+  reap) reap ;;
+  *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

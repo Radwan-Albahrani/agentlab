@@ -1,0 +1,96 @@
+#!/bin/bash
+# Throttle shim, linked ahead of the real tools on the agents' PATH for each installed tool in TOOLS (shim-sync keeps
+# the links in step). Many agents run at once; their heavy commands (installs, builds, tests, type checks, image builds)
+# go through run.py, which waits silently until the agent and the shared pool have memory for them, so RAM and the SSD
+# swap don't blow up. Everything else, and anything started inside an already admitted job, goes straight to the real
+# tool. TOOLS and is_heavy below are the one place to tune what counts as heavy.
+# shellcheck disable=SC2034  # read by shim-sync, which links a shim per installed tool
+TOOLS="npm pnpm yarn bun npx bunx pnpx tsc vitest jest playwright mocha next vite turbo nx webpack cargo go make gradle mvn pip pip3 pytest docker"
+SHIMS=/usr/local/lib/agent-shims
+SPOOL=${HOME}/.local/state/agent-throttle
+tool=${0##*/}
+
+real_tool() {
+  local dir IFS=:
+  for dir in ${PATH}; do
+    [[ "${dir}" != "${SHIMS}" && -x "${dir}/${tool}" ]] && { echo "${dir}/${tool}"; return; }
+  done
+}
+
+path_without_shims() { local p=":${PATH}:"; p=${p//:${SHIMS}:/:}; p=${p#:}; echo "${p%:}"; }
+
+heavy_script() {   # a package.json script worth gating: builds, tests, checks, whole pipelines; not servers or watchers
+  case "${1}" in
+    *watch*|*dev*|*serve*|*start*|*storybook*) return 1 ;;
+    *build*|*test*|*lint*|*check*|*compile*|*e2e*|*bundle*) return 0 ;;
+    qa|qa:*|ci|ci:*|verify*|validate*|types*|tsc*|format*) return 0 ;;   # (typecheck* is covered above)
+    *) return 1 ;;
+  esac
+}
+
+heavy_runner() {   # an npx/bunx target that is a build, test or type-check tool, or a monorepo task runner
+  case "${1##*/}" in
+    tsc|vitest|jest|playwright|mocha|next|vite|turbo|nx|webpack|esbuild|eslint|rollup|tsup) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+first_arg() { local a; for a in "$@"; do [[ "${a}" != -* ]] && { echo "${a}"; return; }; done; }
+
+second_arg() {
+  local a seen=''
+  for a in "$@"; do
+    [[ "${a}" == -* ]] && continue
+    [[ -n "${seen}" ]] && { echo "${a}"; return; }
+    seen=1
+  done
+}
+
+is_heavy() {
+  local a sub
+  for a in "$@"; do case "${a}" in --watch|watch|--help|--version) return 1 ;; *) ;; esac; done
+  sub=$(first_arg "$@")
+  case "${tool}" in
+    npm|pnpm|yarn|bun)
+      case "${sub}" in
+        install|i|ci|add|update|up|upgrade|rebuild|build|test|t|tst|exec|x|dlx) return 0 ;;
+        run|run-script) heavy_script "$(second_arg "$@")" ;;
+        "") [[ "${tool}" != npm ]] ;;                          # bare yarn/pnpm/bun installs
+        *) [[ "${tool}" != npm ]] && heavy_script "${sub}" ;;  # yarn build, pnpm test, bun lint...
+      esac ;;
+    npx|bunx|pnpx) heavy_runner "${sub}" ;;
+    tsc|vitest|jest|playwright|mocha|turbo|nx|webpack) return 0 ;;
+    next|vite) [[ "${sub}" == build ]] ;;
+    cargo) case "${sub}" in build|b|test|t|check|c|clippy|bench|install) return 0 ;; *) return 1 ;; esac ;;
+    go) case "${sub}" in build|test|vet|install) return 0 ;; *) return 1 ;; esac ;;
+    make|gradle|mvn|pytest) return 0 ;;
+    pip|pip3) [[ "${sub}" == install ]] ;;
+    docker) [[ "$*" == *build* ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+inside_admitted_job() {   # an ancestor process is a running job's leader (run.py leaves pid-<n> in the spool)
+  local pid=${PPID} parent line
+  while [[ "${pid}" -gt 1 ]] 2>/dev/null; do
+    [[ -e "${SPOOL}/pid-${pid}" ]] && return 0
+    parent=''
+    while read -r line; do [[ "${line}" == PPid:* ]] && { parent=${line//[!0-9]/}; break; }; done < "/proc/${pid}/status"
+    pid=${parent}
+  done 2>/dev/null
+  return 1
+}
+
+main() {
+  local real
+  real=$(real_tool)
+  if [[ -z "${real}" ]]; then   # not installed: let bash say so, exactly as without the shim (BASH_ENV would re-add us)
+    BASH_ENV='' PATH=$(path_without_shims) exec bash -c '"$@"' bash "${tool}" "$@"
+  fi
+  if is_heavy "$@" && ! inside_admitted_job; then
+    exec /usr/bin/python3 /usr/local/lib/agent-throttle/run.py "${tool}" "${real}" "$@"
+  fi
+  exec "${real}" "$@"
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] && main "$@"   # sourced by tests: only the functions are defined
