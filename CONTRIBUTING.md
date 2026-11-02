@@ -43,6 +43,13 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `perf`, `build`
 `host`, `image`, `gate`, `hub`, `companion`, `skills`) or `deps`, `readme`. Pull requests are squash-merged, so the
 pull request title is the commit message: write it in the same format.
 
+## Dependencies
+
+Dependabot opens grouped weekly updates for Actions, Python, the hub's bun packages and the Docker base images. Its
+automatic *security* fix pull requests for the hub fail: they run as npm and can't rewrite `bun.lock`. When an alert
+names a hub package, bump it in `hub/web/package.json`, run `bun install` in the hub's pinned Bun image (see
+`hub/test.sh`) to update `bun.lock`, and check with `hub/test.sh all`; or wait for the weekly bun update.
+
 ## Code style
 
 - Clean, readable, not over-engineered. Comments say *why*, not what; module headers say why the mechanism exists.
