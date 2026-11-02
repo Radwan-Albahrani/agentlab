@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { useNav } from '../api/queries';
+import { setAgentColors } from '../theme/hues';
 import { media, space } from '../theme/tokens.stylex';
 import { buildMenu } from './menu';
 import { PhoneNav } from './PhoneNav';
@@ -23,6 +24,7 @@ const styles = stylex.create({
 export function Shell({ children }: { children: ReactNode }) {
   const { data: nav } = useNav();
   const onLogo = usePresentingSwitch();
+  setAgentColors(nav?.colors); // before anything below paints an agent's colour
   const menu = nav ? buildMenu(nav) : { main: [], agents: [], system: [] };
   return (
     <div {...stylex.props(styles.app)}>

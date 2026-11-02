@@ -239,7 +239,7 @@ gate, hub, edge and host services read (mounted read-only). Shape of `cluster.js
   "agents": [
     {"id": "sara", "owner": "sara@example.com", "memory": "12g", "cpus": 4, "upstream": "http://agent-sara",
      "hostname": "agent-sara", "image": "", "publish": {}, "path": "/srv/agentlab/agents/sara", "storage_unit": "",
-     "subnet": "10.207.1.0/24", "pair_host": "sara-t3.example.com"}
+     "subnet": "10.207.1.0/24", "pair_host": "sara-t3.example.com", "color": ""}
   ],
   "storage": {"mode": "shared", "pool_size": "", "pool_image": "/srv/agentlab/disks/pool.img", "person_size": "80g"},
   "limits": {"total_memory": "96g", "throttle": {"agent_gb": 12.0, "pool_gb": 96.0, "io_psi_max": 25}},
@@ -301,6 +301,7 @@ Stacks (one Compose project / Coolify service each, so deploying one never resta
 | `agentlab-firewall.service` | loads `<data>/rendered/firewall/agentlab.nft` (agents can't open connections to shared services or the host) |
 | `agentlab-janitor.timer` | nightly: settled worktrees, package caches, agents' Docker leftovers |
 | `agentlab-backup.timer` | nightly backups (`backups.time`), keeps `backups.keep_days`; only with `backups.enabled` |
+| `agentlab-update.timer` | nightly `agentctl update --scheduled` at `updates.time`; only with `updates.agentlab = "daily"` |
 | `cloudflared.service` | the tunnel (token in `<data>/secrets/cloudflare-tunnel.token`) |
 
 ## agentctl commands
@@ -318,3 +319,25 @@ Every command takes `--json` (one object: `{ok, exit, error, result, changes, me
 and exits 0 (done), 1 (failed) or 2 (needs a human step or `--yes`). `AGENTLAB_CONFIG` or `--config` overrides the
 config path. Destructive commands (`agent remove` without `--keep-data`, `backup restore`) print what they will
 delete and need `--yes`.
+
+## Staying up to date
+
+Two layers, both of which never cut off a running T3 turn by default:
+
+- **Inside each agent**, the `updater` program (`image/agent-updater`) re-runs the entrypoint's installers
+  (`image/tools.sh`) every `updates.agent_tools_hours` (env `AGENTLAB_UPDATE_HOURS`). The CLIs use new versions on
+  their next run. T3 is a server, so when the installed T3 differs from the running one (its binary path,
+  `~/.t3/runtime/versions/<v>/t3`), only the `t3` supervisord program restarts, and only while no run in T3's
+  database is in progress (`orchestration_v2_projection_runs.status` not completed/cancelled/failed/interrupted).
+- **The cluster**: `agentctl update` (by hand, or `agentlab-update.timer`) fast-forwards the repo (never merges or
+  discards local changes), rebuilds or pulls the images, and runs `apply`. `apply` redeploys a stack when its file
+  changed or when a running container's image is older than its local tag; an agent is only redeployed while idle
+  (`--force` overrides). `update` then waits for busy agents, checking every 5 min for up to `updates.wait_hours`,
+  updating each the moment it is idle; the core and companions never wait.
+
+When an agent is still busy at the end of the wait, `updates.on_busy` decides, for both layers (agents get it as
+`AGENTLAB_ON_BUSY` and `AGENTLAB_UPDATE_WAIT_HOURS`): `defer` leaves it for the next run; `resume` notes the runs in
+progress, restarts it, and once T3 answers again sends each chat whose run became `interrupted` the message "The
+server restarted for an update; continue where you left off." (`t3 thread send`, as the companion bridge does).
+The last run (time, commits, result, agents updated / deferred / chats resumed) is in `<data>/state/update.json`,
+shown by `agentctl status` and `doctor` (a failed nightly run is a warning).

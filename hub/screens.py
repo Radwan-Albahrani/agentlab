@@ -69,6 +69,7 @@ def nav():
     return {
         'attention': needs.count(shown_companions()),
         'agents': agents,
+        'colors': {p: a['color'] for p, a in cluster.agents().items() if p in shown_profiles() and a.get('color')},
         'allAgents': see('page.agents'),
         'system': system,
         'display': not display.load()['presenting'],

@@ -463,10 +463,12 @@ def cluster(cfg, c):
         )
     units = ['agentlab-disks.service', 'agentlab-throttle.service', 'agentlab-watch.service', 'agentlab-janitor.timer']
     units += ['agentlab-backup.timer'] if cfg['backups']['enabled'] else []
+    units += ['agentlab-update.timer'] if cfg['updates']['agentlab'] == 'daily' else []
     for unit in [*units, 'agentlab-firewall.service']:
         c.add(f'unit-{unit}', _active(unit), f'{unit} active', 'agentctl install')
     if not cfg['backups']['enabled']:
         c.add('backups', True, 'nightly backups are off ([backups] enabled = false); `agentctl backup run` still works')
+    updates(cfg, c)
     c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'agentctl install')
     if not is_root():
         c.sudo('firewall', 'the agentlab firewall table (nft needs root)')
@@ -501,3 +503,34 @@ def run_all(cfg):
     access(cfg, c)
     coolify_check(cfg, c)
     return c.items
+
+
+def updates(cfg, c):
+    """The last `agentctl update`: a failed nightly run is a warning, agents left for later are information."""
+    from . import update  # noqa: PLC0415 - update imports apply, which doctor doesn't otherwise need
+
+    if cfg['updates']['agentlab'] != 'daily':
+        c.add(
+            'updates', True, 'nightly self-update is off ([updates] agentlab = "off"); `agentctl update` works by hand'
+        )
+    last = update.last(cfg)
+    if not last:
+        return
+    if last.get('result') == 'failed':
+        c.add(
+            'update-last',
+            False,
+            f'the last update ({last.get("at", "?")}) failed: {last.get("error", "")}',
+            'fix the cause, then `agentctl update`',
+            'warning' if last.get('scheduled') else 'info',
+        )
+    elif last.get('agents_deferred'):
+        c.add(
+            'update-last',
+            False,
+            f'the last update ({last.get("at", "?")}) left {", ".join(last["agents_deferred"])} for later: busy all window',
+            'it goes on the next update, or `agentctl apply --force` now (interrupts the running turn)',
+            'info',
+        )
+    else:
+        c.add('update-last', True, f'last update {last.get("at", "?")}: {last.get("commit", "")} ok')

@@ -3,7 +3,7 @@
 import json
 import os
 
-from . import deploy, disks, privileges
+from . import deploy, disks, privileges, update
 from .util import Needs, is_root, run, say
 
 
@@ -96,4 +96,9 @@ def show(cfg):
     for c in s['companions']:
         own = f'  {c["status"]}' if c.get('status') else ''
         say(f'  companion {c["name"]:<10} {c["state"]} {c["health"]}{own}  (agent {c["agent"]})')
+    last = s['update'] = update.last(cfg)
+    if last:
+        later = f'; waiting: {", ".join(last["agents_deferred"])}' if last.get('agents_deferred') else ''
+        err = f': {last["error"]}' if last.get('error') else ''
+        say(f'  update {last.get("at", "?")} {last.get("result", "?")}{err} ({last.get("commit", "")}){later}')
     return s

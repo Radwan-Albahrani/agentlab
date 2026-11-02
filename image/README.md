@@ -16,6 +16,7 @@ Build: `image/build.sh` (or `TAG=agentlab/agent:test image/build.sh`).
 | `docker-proxy` `dockerd` | | the agent's own rootless Docker, started on first use, stopped after 15 idle minutes |
 | `android` `android-reaper` | | Android emulator on demand (`android-emulator start`), stopped after 30 minutes without adb use |
 | `browser-reaper` | | closes an idle Chrome and turns the display off |
+| `updater` | | refreshes T3, Claude Code, Codex and the other CLIs every `AGENTLAB_UPDATE_HOURS` (`agent-updater`, installers in `tools.sh`); restarts only `t3`, only while idle (`AGENTLAB_UPDATE_WAIT_HOURS`, `AGENTLAB_ON_BUSY`) |
 | `janitor` | | stops orphaned processes that sat idle (forgotten dev servers, browsers) |
 | `shim-sync` | | keeps the throttle shims in front of the heavy tools that are installed |
 | `herdr`, `cyrus` | | terminal multiplexer; Linear agent (off until configured) |

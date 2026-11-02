@@ -225,6 +225,7 @@ class Scope(unittest.TestCase):
         self.assertEqual([a['name'] for a in nav['agents']], ['sara', 'lab'])  # both of hers
         self.assertEqual([c['name'] for c in nav['agents'][0]['companions']], ['helper'])
         self.assertEqual([s['key'] for s in nav['system']], ['storage'])  # cluster screens are for admins
+        self.assertEqual(nav['colors'], {'sara': 'green'})  # chosen colours, only for agents this person sees
         self.assertEqual([a['name'] for a in screens.agents('')['agents']], ['sara', 'lab'])
         seen = json.dumps([screens.overview(), screens.storage(), nav])
         for other in ('scout', 'Scout', 'agent-admin', 'agentlab-core', 'admin@example.com', '"admin"'):

@@ -250,9 +250,9 @@ def firewall(cfg, changed, plan):
         warn(f'{FIREWALL_UNIT} is not installed: agents are not firewalled until `agentctl install` runs')
 
 
-def apply(cfg, config_path, dry=False, stack=None, build=False, only=None):
+def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force=False):
     """`only`: deploy just these stacks (a companion an agent created or removed), everything else is still
-    rendered but left running as it is."""
+    rendered but left running as it is. `force`: redeploy every stack, even agents with a T3 turn running."""
     plan = Plan(dry)
     if not dry:
         need_root('agentctl apply')
@@ -280,11 +280,15 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None):
         if only is not None and name not in only:
             continue
         if dry:
-            text = files[f'compose/{name}/docker-compose.yml']
-            if name == stack or deploy.changed_since_deploy(cfg, name, text) or not deploy.containers(cfg, name):
-                plan.do(f'deploy {name}')
+            reason, skip = deploy.why_deploy(
+                cfg, name, files[f'compose/{name}/docker-compose.yml'], force or name == stack
+            )
+            if skip:
+                say(f'  {skip}')
+            if reason:
+                plan.do(f'deploy {name}' + (f' ({reason})' if reason.startswith('newer image') else ''))
             continue
-        deploy.deploy(cfg, name, kind, key, plan, force=name == stack)
+        deploy.deploy(cfg, name, kind, key, plan, force=force or name == stack)
     companion_lists(cfg, plan)
     for a in existing:
         adopt(a, plan)

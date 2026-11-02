@@ -1,0 +1,10 @@
+[Unit]
+Description=agentlab: nightly self-update
+
+[Timer]
+OnCalendar=*-*-* @UPDATE_TIME@
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

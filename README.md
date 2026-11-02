@@ -21,6 +21,8 @@
 - 🗂️ **As many agents as you want.** Work, side projects, experiments: each with its own files and logins.
 - 🌱 **A Slack companion.** A bot that works with your agent, and that your agent can change on request.
 - 📊 **One dashboard.** Usage, devices and bots; heavy jobs queue up and old work gets cleaned for you.
+- 🔄 **Keeps itself up to date.** T3, Claude and Codex update inside each agent; agentlab updates itself nightly,
+  never mid-task.
 
 ## 🤝 Share it safely
 
