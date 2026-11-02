@@ -138,6 +138,17 @@ def connect(cfg, plan):
                     plan.do(f'connect {service} to {net}', cmd)
 
 
+def isolate(cfg, plan):
+    """An agent container stays on its own network only. Coolify connects every container it deploys to a network
+    of its own; the firewall knows the agent only by its address on agentlab-<id>, so another network would be a way
+    around it. The watcher repeats this whenever Coolify recreates a container."""
+    for a in cfg['agents']:
+        for cid in containers(cfg, f'agentlab-agent-{a["id"]}', 'agent'):
+            joined = json.loads(run(['docker', 'inspect', '-f', '{{json .NetworkSettings.Networks}}', cid])[1] or '{}')
+            for net in sorted(n for n in joined if n != render.network(a['id'])):
+                plan.do(f'take agent {a["id"]} off {net}', ['docker', 'network', 'disconnect', net, cid])
+
+
 def stop(cfg, stack, plan):
     if cfg['deploy'] == 'coolify' and coolify.stack_uuid(stack_folder(cfg, stack)):
         uuid = coolify.stack_uuid(stack_folder(cfg, stack))

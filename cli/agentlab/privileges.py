@@ -85,11 +85,12 @@ def sudo_argv(args, argv):
     return ['sudo', *flags, sys.executable, SCRIPT, '--config', os.path.abspath(args.config), *argv]
 
 
-def elevate(args, argv, execv=os.execv, probe=subprocess.run):
+def elevate(args, argv, execv=None, probe=None):
     """Return when already root or not needed; otherwise replace this process with the sudo'd one, or raise Needs
     when sudo can't run without a password and nobody is there to type it."""
     if is_root() or not needs_root(args):
         return
+    execv, probe = execv or os.execv, probe or subprocess.run  # looked up per call so tests can patch them
     shown = 'sudo agentctl ' + shlex.join(argv)
     if not shutil.which('sudo'):
         raise _needs(shown, 'sudo is not installed')

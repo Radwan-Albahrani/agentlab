@@ -289,6 +289,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None):
     for a in existing:
         adopt(a, plan)
     deploy.connect(cfg, plan)
+    deploy.isolate(cfg, plan)
     if only is None:
         cloudflare.sync_people(cfg, plan)
         deploy.orphans(cfg)

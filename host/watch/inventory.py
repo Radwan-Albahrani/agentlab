@@ -86,6 +86,27 @@ def keep_connected(rows):
                 store.event('network', f'{r["service"]} rejoined {net}', '' if rc == 0 else msg[-200:], ok=rc == 0)
 
 
+def extra_networks(networks, agent_id):
+    """The networks an agent container should not be on: Coolify adds its own per-service network to every
+    container it deploys, and the firewall only knows the agent's address on agentlab-<id>; through another network
+    the agent could reach the host and the hub unchecked."""
+    return sorted(n for n in networks if n != f'agentlab-{agent_id}')
+
+
+def keep_isolated(rows):
+    for r in rows:
+        if not r['stack'].startswith('agentlab-agent-') or r['service'] != 'agent' or r['state'] != 'running':
+            continue
+        _, out = host.run(['docker', 'inspect', '-f', '{{json .NetworkSettings.Networks}}', r['name']])
+        try:
+            joined = json.loads(out or '{}')
+        except ValueError:
+            continue
+        for net in extra_networks(joined, r['stack'].removeprefix('agentlab-agent-')):
+            rc, msg = host.run(['docker', 'network', 'disconnect', net, r['name']])
+            store.event('network', f'{r["name"]} left {net}', '' if rc == 0 else msg[-200:], ok=rc == 0)
+
+
 def check(_state):
     stack_list = stacks()
     _, out = host.run(['docker', 'ps', '-a', '--format', '{{json .}}'])
@@ -95,3 +116,4 @@ def check(_state):
         {'at': time.time(), 'items': rows, 'stacks': [{'id': s['id'], 'uuid': s['uuid']} for s in stack_list]},
     )
     keep_connected(rows)
+    keep_isolated(rows)

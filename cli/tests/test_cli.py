@@ -229,6 +229,23 @@ class Migration(unittest.TestCase):
     def cfg_cf():
         return resolve()
 
+    def test_apply_takes_agents_off_extra_networks(self):
+        from agentlab import deploy  # noqa: PLC0415
+
+        cfg = resolve(self.ONE)
+        plan = util.Plan(dry=True)
+
+        def fake_run(cmd, check=True):
+            if cmd[:2] == ['docker', 'ps']:
+                return 0, 'c1' if 'label=com.docker.compose.project=agentlab-agent-sara' in cmd else ''
+            return 0, json.dumps({'agentlab-sara': {}, 'coolifyuuid': {}})
+
+        with mock.patch('agentlab.deploy.run', fake_run), contextlib.redirect_stdout(io.StringIO()):
+            start = len(util.OUT.changes)
+            deploy.isolate(cfg, plan)
+        cmds = [c['command'] for c in util.OUT.changes[start:]]
+        self.assertEqual(cmds, [['docker', 'network', 'disconnect', 'coolifyuuid', 'c1']])
+
     def test_coolify_plain_text_answers(self):
         from agentlab import coolify  # noqa: PLC0415
 
@@ -997,6 +1014,9 @@ class Privileges(unittest.TestCase):
         out = io.StringIO()
         with (
             mock.patch('agentlab.privileges.subprocess.run', refused),
+            # the check containers run as root and without sudo: pin both so only the refusal is under test
+            mock.patch('agentlab.privileges.is_root', return_value=False),
+            mock.patch('agentlab.privileges.shutil.which', return_value='/usr/bin/sudo'),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(io.StringIO()),
         ):
