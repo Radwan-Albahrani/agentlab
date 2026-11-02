@@ -121,7 +121,9 @@ def edge_service(cfg):
         'ports': ports,
         'volumes': volumes,
         'extra_hosts': ['host.docker.internal:host-gateway'],
-        'networks': {EDGE_NETWORK: {'aliases': ['edge'], 'ipv4_address': EDGE_IP}},
+        # The private names as aliases: Gateway sends their DNS lookups through the tunnel to cloudflared, which asks
+        # Docker's DNS (not its hosts file); the aliases are what answer them with the edge
+        'networks': {EDGE_NETWORK: {'aliases': ['edge', *private_names(cfg)], 'ipv4_address': EDGE_IP}},
         'mem_limit': '256m',
     }
 

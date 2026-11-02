@@ -1465,6 +1465,10 @@ class PrivateNetwork(unittest.TestCase):
         self.assertNotIn('80', [p.split(':')[-2] for p in edge['ports']])  # no host port 80 at all
         self.assertIn('--entrypoints.ingress.address=:80', edge['command'])
         self.assertEqual(edge['networks']['agentlab-edge']['ipv4_address'], render.EDGE_IP)
+        # cloudflared answers Gateway's lookups through Docker's DNS, which knows aliases, not extra_hosts
+        self.assertEqual(
+            edge['networks']['agentlab-edge']['aliases'], ['edge', 'agents.example.com', 'agents-hub.example.com']
+        )
         tunnel = render.core(cfg)['services']['cloudflared']
         self.assertEqual(
             tunnel['extra_hosts'], [f'agents.example.com:{render.EDGE_IP}', f'agents-hub.example.com:{render.EDGE_IP}']
@@ -1485,6 +1489,7 @@ class PrivateNetwork(unittest.TestCase):
     def test_public_keeps_the_host_tunnel_and_loopback_ingress(self):
         public = resolve(PUBLIC)
         self.assertNotIn('cloudflared', render.core(public)['services'])
+        self.assertEqual(render.edge_service(public)['networks']['agentlab-edge']['aliases'], ['edge'])
         self.assertIn('127.0.0.1:8088:8088', render.edge_service(public)['ports'])
         self.assertIn('--entrypoints.ingress.address=:8088', render.edge_service(public)['command'])
 
