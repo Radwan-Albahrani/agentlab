@@ -43,6 +43,7 @@ def cluster(root):
                 'disk': '60G',
                 'upstream': f'http://agent-{a}',
                 'pair_host': f'{a}-t3.example.com' if a == 'admin' else '',
+                'color': 'green' if a == 'sara' else '',
             }
             for a in AGENTS
         ],

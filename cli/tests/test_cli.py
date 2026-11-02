@@ -203,6 +203,13 @@ google_client_secret_file = "/s/secret"
         self.assertEqual((body['hostname'], body['image']), ('box', 'mine/agent:1'))
         self.assertNotIn('pull_policy', body)
 
+    def test_color_is_optional_and_checked(self):
+        cfg = resolve(BASE.replace('id = "omar"', 'id = "omar"\ncolor = "green"'))
+        self.assertEqual([a['color'] for a in cfg['agents']], ['', 'green'])
+        self.assertEqual(json.loads(config.to_json(cfg))['agents'][1]['color'], 'green')
+        wrong = BASE.replace('id = "omar"', 'id = "omar"\ncolor = "mauve"')
+        self.assertIn('must be one of green, pink', problems(wrong))
+
 
 class Migration(unittest.TestCase):
     """What moving an existing one-person setup in needs: a published hub, extra stacks, adopting signed-in agents."""

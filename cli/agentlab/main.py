@@ -6,7 +6,21 @@ import argparse
 import json
 import sys
 
-from . import agents, apply, backup, cloudflare, companions, config, doctor, images, init, install, privileges, status
+from . import (
+    agents,
+    apply,
+    backup,
+    cloudflare,
+    companions,
+    config,
+    doctor,
+    images,
+    init,
+    install,
+    privileges,
+    status,
+    update,
+)
 from .util import NEEDS, OK, OUT, Failed, Plan
 
 
@@ -24,6 +38,7 @@ def parser():
     a.add_argument('--dry-run', action='store_true', help='print the changes, make none')
     a.add_argument('--stack', help='redeploy this stack even if its file did not change')
     a.add_argument('--build', action='store_true', help='rebuild (or re-pull) the images first')
+    a.add_argument('--force', action='store_true', help='redeploy every stack, even agents in the middle of a T3 turn')
     ag = sub.add_parser('agent', help='add, remove or list agents').add_subparsers(dest='action', required=True)
     add = ag.add_parser('add', help='add an agent for one person')
     add.add_argument('id')
@@ -65,6 +80,9 @@ def parser():
     cr = cos.add_parser('remove', help='remove an agent-created companion (its data is archived)')
     cr.add_argument('agent', help="the companion's agent ('-': whichever agent it belongs to)")
     cr.add_argument('name')
+    up = sub.add_parser('update', help='pull agentlab, rebuild the images, apply; busy agents are waited for')
+    up.add_argument('--scheduled', action='store_true', help='run by agentlab-update.timer (recorded as such)')
+    up.add_argument('--pulled', action='store_true', help=argparse.SUPPRESS)  # the re-run after a pull
     sub.add_parser('status', help='agents, health, memory and disk at a glance')
     cf_ = sub.add_parser('config', help='print the resolved config, or `config edit` to change it')
     cf_.add_argument('action', nargs='?', choices=['show', 'edit'], default='show')
@@ -92,7 +110,7 @@ def dispatch(args):
     if args.cmd == 'install':
         return install.install(cfg, args.config, args.only, args.skip_images)
     if args.cmd == 'apply':
-        return apply.apply(cfg, args.config, args.dry_run, args.stack, args.build)
+        return apply.apply(cfg, args.config, args.dry_run, args.stack, args.build, force=args.force)
     if args.cmd == 'agent' and args.action == 'adopt':
         return agents.adopt(cfg, args.id)
     if args.cmd == 'agent':
@@ -115,6 +133,9 @@ def dispatch(args):
         else:
             images.pull(cfg, Plan(False), args.names or None)
         return {}
+    if args.cmd == 'update':
+        argv = [a for a in sys.argv[1:] if a != '--pulled']
+        return update.update(cfg, args.config, args.scheduled, pulled=True if args.pulled else None, argv=argv)
     if args.cmd == 'status':
         return status.show(cfg)
     if args.cmd == 'config':

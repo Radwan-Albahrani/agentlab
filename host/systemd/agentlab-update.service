@@ -1,0 +1,12 @@
+[Unit]
+Description=agentlab: update itself (git pull, images, apply; agents wait for idle)
+After=docker.service agentlab-disks.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 @REPO@/cli/agentctl --config @CONFIG@ update --scheduled
+Nice=10
+IOSchedulingClass=idle
+# waits for busy agents up to [updates] wait_hours, so give it the whole window plus the build
+TimeoutStartSec=infinity

@@ -71,9 +71,22 @@ SCHEMA = {  # section -> {key: default}; None = required
     'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': ''},
     'coolify': {'url': 'http://127.0.0.1:8000', 'token_file': '', 'project': 'agentlab'},
     'images': {'registry': '', 'tag': 'latest'},
+    # agentlab: the nightly `agentctl update`; agent_tools_hours: agents refresh T3/Claude/Codex themselves (0 = never);
+    # a busy agent is waited for up to wait_hours, then on_busy decides: "defer" (next night) or "resume" (restart it
+    # and tell each interrupted chat to carry on)
+    'updates': {
+        'agentlab': 'off',
+        'time': '04:30',
+        'branch': 'main',
+        'agent_tools_hours': 6,
+        'wait_hours': 4,
+        'on_busy': 'defer',
+    },
     'companion_policy': {'self_service': True, 'max_per_agent': 0},  # 0 = no cap
 }
-AGENT_KEYS = {'id', 'owner', 'memory', 'cpus', 'publish', 'hostname', 'image'}
+AGENT_KEYS = {'id', 'owner', 'memory', 'cpus', 'publish', 'hostname', 'image', 'color'}
+# The hub's agent colours (hub/web/src/theme/hues.ts); unset = picked from the id.
+COLORS = ('green', 'pink', 'violet', 'amber', 'sky', 'red', 'teal', 'indigo')
 PUBLISHABLE = ('t3', 'accounts', 'browser', 'terminal', 'files')
 COMPANION_KEYS = {'name', 'agent', 'kind', 'display_name'}
 COMPANION_KINDS = {'slack'}
@@ -300,6 +313,7 @@ def resolve(raw, previous=None, state=None):
         'cloudflare',
         'coolify',
         'images',
+        'updates',
         'companion_policy',
         'agents',
         'companions',
@@ -328,6 +342,19 @@ def resolve(raw, previous=None, state=None):
     cloudflare = _section(raw.get('cloudflare', {}), 'cloudflare', problems)
     coolify = _section(raw.get('coolify', {}), 'coolify', problems)
     images = _section(raw.get('images', {}), 'images', problems)
+    updates = _section(raw.get('updates', {}), 'updates', problems)
+    if updates['agentlab'] not in ('off', 'daily'):
+        problems.append('[updates] agentlab must be "off" or "daily"')
+    if not TIME.match(str(updates['time'])):
+        problems.append('[updates] time must be HH:MM')
+    if updates['on_busy'] not in ('defer', 'resume'):
+        problems.append('[updates] on_busy must be "defer" or "resume"')
+    for key in ('agent_tools_hours', 'wait_hours'):
+        v = updates[key]
+        if isinstance(v, bool) or not isinstance(v, int | float) or v < 0:
+            problems.append(f'[updates] {key} must be a number of hours (0 or more)')
+    if not str(updates['branch']).strip():
+        problems.append('[updates] branch must name a branch')
     policy = _section(raw.get('companion_policy', {}), 'companion_policy', problems)
     if not isinstance(policy['self_service'], bool):
         problems.append('[companion_policy] self_service must be true or false')
@@ -390,6 +417,9 @@ def resolve(raw, previous=None, state=None):
         if not EMAIL.match(owner):
             problems.append(f'{where} ({aid}): owner must be an email address')
         pair_host = c['pair_domain'].replace('{id}', aid) if c['pair_domain'] else ''
+        color = str(a.get('color') or '')
+        if color and color not in COLORS:
+            problems.append(f'{where} ({aid}): color {color!r} must be one of {", ".join(COLORS)}')
         if storage['mode'] == 'per-person':
             unit = f'{c["data"]}/people/{person(owner)}'
             path = f'{unit}/{aid}'
@@ -410,6 +440,7 @@ def resolve(raw, previous=None, state=None):
                 'storage_unit': unit,  # the mounted image this agent's files live on; '' = the host's filesystem
                 'subnet': '',
                 'pair_host': pair_host,
+                'color': color,
             }
         )
     published = [p for a in agents for p in a['publish'].values()] + ([hub['publish']] if hub['publish'] else [])
@@ -536,6 +567,7 @@ def resolve(raw, previous=None, state=None):
         'companions': companions,
         'seed': [c['name'] for c in seeds],  # cluster.toml entries apply records in the state file
         'companion_policy': policy,
+        'updates': updates,
         # Below: only agentctl's (file paths, never secrets themselves); left out of cluster.json.
         'cloudflare': {**cloudflare, 'login_method': str(auth_cf['login_method'])},
         'coolify': coolify,

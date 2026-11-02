@@ -32,7 +32,7 @@ part_companion() { py companion 'cd companion && pip install -q -r tests/require
 part_image() { py image 'pip install -q pytest==8.3.4 && python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'; }
 part_shell() {
   docker run --rm -v "$REPO:/repo:ro" -w /repo "$SHELLCHECK" sh -c \
-    'shellcheck -x -P SCRIPTDIR host/install/*.sh scripts/check.sh hub/test.sh image/build.sh image/entrypoint.sh image/adb \
+    'shellcheck -x -P SCRIPTDIR host/install/*.sh scripts/check.sh hub/test.sh image/build.sh image/entrypoint.sh image/tools.sh image/adb \
        image/agent-terminal image/android-emulator image/browser-idle-reaper image/chrome-on-demand image/throttle/shim \
      && echo "shellcheck ok"' || failed+=(shell)
 }

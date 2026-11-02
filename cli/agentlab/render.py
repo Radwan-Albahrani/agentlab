@@ -243,6 +243,10 @@ def agent(cfg, a):
             'AGENTLAB_AUTH_MODE': cfg['auth']['mode'],
             'ANDROID_ENABLED': '1' if cfg['android']['enabled'] else '',
             'ANDROID_SYSTEM_IMAGE': cfg['android']['system_image'],
+            # agent-updater: how often to refresh T3/Claude/Codex, and what to do when T3 stays busy
+            'AGENTLAB_UPDATE_HOURS': f'{cfg["updates"]["agent_tools_hours"]:g}',
+            'AGENTLAB_UPDATE_WAIT_HOURS': f'{cfg["updates"]["wait_hours"]:g}',
+            'AGENTLAB_ON_BUSY': cfg['updates']['on_busy'],
             'TZ': cfg['timezone'],
         },
         'volumes': [f'{home}/home:/home/agent', f'{home}/workspace:/workspace', f'{home}/linuxbrew:/home/linuxbrew'],

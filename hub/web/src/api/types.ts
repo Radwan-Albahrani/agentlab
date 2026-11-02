@@ -26,6 +26,8 @@ export interface Event {
 export interface Nav {
   attention: number;
   agents: { name: string; up: boolean; companions: { name: string; display: string; live: boolean; waiting: number }[] }[];
+  /** Colours chosen in cluster.toml, by agent id; the rest are picked from the id. */
+  colors?: Record<string, string>;
   allAgents: boolean;
   system: { key: string; path: string; label: string; count?: number; note?: string }[];
   display: boolean;

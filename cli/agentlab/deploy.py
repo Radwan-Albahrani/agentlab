@@ -1,5 +1,6 @@
 """Getting rendered stacks running: networks, deploys (plain Compose or Coolify), and the edge and hub joining every
-agent's network. Only stacks whose compose file changed since their last deploy are redeployed."""
+agent's network. A stack is redeployed when its compose file changed since its last deploy, or when a newer local
+image exists for a running container (after `images build`); an agent waits for that until no T3 turn is running."""
 
 import hashlib
 import json
@@ -103,21 +104,82 @@ def containers(cfg, stack, service=None, all_states=False):
     return run(cmd, check=False)[1].split()
 
 
+def stale_images(cfg, stack):
+    """Image tags whose local image is newer than what the stack's running containers use (an `images build` or
+    pull since the last deploy). Stopped containers don't count: redeploying would start them."""
+    out = set()
+    for cid in containers(cfg, stack):
+        rc, info = run(['docker', 'inspect', '-f', '{{.Config.Image}} {{.Image}}', cid], check=False)
+        if rc or len(info.split()) != 2:
+            continue
+        tag, used = info.split()
+        rc, current = run(['docker', 'image', 'inspect', '-f', '{{.Id}}', tag], check=False)
+        if rc == 0 and current.strip() and current.strip() != used:
+            out.add(tag)
+    return sorted(out)
+
+
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')  # any other T3 run status is a turn in progress
+
+
+def agent_busy(agent):
+    """A T3 turn is in progress in this agent (read on the host, read-only). An unreadable database counts as busy:
+    better a redeploy on the next apply than a turn cut off."""
+    import sqlite3  # noqa: PLC0415 - only apply needs it
+
+    db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
+    if not os.path.exists(db):
+        return False  # a new agent: nothing to cut off
+    try:
+        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
+            marks = ','.join('?' * len(SETTLED))
+            q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks})'
+            return c.execute(q, SETTLED).fetchone()[0] > 0
+    except sqlite3.Error:
+        return True
+
+
+def agent_of(cfg, stack):
+    return next((a for a in cfg['agents'] if stack == f'agentlab-agent-{a["id"]}'), None)
+
+
+def why_deploy(cfg, stack, text, force=False):
+    """(reason to deploy or '', skip message or ''). A changed image restarts an agent only while it is idle;
+    --force skips that check."""
+    if force:
+        return 'asked for', ''
+    if changed_since_deploy(cfg, stack, text):
+        return 'its file changed', ''
+    # Stopped containers count as deployed: a companion down on purpose (not configured yet, or stopped by its agent)
+    # must not be started again by every apply.
+    if not containers(cfg, stack, all_states=True):
+        return 'not running', ''
+    stale = stale_images(cfg, stack)
+    if not stale:
+        return '', ''
+    agent = agent_of(cfg, stack)
+    if agent and agent_busy(agent):
+        return '', f'{agent["id"]} busy (a T3 turn is running); its new image goes live on the next apply'
+    return f'newer image: {", ".join(stale)}', ''
+
+
 def deploy(cfg, stack, kind, key, plan, force=False):
-    """Bring one stack up to its rendered file; True when it was (or would be) deployed."""
+    """Bring one stack up to its rendered file and current images; True when it was (or would be) deployed."""
     path = compose_file(cfg, stack)
     with open(path) as f:
         text = f.read()
-    # Stopped containers count as deployed: a companion down on purpose (not configured yet, or stopped by its agent)
-    # must not be started again by every apply.
-    if not force and not changed_since_deploy(cfg, stack, text) and containers(cfg, stack, all_states=True):
+    reason, skip = why_deploy(cfg, stack, text, force)
+    if skip:
+        say(f'  {skip}')
+    if not reason:
         return False
+    note = f' ({reason})' if reason.startswith('newer image') else ''
     if cfg['deploy'] == 'compose':
-        plan.do(f'deploy {stack}', ['docker', 'compose', '-p', stack, '-f', path, 'up', '-d', '--remove-orphans'])
+        plan.do(f'deploy {stack}{note}', ['docker', 'compose', '-p', stack, '-f', path, 'up', '-d', '--remove-orphans'])
     else:
         api = coolify.Api(cfg)
         plan.do(
-            f'deploy {stack} through Coolify',
+            f'deploy {stack} through Coolify{note}',
             fn=lambda: coolify.deploy(api, cfg, stack, kind, key, stack_folder(cfg, stack), text),
         )
     if not plan.dry:

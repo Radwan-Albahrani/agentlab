@@ -68,9 +68,9 @@ RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
 
 COPY --chmod=755 entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY --chmod=755 agent-config agent-terminal agent-janitor browser-idle-reaper browser-mcp-lazy chrome-on-demand \
-     docker-on-demand android-emulator adb companion /usr/local/bin/
+     docker-on-demand android-emulator adb companion agent-updater /usr/local/bin/
 COPY --chmod=644 profile.sh /etc/profile.d/zz-agent.sh
-COPY --chmod=644 playwright-mcp.json agent-instructions.md load-env.sh /etc/agent/
+COPY --chmod=644 playwright-mcp.json agent-instructions.md load-env.sh tools.sh /etc/agent/
 COPY --chmod=644 supervisord.conf /etc/agent-supervisord.conf
 COPY skills /etc/agent/skills
 COPY accounts /opt/accounts

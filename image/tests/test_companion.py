@@ -68,10 +68,10 @@ def test_a_failed_action_exits_nonzero_and_silence_times_out(home):
 
 def test_secret_comes_from_stdin_in_a_private_file_and_is_dropped_if_unanswered(home, monkeypatch):
     seen = {}
-    monkeypatch.setattr('sys.stdin', io.StringIO('xoxb-123\n'))
+    monkeypatch.setattr('sys.stdin', io.StringIO('xoxb-example\n'))
     watcher(home, 'secret~companion~helper', {'ok': True, 'key': 'bot-token.txt'}, seen)
     companion.cmd_secret('helper', 'bot-token.txt')
-    assert seen == {'mode': 0o600, 'payload': {'key': 'bot-token.txt', 'value': 'xoxb-123'}}
+    assert seen == {'mode': 0o600, 'payload': {'key': 'bot-token.txt', 'value': 'xoxb-example'}}
     monkeypatch.setattr('sys.stdin', io.StringIO('xapp-1'))
     with pytest.raises(SystemExit):
         companion.cmd_secret('helper', 'app-token.txt')

@@ -46,5 +46,14 @@ server: for real disaster recovery, ask the human where to copy `<data>/backups/
 
 ## Upgrades
 
-`git pull` in the repo, `agentctl images build`, `apply --dry-run` (shows which stacks restart), `apply`. Agents
-restart only if their image or settings changed; people lose nothing but running processes, so warn them first.
+`agentctl update` does it all: fast-forward the repo (it stops on local changes or a diverged branch rather than
+merging), rebuild or pull the images, `apply`. Agents restart only if their image or settings changed, and only while
+no T3 turn is running: busy ones are waited for up to `[updates] wait_hours`, then `on_busy` decides (`defer` to the
+next run, or `resume`: restart and tell the interrupted chats to continue). `agentctl status` shows the last run.
+
+- Nightly: `[updates] agentlab = "daily"` (and `time`), then `agentctl install --only units` to enable the timer;
+  `"off"` disables it again. A failed nightly run shows in `doctor`.
+- Inside each agent, T3 / Claude Code / Codex refresh every `agent_tools_hours` on their own (0 turns it off); a new
+  T3 server version goes live at the next idle moment. Its log: `~/logs/updater.log` in the agent.
+- Need it now and someone is mid-turn: `agentctl apply --force` restarts them anyway (warn them first).
+- The repo copy on the server must be a git checkout for `update` (a copied folder can't be pulled).

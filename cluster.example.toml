@@ -56,6 +56,7 @@ owner = "admin@example.com"
 id = "sara"
 owner = "sara@example.com"
 memory = "16g"                     # optional overrides: memory, cpus, hostname, image
+# color = "teal"                   # the hub's colour for this agent: green, pink, violet, amber, sky, red, teal or indigo
 
 [[agents]]
 id = "sara-mobile"                 # one person can own several agents; they pick on the menu
@@ -75,7 +76,7 @@ owner = "sara@example.com"
 # extra_stacks = ["media"]         # other stacks on this host the hub should show (status, restart, logs): Compose
 #                                  # project names, or Coolify project names (all of that project's services)
 # bark_url = "http://host.docker.internal:7192"   # optional phone pushes through a Bark server (the hub posts here)
-# bark_public = "http://100.64.0.1:7192"          # the address the phone app registers with (default: bark_url)
+# bark_public = "http://my-server:7192"             # the address the phone app registers with (default: bark_url)
 # extra_secrets = "/srv/other/secrets"            # another folder of secrets on this host, shown (admins only) as
 # extra_secrets_map = "/srv/other/secrets-map.json" # its own group on Secrets; its map (hub/secrets-map.json format)
 # extra_secrets_label = "Homelab"                  # may restart allowed containers or copy into an agent's home
@@ -88,6 +89,14 @@ system_image = "system-images;android-35;google_apis;x86_64"
 enabled = true                     # nightly backups of chats and companion data; `agentctl backup run` works either way
 keep_days = 14
 time = "03:30"
+
+[updates]
+agentlab = "off"                   # "daily": `agentctl update` every night (git pull, images, apply)
+time = "04:30"
+branch = "main"
+agent_tools_hours = 6              # each agent refreshes T3, Claude Code, Codex... this often (0 = never)
+wait_hours = 4                     # a busy agent (a T3 turn running) is waited for this long, checked every 5 min
+on_busy = "defer"                  # still busy then: "defer" (next run) or "resume" (restart it, tell its chats to continue)
 
 [cloudflare]                       # used by `agentctl cloudflare setup`
 account_id = ""
