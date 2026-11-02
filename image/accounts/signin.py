@@ -29,6 +29,7 @@ FLOWS = {
         '--web --scopes workflow --skip-ssh-key --insecure-storage',
         'logout': 'gh auth logout --hostname github.com </dev/null',
         'hint': 'Open the link and enter the code. This signs in git, the gh CLI and the GitHub MCP server.',
+        'link': 'https://github.com/login/device',  # gh also prints announcement links before it
     },
 }
 AI_FLOWS = ('claude', 'codex')
@@ -125,7 +126,8 @@ def state(flow):
         open(GH_WIRED, 'w').close()
         if 'github' not in connectors.load() or not run('git config --global --get-regexp credential')[1]:
             after_github_login()
-    url, code = (urls[0] if urls else ''), (code.group(0) if code else '')
+    url = next((u for u in urls if u.startswith(FLOWS[flow].get('link', 'https://'))), '')
+    code = code.group(0) if code else ''
     return {
         'signedIn': signed_in,
         'detail': detail,
