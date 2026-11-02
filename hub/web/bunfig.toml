@@ -1,0 +1,5 @@
+# bun fmt (replaces Prettier): the same style the hub always had
+[fmt]
+printWidth = 130
+singleQuote = true
+trailingComma = "all"

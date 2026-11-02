@@ -139,7 +139,9 @@ export function Sidebar({ menu, onLogo }: { menu: Menu; onLogo: (e: MouseEvent) 
   return (
     <aside {...stylex.props(styles.side)}>
       <div {...stylex.props(styles.brand)}>
-        <span {...stylex.props(styles.logo)} onClick={onLogo}>
+        {/* Decorative logo, not a control: its triple click is the hidden presenting switch, whose keyboard twin is
+            Alt+Shift+P (usePresentingSwitch), so screen readers and the tab order skip it. */}
+        <span {...stylex.props(styles.logo)} role="presentation" onClick={onLogo}>
           <Icon name="agents" size={17} />
         </span>
         <Link to="/">

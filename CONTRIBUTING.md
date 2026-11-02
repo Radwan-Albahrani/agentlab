@@ -56,7 +56,8 @@ names a hub package, bump it in `hub/web/package.json`, run `bun install` in the
 - Python: standard library where it's enough; `ruff` with the repo's [`ruff.toml`](ruff.toml) (single quotes, 120
   columns). The CLI stays standard-library only.
 - Shell: `set -eu`, passes `shellcheck`.
-- Hub web: TypeScript, React, StyleX, Base UI; `bun`; lint, typecheck and format must pass (`hub/test.sh check`).
+- Hub web: TypeScript, React, StyleX, Base UI; `bun`. `bun run verify` (`bun check` types, `oxlint --type-aware`
+  lint with warnings denied, `bun fmt` format) must pass, as must `hub/test.sh check`.
 - LF line endings everywhere (`.gitattributes` enforces it).
 - Nothing personal in the repo: no real names, emails, domains, IPs, tokens or company details. Tests and examples use
   `example.com`.

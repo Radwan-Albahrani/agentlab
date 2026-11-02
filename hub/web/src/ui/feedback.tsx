@@ -88,7 +88,10 @@ function Toasts() {
           <Toast.Root
             key={t.id}
             toast={t}
-            role="status"
+            // A status message, not a dialog: a native <output>. Base UI stamps role="dialog" on the toast root, so the
+            // otherwise implicit role has to be spelled out to win (checked in jsdom).
+            // oxlint-disable-next-line jsx-a11y/no-redundant-roles -- required: overrides Base UI's role="dialog"
+            render={<output role="status" />}
             className={(s) =>
               stylex.props(styles.toast, (s.transitionStatus === 'starting' || s.transitionStatus === 'ending') && styles.moving)
                 .className ?? ''

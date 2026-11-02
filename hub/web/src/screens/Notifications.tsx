@@ -121,7 +121,7 @@ function Encryption({ settings: s }: { settings: Data['settings'] }) {
         <KeyValues
           items={[
             ['Algorithm', 'AES128 · CBC · pkcs7'],
-            ['Key', <Mono>{s.encKey}</Mono>],
+            ['Key', <Mono key="key">{s.encKey}</Mono>],
             ['IV', 'leave empty'],
           ]}
         />

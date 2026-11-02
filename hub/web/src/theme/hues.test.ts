@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hueTheme, setAgentColors } from './hues';
 
 describe('hueTheme', () => {
-  afterEach(() => setAgentColors(undefined));
+  afterEach(() => {
+    setAgentColors(undefined);
+  });
 
   it('picks the same colour for an id every time, without a chosen one', () => {
     expect(hueTheme('example')).toBe(hueTheme('example'));
