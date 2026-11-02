@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { useConfigFile, useConfigs } from '../api/queries';
 import type { ConfigFile, ConfigRow, Configs as Data } from '../api/types';
 import { Screen } from '../app/Screen';

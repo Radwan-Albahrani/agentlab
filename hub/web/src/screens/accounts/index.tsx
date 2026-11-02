@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useAccounts } from '../../api/queries';
 import type { AccountsPage } from '../../api/types';
 import { Screen } from '../../app/Screen';

@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { MouseEvent } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { hueTheme } from '../theme/hues';
 import { agent, colors, media, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from '../ui/Icon';

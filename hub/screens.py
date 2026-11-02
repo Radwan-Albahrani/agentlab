@@ -229,6 +229,7 @@ def companion(name):
         'since': hb.get('since'),
         'seen': hb.get('at'),
         'mode': mode,
+        'templateUpdate': c['template_update'],
         'tasks': tasks,
         'events': c['events'][:200],  # paged on the page
         'sentThisWeek': [

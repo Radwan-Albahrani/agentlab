@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { isKind, type SecretFilter } from '../../lib/secretFilter';
 
 /** The Secrets screen's search and filters, kept in the URL (?q=&effect=&usedBy=) so a view can be linked or reloaded. */

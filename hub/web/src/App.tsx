@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router';
 import { Shell } from './app/Shell';
 import { NotFound } from './app/Screen';
 import { Accounts } from './screens/accounts';

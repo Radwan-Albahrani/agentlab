@@ -40,5 +40,8 @@ hub/test.sh e2e [url] [args] Playwright click-through (SHOTS=<dir> saves screens
 hub/test.sh all              build, start the throwaway hub, e2e, stop it
 ```
 
+The web app has two TypeScripts on purpose: `typescript7` (the native compiler) type-checks, while `typescript` stays
+on 6.0 because typescript-eslint's typed rules don't support 7 yet. Drop the alias once they do.
+
 For the web app alone: `hub/test.sh instance start`, then `cd web && bun install && bun run dev` (it proxies `/api` to
 the throwaway hub, or to `HUB_URL`).

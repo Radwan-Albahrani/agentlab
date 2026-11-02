@@ -118,7 +118,7 @@ export function useTogglePresenting() {
   return useCallback(async () => {
     await post('/api/display/presenting', { toggle: true });
     await qc.invalidateQueries();
-    const nav = await qc.fetchQuery({ queryKey: ['nav'], queryFn: api.nav });
+    const nav = await qc.query({ queryKey: ['nav'], queryFn: api.nav });
     return nav.display;
   }, [qc]);
 }

@@ -8,6 +8,8 @@
 4. Busy agents are waited for: checked every few minutes for up to [updates] wait_hours, each updated the moment it is
    idle (an idle agent never waits for a busy one). At the end of the window, on_busy decides: "defer" leaves it for
    the next run, "resume" restarts it anyway and then tells each T3 chat whose turn the restart cut off to carry on.
+5. (inside apply) Each companion checkout gets template changes merged in when it's clean and they don't conflict
+   (template.py).
 
 The outcome goes to <data>/state/update.json, which `status` and `doctor` show."""
 
@@ -202,7 +204,7 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=()):
             images.build(cfg, plan, force=True)
         else:
             images.pull(cfg, plan)
-        apply.apply(cfg, config_path)
+        applied = apply.apply(cfg, config_path)
         updated, deferred, resumed = wait_for_agents(cfg, plan, u['wait_hours'], u['on_busy'])
     except Failed as e:
         record(cfg, scheduled=scheduled, result='failed', error=str(e), commit=_safe_head())
@@ -218,6 +220,7 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=()):
         agents_updated=updated,
         agents_deferred=deferred,
         chats_resumed=resumed,
+        companion_templates=applied.get('companion_templates', {}),
     )
 
 

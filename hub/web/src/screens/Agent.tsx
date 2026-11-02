@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useAgent } from '../api/queries';
 import type { AgentPage, Pool } from '../api/types';
 import { AgentCard } from '../app/AgentCard';

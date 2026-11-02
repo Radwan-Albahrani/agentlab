@@ -448,6 +448,12 @@ class Screens(unittest.TestCase):
         needs = {n['title']: n['tone'] for n in screens.overview()['needs']}
         self.assertEqual(needs['Helper is not set up yet'], 'info')
 
+    def test_template_update_state_comes_from_agentctl(self):
+        t = screens.companion('scout')['templateUpdate']
+        self.assertEqual((t['state'], t['from'], t['to']), ('conflict', 'a1b2c3d', 'e4f5a6b'))
+        self.assertIn('bot/prompts.py', t['detail'])
+        self.assertEqual(screens.companion('helper')['templateUpdate'], {})  # never checked yet
+
     def test_pulls_and_polls(self):
         c = screens.companion('scout')
         self.assertEqual(c['pulls']['items'][0]['id'], 'example/app#12')

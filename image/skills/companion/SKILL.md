@@ -28,7 +28,7 @@ companion status <name>        # heartbeat, version, last error
 | how to change it | `/workspace/companions/<name>/README.md`, section "Changing your companion" (read it first) |
 | its log | `/workspace/.companion/<name>/logs/companion.log` (`companion logs <name>`, `-f` to follow) |
 | its status | `/workspace/.companion/<name>/status.json` (`companion status <name>`) |
-| template updates | the repo's `upstream` remote |
+| template updates | the `template` branch (merged in for you; see below) |
 
 ## Setting up a new Slack companion, end to end
 
@@ -74,8 +74,15 @@ Optional secrets, only when the person wants the feature: `user-token.txt` (the 
    stays down until it's fixed.
 7. If it broke: `git revert HEAD`, `companion test <name>`, `companion restart <name>`, then find out what went wrong.
 
-`companion stop <name>` / `companion start <name>` stop and start it without changing anything. Template updates:
-`git fetch upstream`, merge or cherry-pick what you want, test, commit, restart.
+`companion stop <name>` / `companion start <name>` stop and start it without changing anything.
+
+**Template updates arrive on their own.** When agentlab improves the companion template (fixes, security updates),
+the host commits it to the checkout's `template` branch and merges that into your branch as a commit named
+`chore: merge agentlab template <from>..<to>`, then restarts the companion and checks it comes up (if it doesn't, that
+merge is undone). It only does this when your checkout has no uncommitted changes and the merge has no conflicts, so
+your work is never touched; commit your changes to get updates. When the hub or `agentctl status` says the template
+update **needs merging** (conflicts), do it yourself: `git merge template`, resolve each conflict keeping your
+behaviour, `companion test <name>`, commit, `companion restart <name>`, check status and logs.
 
 ## Settings and secrets
 

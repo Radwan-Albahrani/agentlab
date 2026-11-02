@@ -1,5 +1,5 @@
 import { useCallback, useEffect, type MouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTogglePresenting } from '../api/queries';
 
 /** Presenting on/off without any trace on screen: Alt+Shift+P, or a triple click on the logo (returned handler). */
@@ -8,7 +8,7 @@ export function usePresentingSwitch() {
   const navigate = useNavigate();
   const toggle = useCallback(async () => {
     const displayVisible = await togglePresenting();
-    if (!displayVisible) navigate('/');
+    if (!displayVisible) void navigate('/');
   }, [togglePresenting, navigate]);
 
   useEffect(() => {

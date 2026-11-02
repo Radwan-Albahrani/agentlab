@@ -89,6 +89,21 @@ def status(name):
     return read_json(os.path.join(AGENTS, agent, 'workspace', '.companion', name, 'status.json'), {})
 
 
+def template_update(name):
+    """How the companion's code stands against the agentlab template (agentctl writes template.json on each apply):
+    {state: up-to-date|merged|conflict|skipped|reverted, detail, from, to, at}, or {} before the first check."""
+    r = read_json(os.path.join(_folder(name), 'template.json'), {})
+    if not r:
+        return {}
+    return {
+        'state': r.get('result', ''),
+        'detail': r.get('detail', ''),
+        'from': r.get('template_from', ''),
+        'to': r.get('template_to', ''),
+        'at': r.get('at', ''),
+    }
+
+
 def companion(name):
     heartbeat = read_json(os.path.join(_folder(name), 'heartbeat.json'), {})
     tasks, events, polls, pulls = _read_db(name)
@@ -107,6 +122,7 @@ def companion(name):
         'events': events,
         'polls': polls,
         'pulls': pulls,
+        'template_update': template_update(name),
     }
 
 

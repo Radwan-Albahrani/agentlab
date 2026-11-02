@@ -251,6 +251,16 @@ def companion(root):
     os.makedirs(folder, exist_ok=True)
     companion_db(f'{folder}/companion.db')
     dump(
+        f'{folder}/template.json',
+        {
+            'template_from': 'a1b2c3d',
+            'template_to': 'e4f5a6b',
+            'result': 'conflict',
+            'detail': 'template update needs merging (conflicts in: bot/prompts.py)',
+            'at': '2026-11-02T04:31:00+03:00',
+        },
+    )
+    dump(
         f'{folder}/heartbeat.json',
         {
             'name': COMPANION,

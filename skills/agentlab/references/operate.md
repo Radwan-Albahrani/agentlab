@@ -38,6 +38,12 @@ The gate logs every refusal with the reason: `docker logs <gate container>`.
 - Down after a change: logs at `<agent path>/workspace/.companion/<name>/logs/companion.log`, status in `status.json`
   next to it. Tell the owner (their agent can `git revert` and `companion restart`).
 - "not configured": its Slack secrets are missing — the owner adds them in their hub (Secrets).
+- Template updates: every `apply` / `update` merges a changed `companion/` template into each checkout as a
+  `chore: merge agentlab template …` commit when the checkout is clean and nothing conflicts, restarts the companion
+  and undoes that merge if it then fails to start. `agentctl status` lists companions that aren't up to date:
+  `skipped` (uncommitted changes; retried next time), `conflict` (needs merging: the owner's agent runs
+  `git merge template`, resolves, tests, commits, restarts), `reverted` (the merged code didn't start; the error is in
+  the line and the companion's log). Don't merge or reset in someone's checkout yourself.
 
 ## Backups
 
