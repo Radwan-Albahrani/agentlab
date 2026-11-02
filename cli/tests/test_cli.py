@@ -1857,3 +1857,20 @@ class EnrollmentExposure(unittest.TestCase):
         self.assertEqual(check[4], 'info')
         self.assertIn('10.0.5.0/24 (prod)', check[2])
         self.assertNotIn('10.0.9.7', check[2])
+
+
+class HostTunnelCheck(unittest.TestCase):
+    """#23: private mode runs the tunnel in agentlab-core, so doctor doesn't ask for the retired host service."""
+
+    def checks(self, text):
+        c = doctor.Checks()
+        with mock.patch.object(doctor, '_active', return_value=False), mock.patch.object(doctor, '_domain_levels'):
+            doctor._cloudflared(config.resolve(tomllib.loads(text)), c)
+        return [i['id'] for i in c.items]
+
+    def test_private_skips_the_host_service(self):
+        self.assertNotIn('cloudflared', self.checks(BASE))
+
+    def test_public_still_checks_it(self):
+        public = BASE.replace('team = "example"', 'team = "example"\nnetwork = "public"')
+        self.assertIn('cloudflared', self.checks(public))

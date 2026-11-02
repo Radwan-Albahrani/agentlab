@@ -285,12 +285,13 @@ def _cloudflared(cfg, c):
         c.sudo('tunnel-token', f'tunnel token in {token}')
     else:
         c.add('tunnel-token', _private(token), f'tunnel token in {token}', 'agentctl cloudflare setup')
-    c.add(
-        'cloudflared',
-        bool(shutil.which('cloudflared')) and _active('cloudflared'),
-        'cloudflared running',
-        'agentctl install (after agentctl cloudflare setup wrote the token)',
-    )
+    if not config.private_network(cfg):  # private mode runs the tunnel in agentlab-core (checked as core-cloudflared)
+        c.add(
+            'cloudflared',
+            bool(shutil.which('cloudflared')) and _active('cloudflared'),
+            'cloudflared running',
+            'agentctl install (after agentctl cloudflare setup wrote the token)',
+        )
     _domain_levels(cfg, c)
 
 
