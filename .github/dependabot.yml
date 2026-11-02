@@ -20,6 +20,11 @@ updates:
     # majors (React, the router, TypeScript, Vite…) change code, so each comes as its own pull request instead of
     # failing the whole weekly group
     groups: { web: { patterns: ["*"], update-types: [minor, patch] } }
+    ignore:
+      # lint needs a TypeScript typescript-eslint supports (6.x); typecheck already runs 7 via the typescript7 alias.
+      # Drop this once typescript-eslint supports 7.
+      - dependency-name: typescript
+        versions: [">=7"]
 
   - package-ecosystem: docker
     directories: [/image, /gate, /hub, /companion]
