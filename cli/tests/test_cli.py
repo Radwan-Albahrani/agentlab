@@ -720,6 +720,7 @@ class FakeCloudflare:
         self.denied = set()  # path fragments this token can't reach (the API answers 403)
         self.denied_writes = set()  # path fragments it may read but not change
         self.org = {'auth_domain': 'example.cloudflareaccess.com', 'warp_auth_session_duration': '24h'}
+        self.refuse_app_flag = False  # netzero's account: the per-app client sign-in flag is refused with 12130
         self.own_groups = None  # the token's permission group names, when it may read itself
         self.calls = []  # every call, in order
         self.ip_routes = []  # private IP routes on tunnels (teamnet)
@@ -741,12 +742,20 @@ class FakeCloudflare:
         warp_app = (
             '/access/apps' in path and method in ('POST', 'PUT') and (body or {}).get('allow_authenticate_via_warp')
         )
-        if warp_app and not self.org.get('warp_auth_session_duration'):
+        if warp_app and (not self.org.get('warp_auth_session_duration') or self.refuse_app_flag):
             raise cloudflare.ApiError(
                 f'Cloudflare {method} {path}: HTTP 400 [{{"code": 12130, "message": "allow_authenticate_via_warp '
                 'cannot be set until a Cloudflare One Client Authentication session duration is set"}}]',
                 400,
             )
+        if '/access/apps' in path and method in ('POST', 'PUT') and (body or {}).get('domain'):
+            public = [d.get('uri') for d in body.get('destinations', []) if d.get('type') == 'public']
+            if body['domain'] not in public:  # what the real API answered netzero (#21)
+                raise cloudflare.ApiError(
+                    f'Cloudflare {method} {path}: HTTP 400 [{{"code": 12130, "message": "access.api.error.'
+                    'invalid_request: domain not included in destinations"}}]',
+                    400,
+                )
         path, _, query = path.partition('?')
         params = dict(p.split('=', 1) for p in query.split('&') if '=' in p)
         if path.endswith('/cfd_tunnel') and method == 'GET':
@@ -817,7 +826,9 @@ class FakeCloudflare:
             return self.enroll
         if '/access/apps/' in path and method == 'PUT':
             app = next(a for a in self.apps if a['id'] == path.rsplit('/', 1)[1])
-            app.update(body)
+            kept = {k: app[k] for k in ('id', 'aud') if k in app}
+            app.clear()  # a PUT replaces the application, as the real API does
+            app.update({**body, **kept})
             return app
         if path.endswith('/access/organizations'):
             if method == 'PUT':
@@ -1667,6 +1678,36 @@ class SafeSwitch(unittest.TestCase):
             self.go(self.private)
         self.assertIn('session duration', str(e.exception))
         self.public_still_works()  # the app is made before the tunnel switches
+
+    def test_an_account_that_allows_client_sign_in_everywhere_needs_no_per_app_flag(self):
+        # #21: the organization had client sessions on for every app, a duration set, and Cloudflare still refused
+        # the per-app flag; the app now inherits the account-wide setting instead of asking for it
+        self.fake.org['allow_authenticate_via_warp'] = True
+        self.fake.refuse_app_flag = True
+        self.go(self.private)
+        app = next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
+        self.assertFalse(app.get('allow_authenticate_via_warp'))
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            checks = {c[0]: c[1] for c in cloudflare.client_only_checks(config.load(self.config_path))}
+        self.assertTrue(checks['client-sign-in'])
+
+    def test_a_private_app_sends_no_public_domain(self):
+        # #21: Cloudflare refused the private app with "domain not included in destinations" (code 12130)
+        self.go(self.private)
+        app = next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
+        self.assertNotIn('domain', app)
+        self.assertTrue(all(d['type'] == 'private' for d in app['destinations']))
+
+    def test_an_invalid_request_is_not_mistaken_for_the_session_duration(self):
+        e = cloudflare.ApiError('HTTP 400 [{"code": 12130, "message": "access.api.error.invalid_request: x"}]', 400)
+        self.assertIsNone(cloudflare.refused(e, 'update Access application'))
+
+    def test_a_refusal_shows_cloudflares_own_words(self):
+        self.fake.refuse_app_flag = True  # and the account doesn't allow it everywhere
+        with self.assertRaises(util.Needs) as e:
+            self.go(self.private)
+        self.assertIn('Cloudflare said:', str(e.exception))
+        self.assertIn('12130', str(e.exception))
 
     def test_order_routes_and_app_before_the_switch_and_dns_last(self):
         self.go(self.private)

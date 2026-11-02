@@ -284,11 +284,12 @@ class Setup:
             if private
             else [{'type': 'public', 'uri': h} for h in hosts]
         )
-        warp = private or self.cfg['auth']['cloudflare']['require_warp']
+        # Devices on the client sign in with their client session, so the T3 desktop and phone apps work too. When
+        # the account already allows that for every application, the app inherits it and doesn't ask for it.
+        warp = (private or self.cfg['auth']['cloudflare']['require_warp']) and not self.account_allows_client_sign_in()
         body = {
             'name': self.named(name),
             'type': 'self_hosted',
-            'domain': hosts[0],
             'destinations': destinations,
             'session_duration': '24h',
             'app_launcher_visible': False,
@@ -296,9 +297,11 @@ class Setup:
             # Empty: every login method of the account is offered (and an earlier pin is cleared on update).
             'allowed_idps': idps,
             'auto_redirect_to_identity': len(idps) == 1,
-            # Devices on the client sign in with their client session, so the T3 desktop and phone apps work too
             'allow_authenticate_via_warp': True if warp else None,
         }
+        if not private:  # Cloudflare requires `domain` to be one of the public destinations; private apps have none
+            body['domain'] = hosts[0]
+        body = {k: v for k, v in body.items() if v is not None}  # send only what is meant; a PUT replaces the rest
         apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
         found = next((a for a in apps if a.get('name') == body['name']), None)
         if not found:
@@ -324,6 +327,15 @@ class Setup:
                 body,
             )
         return found.get('aud', '')
+
+    def account_allows_client_sign_in(self):
+        if not hasattr(self, '_org_sign_in'):
+            try:
+                org = self.api.call('GET', f'/accounts/{self.account}/access/organizations') or {}
+            except (ApiError, Failed):
+                org = {}
+            self._org_sign_in = bool(org.get('allow_authenticate_via_warp'))
+        return self._org_sign_in
 
     def named(self, name):
         """Everything agentlab makes is named agentlab-<cluster> (plus a suffix): it only ever touches those."""
@@ -563,14 +575,18 @@ CLIENT_SESSION_FIX = (
 def refused(e, what):
     """A change Cloudflare refused that a person must fix, as Needs with the fix; None for anything else."""
     text = str(e)
-    if '12130' in text or 'allow_authenticate_via_warp cannot be set' in text:
-        return Needs(f'Cloudflare refused to {what}: {CLIENT_SESSION_FIX}. Then run agentctl setup again.')
+    # by Cloudflare's message only: 12130 is its code for any invalid request
+    if 'allow_authenticate_via_warp cannot be set' in text:
+        return Needs(
+            f'Cloudflare refused to {what}: {CLIENT_SESSION_FIX}. Then run agentctl setup again. '
+            f'(Cloudflare said: {text})'
+        )
     if e.status in (401, 403):
         key = permission_for(text)
         add = f'add "{PERMISSIONS[key]}" to the token' if key else 'give the token the permission for it'
         return Needs(
             f'Cloudflare refused to {what} (HTTP {e.status}): {add} in the dashboard (its value stays the same), '
-            'then run agentctl setup again'
+            f'then run agentctl setup again. (Cloudflare said: {text})'
         )
     return None
 
@@ -831,8 +847,10 @@ def client_only_checks(cfg, opener=None):
                 'info',
             )
         )
+    org_sign_in = False
     try:
         org = api.call('GET', f'/accounts/{account}/access/organizations') or {}
+        org_sign_in = org.get('allow_authenticate_via_warp')
         out.append(
             (
                 'client-session',
@@ -849,7 +867,7 @@ def client_only_checks(cfg, opener=None):
     out.append(
         (
             'client-sign-in',
-            bool(app and app.get('allow_authenticate_via_warp')),
+            bool(app and app.get('allow_authenticate_via_warp')) or bool(org_sign_in),
             'devices on the client are signed in with their client session (no browser login; the T3 apps work)',
             'agentctl cloudflare setup; also check Zero Trust → Settings → WARP Client → Device enrollment: '
             '"WARP authentication identity" on',
