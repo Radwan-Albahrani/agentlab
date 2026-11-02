@@ -478,6 +478,12 @@ def edge(cfg):
     pass1 = ['ingress', 'websecure'] if https else ['ingress']
 
     def route(name, rule, service, chain, entrypoints, priority=None):
+        if https and 'websecure' in entrypoints and len(entrypoints) > 1:
+            # A router with tls serves TLS only, on every entrypoint it lists: plain HTTP needs a router of its own
+            # (#25: port 80 answered 404 instead of reaching the gate, which redirects it to HTTPS)
+            plain = [e for e in entrypoints if e != 'websecure']
+            route(f'{name}-http', rule, service, chain, plain, priority)
+            entrypoints = ['websecure']
         r = {'entryPoints': entrypoints, 'rule': rule, 'service': service}
         if chain:
             r['middlewares'] = chain

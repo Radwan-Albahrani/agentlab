@@ -139,6 +139,24 @@ def edge_certificate(host, address=render.EDGE_IP, port=443, timeout=5):
     return int(left), ''
 
 
+def edge_redirect(host, address=render.EDGE_IP, port=80, timeout=5):
+    """(True, '') when plain HTTP for `host` on the edge answers a redirect to https://<host>/; (False, what came
+    back) otherwise. A real request, the way the tunnel container sends it, not a marker file (#25)."""
+    request = f'GET / HTTP/1.1\r\nHost: {host}\r\nAccept: text/html\r\nConnection: close\r\n\r\n'.encode()
+    try:
+        with socket.create_connection((address, port), timeout=timeout) as raw:
+            raw.sendall(request)
+            head = raw.recv(4096).decode('latin-1')
+    except OSError as e:
+        return False, str(e)
+    status = head.split(' ', 2)[1] if head.count(' ') >= 2 else '?'
+    lines = head.split('\r\n')
+    location = next((x.split(':', 1)[1].strip() for x in lines if x.lower().startswith('location:')), '')
+    if status in ('301', '302', '307', '308') and location.startswith(f'https://{host}/'):
+        return True, ''
+    return False, f'HTTP {status}' + (f' to {location}' if location else ' without a redirect')
+
+
 def people(cfg):
     return render.people(cfg)
 
@@ -1237,15 +1255,28 @@ def https_checks(cfg, apps, app, s, org_sign_in):
             'warning',
         )
     )
-    out.append(
-        (
-            'https-live',
-            os.path.exists(f'{gate_dir(cfg)}/{LIVE}'),
-            'plain HTTP is redirected to HTTPS',
-            'agentctl apply, once the two above pass',
-            'info',
+    if not os.path.exists(f'{gate_dir(cfg)}/{LIVE}'):
+        out.append(
+            (
+                'https-live',
+                False,
+                'plain HTTP is not redirected to HTTPS yet',
+                'agentctl apply, once the two above pass',
+                'info',
+            )
         )
-    )
+        return out
+    for h in signed_in_hosts(cfg):  # the T3 app names are HTTPS only
+        ok, why = edge_redirect(h)
+        out.append(
+            (
+                f'https-redirect-{h}',
+                ok,
+                f'http://{h} redirects to HTTPS' if ok else f'http://{h} does not redirect to HTTPS: {why}',
+                'agentctl apply; if it persists, open an issue with this line',
+                'error',
+            )
+        )
     return out
 
 

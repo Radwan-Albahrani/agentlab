@@ -2042,7 +2042,25 @@ class PrivateHttps(unittest.TestCase):
         checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
         self.assertFalse(checks['certificate-agents.example.com'][1])  # expiring soon
         self.assertEqual(checks['certificate-agents.example.com'][4], 'warning')
-        self.assertTrue(checks['https-port'][1] and checks['gate-secrets'][1] and checks['https-live'][1])
+        self.assertTrue(checks['https-port'][1] and checks['gate-secrets'][1])
+        # #25: the redirect is a real request to the edge, not the marker file
+        with mock.patch.object(cloudflare, 'edge_redirect', return_value=(False, 'HTTP 404 without a redirect')):
+            checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
+        self.assertFalse(checks['https-redirect-agents.example.com'][1])
+        self.assertIn('404', checks['https-redirect-agents.example.com'][2])
+        with mock.patch.object(cloudflare, 'edge_redirect', return_value=(True, '')):
+            checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
+        self.assertTrue(checks['https-redirect-agents.example.com'][1])
+
+    def test_plain_http_has_its_own_router_next_to_the_tls_one(self):
+        # #25: one router with tls on both entrypoints answered plain HTTP with 404
+        dynamic = render.edge(resolve(HTTPS))
+        routers = dynamic['http']['routers']
+        self.assertEqual(routers['in-agent']['entryPoints'], ['websecure'])
+        self.assertIn('tls', routers['in-agent'])
+        self.assertEqual(routers['in-agent-http']['entryPoints'], ['ingress'])
+        self.assertNotIn('tls', routers['in-agent-http'])
+        self.assertEqual(routers['in-agent-http']['middlewares'], routers['in-agent']['middlewares'])
 
     def test_render_serves_443_with_a_dns_challenge_certificate_and_no_token_in_compose(self):
         cfg = resolve(HTTPS)
@@ -2056,7 +2074,7 @@ class PrivateHttps(unittest.TestCase):
         self.assertIn('/srv/agentlab/edge-acme:/acme', edge['volumes'])
         self.assertIn('sara-t3.example.com', edge['networks']['agentlab-edge']['aliases'])
         routers = render.edge(cfg)['http']['routers']
-        self.assertEqual(routers['in-agent']['entryPoints'], ['ingress', 'websecure'])
+        self.assertEqual(routers['in-agent']['entryPoints'], ['websecure'])  # plain HTTP: in-agent-http
         # one wildcard in Let's Encrypt's public log, rather than every agent's name
         self.assertEqual(routers['in-agent']['tls'], {'certResolver': 'le', 'domains': [{'main': '*.example.com'}]})
         self.assertEqual(routers['pair-sara']['entryPoints'], ['websecure'])
