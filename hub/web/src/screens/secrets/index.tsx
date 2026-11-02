@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSecrets } from '../../api/queries';
-import type { Secrets as Data } from '../../api/types';
+import type { Secrets as Data, Secret } from '../../api/types';
 import { Screen } from '../../app/Screen';
 import { filterSecrets } from '../../lib/secretFilter';
 import { Button } from '../../ui/Button';
@@ -15,6 +15,12 @@ import { SecretFilters } from './SecretFilters';
 import { SecretRow } from './SecretRow';
 import { useSecretFilter } from './useSecretFilter';
 import { VersionsDialog } from './VersionsDialog';
+
+/** The cluster's own secrets first, then each extra folder ([hub] extra_secrets) as its own section. */
+function groups(shown: Secret[], all: Secret[]): [string, Secret[], number][] {
+  const names = [...new Set(['', ...all.map((s) => s.group)])];
+  return names.map((g) => [g, shown.filter((s) => s.group === g), all.filter((s) => s.group === g).length]);
+}
 
 export function Secrets() {
   const query = useSecrets();
@@ -53,51 +59,54 @@ function SecretsView({ d }: { d: Data }) {
         }
       />
       <SecretFilters items={d.items} filter={filter} onChange={setFilter} />
-      <Section
-        title="All secrets"
-        sub={shown.length === d.items.length ? `${d.items.length} files` : `${shown.length} of ${d.items.length} files`}
-      >
-        <Card>
-          {shown.length ? (
-            <HScroll>
-              <Table
-                head={
-                  <>
-                    <Th>Secret</Th>
-                    <Th wide>Used by · on change</Th>
-                    <Th wide fit>
-                      Updated
-                    </Th>
-                    <Th fit />
-                  </>
-                }
-              >
-                {shown.map((s) => (
-                  <SecretRow
-                    key={s.name}
-                    s={s}
-                    onView={() => {
-                      setOpened({ mode: 'view', name: s.name });
-                    }}
-                    onEdit={() => {
-                      setOpened({ mode: 'edit', name: s.name });
-                    }}
-                    onHistory={() => {
-                      setHistory(s.name);
-                    }}
-                  />
-                ))}
-              </Table>
-            </HScroll>
-          ) : (
-            <Empty
-              title={d.items.length ? 'No secrets match' : 'No secrets'}
-              text={d.items.length ? 'Try another search or clear a filter.' : undefined}
-              icon="key"
-            />
-          )}
-        </Card>
-      </Section>
+      {groups(shown, d.items).map(([group, items, total]) => (
+        <Section
+          key={group}
+          title={group || 'All secrets'}
+          sub={items.length === total ? `${total} files` : `${items.length} of ${total} files`}
+        >
+          <Card>
+            {items.length ? (
+              <HScroll>
+                <Table
+                  head={
+                    <>
+                      <Th>Secret</Th>
+                      <Th wide>Used by · on change</Th>
+                      <Th wide fit>
+                        Updated
+                      </Th>
+                      <Th fit />
+                    </>
+                  }
+                >
+                  {items.map((s) => (
+                    <SecretRow
+                      key={s.name}
+                      s={s}
+                      onView={() => {
+                        setOpened({ mode: 'view', name: s.name });
+                      }}
+                      onEdit={() => {
+                        setOpened({ mode: 'edit', name: s.name });
+                      }}
+                      onHistory={() => {
+                        setHistory(s.name);
+                      }}
+                    />
+                  ))}
+                </Table>
+              </HScroll>
+            ) : (
+              <Empty
+                title={total ? 'No secrets match' : 'No secrets'}
+                text={total ? 'Try another search or clear a filter.' : undefined}
+                icon="key"
+              />
+            )}
+          </Card>
+        </Section>
+      ))}
       <FeedSection title="Recent changes" sub="What the watcher did after each change." events={d.events} />
       <SecretDialog
         opened={opened}

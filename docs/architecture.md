@@ -54,6 +54,12 @@ Allowed people are always the agent owners plus `auth.admins`, plus (cloudflare-
 system where it can (Cloudflare Access policy, tinyauth whitelist; for Tailscale the tailnet ACL is the admin's job
 and `doctor` explains it).
 
+**Published ports (one person).** With `auth.mode` `tailscale` or `none` and a single owner, `[agents.publish]` and
+`[hub] publish` put the tools on host ports, reached over the person's own network the way a home setup always was.
+When the hub and every agent's T3 are published, agentlab doesn't use `tailscale serve` or tailnet HTTPS at all and
+never touches Tailscale's settings; links (pairing, Open T3, Files, the browser view) are built as
+`http://<the host the page was opened on>:<port>`.
+
 ## Edge: two passes
 
 The edge (Traefik) routes in two passes so identity-based routing works in every mode and can't be spoofed:
@@ -229,7 +235,7 @@ gate, hub, edge and host services read (mounted read-only). Shape of `cluster.js
   "deploy": "coolify", "isolation": "sysbox", "publish_address": "127.0.0.1",
   "auth": {"mode": "cloudflare-access", "ingress": "cloudflared", "admins": ["admin@example.com"], "allow_domains": [],
            "cloudflare": {"team": "example", "audience": "<AUD tag>"}, "tinyauth": {"domain": ""}, "hub_port": 8443},
-  "hub": {"publish": 0, "extra_stacks": []},
+  "hub": {"publish": 0, "extra_stacks": [], "extra_secrets": {"folder": "", "map": "", "label": "Other secrets"}},
   "agents": [
     {"id": "sara", "owner": "sara@example.com", "memory": "12g", "cpus": 4, "upstream": "http://agent-sara",
      "hostname": "agent-sara", "image": "", "publish": {}, "path": "/srv/agentlab/agents/sara", "storage_unit": "",
@@ -238,7 +244,7 @@ gate, hub, edge and host services read (mounted read-only). Shape of `cluster.js
   "storage": {"mode": "shared", "pool_size": "", "pool_image": "/srv/agentlab/disks/pool.img", "person_size": "80g"},
   "limits": {"total_memory": "96g", "throttle": {"agent_gb": 12.0, "pool_gb": 96.0, "io_psi_max": 25}},
   "android": {"enabled": true, "system_image": "system-images;android-35;google_apis;x86_64"},
-  "backups": {"keep_days": 14, "time": "03:30"},
+  "backups": {"enabled": true, "keep_days": 14, "time": "03:30"},
   "companions": [{"name": "helper", "display_name": "Helper", "agent": "sara", "kind": "slack"}],
   "companion_policy": {"self_service": true, "max_per_agent": 0}
 }
@@ -271,12 +277,12 @@ Agent links are always `https://<domain>/...`; to open a specific agent, `https:
 
 | Container | Image | Networks | Notes |
 |---|---|---|---|
-| `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
+| `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `AGENTLAB_PUBLISHED` (`t3=7101,...`) and `AGENTLAB_PUBLISHED_HUB`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
 | `files-<id>` | `gtstef/filebrowser:2.0.2-stable` | `agentlab-<id>` | in the agent's stack; uid 1000; mounts only that agent's `workspace` (and `home` read-only); config in `<data>/files/<id>` (not on the agent's disk); noauth behind the gate; heavy folders excluded from indexing only |
 | `edge` | `traefik:v3.3.4` | `agentlab-edge` + every `agentlab-<id>` | entrypoints `ingress` :8088 (published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
 | `gate` | `agentlab/gate` | `agentlab-edge` + every `agentlab-<id>` | `:8080`, reads `cluster.json`; asks agents for onboarding state |
 | `tinyauth` | `ghcr.io/tinyauthapp/tinyauth:v5.1.3` (≥ 5.1.3: fixes CVE-2026-77560) | `agentlab-edge` | tinyauth mode only |
-| `hub` | `agentlab/hub` | `agentlab-edge` + every `agentlab-<id>` | `:8080`; mounts `rendered/` ro, `hub/watch`, `companions/`, `secrets/`, each agent's `path` at `/agents/<id>`, its state `<data>/hub/data` at `/data` (phone-push keys, display settings); optional `[hub] bark_url` / `bark_public` turn phone pushes on; `[hub] publish` (one-person setups) maps a host port and sets `HUB_PUBLISHED_OWNER` |
+| `hub` | `agentlab/hub` | `agentlab-edge` + every `agentlab-<id>` | `:8080`; mounts `rendered/` ro, `hub/watch`, `companions/`, `secrets/`, each agent's `path` at `/agents/<id>`, its state `<data>/hub/data` at `/data` (phone-push keys, display settings); optional `[hub] bark_url` / `bark_public` turn phone pushes on; `[hub] publish` (one-person setups) maps a host port and sets `HUB_PUBLISHED_OWNER`; `[hub] extra_secrets` mounts another host folder of secrets (admins only, its own group, its own map) |
 | `companion-<name>` | `agentlab/companion` (base) | `agentlab-<agent id>` | runs the agent's checkout `/workspace/companions/<name>` mounted ro at `/app`; talks to its agent's Accounts bridge |
 
 Ports inside an agent: 3773 T3, 8790 Accounts, 6080 noVNC, 7681 terminal; the files sidecar listens on 80.
@@ -294,7 +300,7 @@ Stacks (one Compose project / Coolify service each, so deploying one never resta
 | `agentlab-watch.service` | always-on watcher: usage, containers, events, hub requests, agents' companion requests (within ~1 s) |
 | `agentlab-firewall.service` | loads `<data>/rendered/firewall/agentlab.nft` (agents can't open connections to shared services or the host) |
 | `agentlab-janitor.timer` | nightly: settled worktrees, package caches, agents' Docker leftovers |
-| `agentlab-backup.timer` | nightly backups (`backups.time`), keeps `backups.keep_days` |
+| `agentlab-backup.timer` | nightly backups (`backups.time`), keeps `backups.keep_days`; only with `backups.enabled` |
 | `cloudflared.service` | the tunnel (token in `<data>/secrets/cloudflare-tunnel.token`) |
 
 ## agentctl commands

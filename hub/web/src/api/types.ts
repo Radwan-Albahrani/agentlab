@@ -360,6 +360,8 @@ export interface Secret {
   versions: number;
   effect: string;
   kinds: SecretKind[];
+  /** '' for the cluster's own secrets; the label of [hub] extra_secrets for that folder's. */
+  group: string;
 }
 
 /** What changing a secret does (the Secrets screen's filter). */

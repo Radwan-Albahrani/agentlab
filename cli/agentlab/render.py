@@ -190,6 +190,15 @@ def core(cfg):
         # Phone pushes: where the hub posts them, and the address the phone app registers with.
         services['hub']['environment']['BARK_URL'] = cfg['bark']['url']
         services['hub']['environment']['BARK_PUBLIC'] = cfg['bark']['public'] or cfg['bark']['url']
+    extra = cfg['hub']['extra_secrets']
+    if extra['folder']:
+        # Other secrets on this host, shown (admins only) as their own group; the watcher applies their map.
+        hub = services['hub']
+        hub['volumes'].append(f'{extra["folder"]}:/extra-secrets')
+        hub['environment'].update(HUB_EXTRA_SECRETS='/extra-secrets', HUB_EXTRA_SECRETS_LABEL=extra['label'])
+        if extra['map']:
+            hub['volumes'].append(f'{extra["map"]}:/extra-secrets-map.json:ro')
+            hub['environment']['HUB_EXTRA_SECRETS_MAP'] = '/extra-secrets-map.json'
     if cfg['hub']['publish']:
         services['hub']['ports'] = [f'{cfg["publish_address"]}:{cfg["hub"]["publish"]}:8080']
         # Requests on the published port skip the edge and the gate, so the hub treats them as this one person.
@@ -227,6 +236,10 @@ def agent(cfg, a):
             'AGENTLAB_DOMAIN': cfg['domain'],
             'AGENTLAB_HUB_DOMAIN': hub_address(cfg),
             'AGENTLAB_PAIR_HOST': a['pair_host'],
+            # Tools published on host ports: links (pairing, the hub, the browser view) use the host a page was
+            # opened on plus that port
+            'AGENTLAB_PUBLISHED': ','.join(f'{t}={p}' for t, p in sorted(a['publish'].items())),
+            'AGENTLAB_PUBLISHED_HUB': str(cfg['hub']['publish'] or ''),
             'AGENTLAB_AUTH_MODE': cfg['auth']['mode'],
             'ANDROID_ENABLED': '1' if cfg['android']['enabled'] else '',
             'ANDROID_SYSTEM_IMAGE': cfg['android']['system_image'],

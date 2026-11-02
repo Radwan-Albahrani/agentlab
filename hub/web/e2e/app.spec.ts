@@ -75,7 +75,8 @@ test('an agent card offers the live browser view, enabled only while a browser i
       'href',
       /\/_agentlab\/view\/admin\?next=\/_agentlab\/files\//,
     );
-    if (await link.count()) await expect(link).toHaveAttribute('href', /\/_agentlab\/view\/admin\?next=\/_agentlab\/browser\//);
+    if (await link.count())
+      await expect(link).toHaveAttribute('href', /\/_agentlab\/view\/admin\?next=\/_agentlab\/accounts\/browser/);
     else await expect(page.locator('main').getByRole('button', { name: 'Browser' }).first()).toBeDisabled();
   }
 });

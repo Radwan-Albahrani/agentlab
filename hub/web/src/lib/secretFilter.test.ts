@@ -11,6 +11,7 @@ const secret = (over: Partial<Secret>): Secret => ({
   versions: 0,
   effect: '',
   kinds: ['read'],
+  group: '',
   ...over,
 });
 

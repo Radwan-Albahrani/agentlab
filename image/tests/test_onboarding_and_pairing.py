@@ -40,6 +40,7 @@ def t3(monkeypatch):
     monkeypatch.setenv('AGENTLAB_DOMAIN', 'agents.example.com')
     monkeypatch.setenv('AGENTLAB_PAIR_HOST', '')
     monkeypatch.setenv('AGENTLAB_AUTH_MODE', 'cloudflare-access')
+    monkeypatch.setenv('AGENTLAB_PUBLISHED', '')
     return calls, replies
 
 
@@ -65,6 +66,21 @@ def test_app_needs_a_pair_host_except_on_a_tailnet(t3, monkeypatch):
     monkeypatch.setenv('AGENTLAB_PAIR_HOST', '')
     monkeypatch.setenv('AGENTLAB_AUTH_MODE', 'tailscale')
     assert pairing.pair('app', 'phone')['url'].startswith('https://agents.example.com/pair#token=')
+
+
+def test_published_t3_links_use_the_hub_pages_host_and_the_port(t3, monkeypatch):
+    calls, replies = t3
+    replies['t3 auth pairing create'] = made()
+    monkeypatch.setenv('AGENTLAB_PUBLISHED', 't3=7101,browser=7103')
+    for kind in ('browser', 'app'):  # no pair host needed: the app reaches the port like the browser does
+        out = pairing.pair(kind, 'phone', 'Homebox.Tailnet.ts.net')
+        assert out['url'] == 'http://homebox.tailnet.ts.net:7101/pair#token=tok123'
+    assert "--base-url 'http://homebox.tailnet.ts.net:7101'" in calls[-1]
+    # Anything that isn't a plain hostname (a port, a path, an injection) falls back to the cluster's own address.
+    for bad in ('evil.com:80', 'evil.com/x', 'a b', "x';rm", ''):
+        assert pairing.pair('browser', '', bad)['url'].startswith('https://agents.example.com/')
+    monkeypatch.setenv('AGENTLAB_PUBLISHED', '')
+    assert pairing.pair('browser', '', 'homebox')['url'].startswith('https://agents.example.com/')
 
 
 def test_unknown_kind_and_t3_failure(t3):

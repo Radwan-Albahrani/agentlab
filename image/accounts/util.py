@@ -23,10 +23,32 @@ PATHS = {
 }
 
 
+def published(app):
+    """The host port app is published on (one-person setups reached over their own network), or ''.
+    AGENTLAB_PUBLISHED is 't3=7101,accounts=7102,...'; the hub's is AGENTLAB_PUBLISHED_HUB."""
+    if app == 'hub':
+        port = os.environ.get('AGENTLAB_PUBLISHED_HUB', '')
+    else:
+        pairs = (p.partition('=') for p in os.environ.get('AGENTLAB_PUBLISHED', '').split(',') if p)
+        port = {k.strip(): v.strip() for k, _, v in pairs}.get(app, '')
+    return port if port.isdigit() else ''
+
+
+def hostname(host):
+    """The bare host name of a Host header ('box:7102' -> 'box'); '' for anything else (IPv6 included)."""
+    name = (host or '').strip().lower().rsplit(':', 1)[0]
+    ok = name and all(c.isalnum() or c in '.-' for c in name) and not name.startswith(('.', '-'))
+    return name if ok else ''
+
+
 def public_url(app, host='', proto='https'):
     """The public address of app (t3, accounts, browser, terminal, hub) as people reach it through the edge: everyone's
     own agent lives on the cluster domain (AGENTLAB_DOMAIN, the edge picks the agent by who signed in), the hub on
-    AGENTLAB_HUB_DOMAIN. Without the env, the host the page was opened on stands in for the domain; '' if unknown."""
+    AGENTLAB_HUB_DOMAIN. Without the env, the host the page was opened on stands in for the domain; '' if unknown.
+    A published app is http://<the host the page was opened on>:<its port> instead (the terminal keeps its path)."""
+    port, name = published(app), hostname(host)
+    if port and name:
+        return f'http://{name}:{port}' + (PATHS[app] if app == 'terminal' else '')
     if app == 'hub':
         hub = os.environ.get('AGENTLAB_HUB_DOMAIN', '')
         return f'https://{hub}' if hub else ''

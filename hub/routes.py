@@ -33,12 +33,16 @@ def _agent_get(path):
     return handler
 
 
-def _agent_post(path, fields, done=None):
-    """A POST forwarded to the agent's Accounts app with only `fields` of the body; answers `done` (the toast), or
-    the agent's own answer when there is none (a pairing link the page shows)."""
+def _page_host():
+    return {'host': cluster.request_host()}
+
+
+def _agent_post(path, fields, done=None, extra=None):
+    """A POST forwarded to the agent's Accounts app with only `fields` of the body (plus what `extra()` adds);
+    answers `done` (the toast), or the agent's own answer when there is none (a pairing link the page shows)."""
 
     def handler(m, b, host):
-        status, out = cluster.call(m[0], path, {k: b[k] for k in fields if k in b})
+        status, out = cluster.call(m[0], path, {**{k: b[k] for k in fields if k in b}, **(extra() if extra else {})})
         if status == 502 or out is None:
             raise ValueError(f'{m[0]} is not reachable right now.')
         if out.get('ok') is False:
@@ -144,7 +148,8 @@ POST = [
     (r'/api/agents/([\w-]+)/accounts/act', 'profile.{0}', _account_act),
     (r'/api/agents/([\w-]+)/accounts/env/(set|delete|import)', ('profile.{0}', 'agent.env'), _env),
     (r'/api/agents/([\w-]+)/onboarding/finish', 'profile.{0}', _agent_post('/api/onboarding/finish', (), 'All set.')),
-    (r'/api/agents/([\w-]+)/pair', 'profile.{0}', _agent_post('/api/pair', ('kind', 'label'))),
+    # With T3 on a published port the link is built on the host this page came in on.
+    (r'/api/agents/([\w-]+)/pair', 'profile.{0}', _agent_post('/api/pair', ('kind', 'label'), extra=_page_host)),
     (
         r'/api/agents/([\w-]+)/devices/revoke',
         ('profile.{0}', 'agent.pairing'),

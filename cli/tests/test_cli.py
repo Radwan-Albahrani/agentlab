@@ -15,7 +15,21 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentlab import apply, cloudflare, config, disks, doctor, init, main, privileges, render, tomledit, util, yaml
+from agentlab import (
+    apply,
+    cloudflare,
+    config,
+    disks,
+    doctor,
+    init,
+    install,
+    main,
+    privileges,
+    render,
+    tomledit,
+    util,
+    yaml,
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EXAMPLE = os.path.join(REPO, 'cluster.example.toml')
@@ -204,6 +218,50 @@ class Migration(unittest.TestCase):
         self.assertEqual(hub['environment']['HUB_PUBLISHED_OWNER'], 'sara@example.com')
         self.assertEqual(json.loads(config.to_json(cfg))['hub']['publish'], 7190)
         self.assertIn('bypass the gate', problems(hub__publish=7190))
+
+    def test_published_ports_leave_tailscale_alone(self):
+        cfg = resolve(self.ONE, hub__publish=7190)
+        self.assertFalse(config.ports_only(cfg))  # agents still go through the edge
+        for i, a in enumerate(cfg['agents']):
+            a['publish'] = {'t3': 7101 + 10 * i}
+        self.assertTrue(config.ports_only(cfg))
+        self.assertEqual(install.step_env(cfg, '/etc/agentlab/cluster.toml')['AGENTLAB_SERVE'], '')
+        env = render.agent(cfg, cfg['agents'][0])['services']['agent']['environment']
+        self.assertEqual(env['AGENTLAB_PUBLISHED'], 't3=7101')
+        self.assertEqual(env['AGENTLAB_PUBLISHED_HUB'], '7190')
+        checks = doctor.Checks()
+        with mock.patch.object(doctor, 'tailscale_cli', return_value=None):
+            doctor._tailscale(cfg, checks)
+        ids = {c['id'] for c in checks.items}
+        self.assertIn('tailscale-ports', ids)
+        self.assertFalse(ids & {'tailscale-serve', 'tailscale-https'})
+
+    def test_extra_secrets_mount_into_the_hub(self):
+        hub = render.core(resolve(self.ONE))['services']['hub']
+        self.assertNotIn('HUB_EXTRA_SECRETS', hub['environment'])
+        cfg = resolve(
+            self.ONE,
+            hub__extra_secrets='/srv/other/secrets/',
+            hub__extra_secrets_map='/srv/other/map.json',
+            hub__extra_secrets_label='Homelab',
+        )
+        hub = render.core(cfg)['services']['hub']
+        self.assertIn('/srv/other/secrets:/extra-secrets', hub['volumes'])
+        self.assertIn('/srv/other/map.json:/extra-secrets-map.json:ro', hub['volumes'])
+        self.assertEqual(hub['environment']['HUB_EXTRA_SECRETS_LABEL'], 'Homelab')
+        self.assertEqual(
+            json.loads(config.to_json(cfg))['hub']['extra_secrets'],
+            {'folder': '/srv/other/secrets', 'map': '/srv/other/map.json', 'label': 'Homelab'},
+        )
+        self.assertIn('must be an absolute path', problems(hub__extra_secrets='secrets'))
+        self.assertIn('needs extra_secrets', problems(hub__extra_secrets_map='/srv/map.json'))
+
+    def test_nightly_backups_can_be_off(self):
+        self.assertTrue(resolve()['backups']['enabled'])
+        cfg = resolve(backups__enabled=False)
+        self.assertFalse(json.loads(config.to_json(cfg))['backups']['enabled'])
+        self.assertEqual(install.step_env(cfg, '/etc/agentlab/cluster.toml')['AGENTLAB_BACKUPS'], '')
+        self.assertIn('[backups] enabled must be true or false', problems(backups__enabled='no'))
 
     def test_phone_pushes_and_hub_state_on_the_host(self):
         hub = render.core(resolve(self.ONE))['services']['hub']

@@ -3,8 +3,11 @@ Each agent runs its Accounts app (JSON API) on :8790 inside its own network; the
 reads it and forwards the page's buttons to it.
 
 People reach their own agent on the one cluster domain; an admin opens someone else's through the gate's
-/_agentlab/view/<id> (it sets the view cookie, then goes to `next`), so every agent link below goes through it."""
+/_agentlab/view/<id> (it sets the view cookie, then goes to `next`), so every agent link below goes through it.
+One-person setups may publish an agent's tools on host ports instead (cluster.json agents[].publish): then links go
+straight to http://<the host this page was opened with>:<port>, the way people reach them."""
 
+import contextvars
 import json
 import os
 import re
@@ -17,7 +20,9 @@ CONFIG = os.environ.get('HUB_CONFIG', '/etc/agentlab/cluster.json')
 AGENT_URL = os.environ.get('HUB_AGENT_URL', '')  # '...{id}...' template; tests point it at fake agents
 ACCOUNTS_PORT = 8790
 ACCOUNTS = {'claude': 'Claude', 'codex': 'Codex', 'github': 'GitHub'}
+HOSTNAME = re.compile(r'^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$')
 _cache = {'mtime': None, 'data': {}}
+_host = contextvars.ContextVar('request_host', default='')  # the host this request came in on, without its port
 
 
 def load():
@@ -48,19 +53,46 @@ def domain():
     return load().get('domain') or ''
 
 
+def use_host(header):
+    """Remember the request's host (from its Host header) for published-port links; anything odd is ignored."""
+    host = (header or '').strip().lower().rsplit(':', 1)[0] if ']' not in (header or '') else ''
+    _host.set(host if HOSTNAME.match(host) else '')
+
+
+def request_host():
+    return _host.get()
+
+
+def published(agent_id):
+    """{tool: host port} this agent's tools are published on."""
+    return (agents().get(agent_id) or {}).get('publish') or {}
+
+
 def link(agent_id, path='/'):
     """Opens `path` (on the cluster domain) as agent `agent_id`, through the gate's view switch."""
     return f'https://{domain()}/_agentlab/view/{quote(agent_id, safe="")}?next={quote(path, safe="/")}'
 
 
 def links(agent_id):
-    return {
+    out = {
         'chat': link(agent_id, '/'),
         'accounts': link(agent_id, '/_agentlab/accounts/'),
         'terminal': link(agent_id, '/_agentlab/terminal/'),
         'files': link(agent_id, '/_agentlab/files/'),
         'browser': link(agent_id, '/_agentlab/accounts/browser'),  # checks a browser is open, then the viewer
     }
+    host, ports = request_host(), published(agent_id)
+    if host:
+        direct = {
+            'chat': ('t3', '/'),
+            'terminal': ('terminal', '/_agentlab/terminal/'),
+            'files': ('files', '/_agentlab/files/'),
+            'browser': ('browser', '/vnc.html?autoconnect=1&resize=remote'),
+        }
+        out.update({k: f'http://{host}:{ports[t]}{p}' for k, (t, p) in direct.items() if t in ports})
+        if ports:
+            out['accounts'] = f'/agents/{quote(agent_id, safe="")}/accounts'  # the hub's own page for it
+    return out
 
 
 def accounts_url(agent_id):

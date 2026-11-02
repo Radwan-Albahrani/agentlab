@@ -35,7 +35,9 @@ Ask the human these first (they decide the whole shape; don't guess):
    `tailscale` (everyone is on one tailnet), or `tinyauth` (no Cloudflare Access; Google sign-in on the server).
 2. **Domain names** (first-level, e.g. `agents.example.com`, `agents-hub.example.com`) or, for tailscale, the
    machine's MagicDNS name.
-3. **Who:** admin emails, and each person's email with how many agents they want.
+3. **Who:** admin emails, and each person's email with how many agents they want. Admins are people too: ask how
+   many agents each admin wants for themselves (being admin only adds the right to open everyone's; it doesn't give
+   them an agent).
 4. **Storage:** `shared` (one pool; simplest) or `per-person` (a capped disk per person; for shared servers where one
    person must not fill the disk for everyone). Sizes against the server's free disk.
 5. **Isolation:** `sysbox` for anything more than one person on a real Linux host; `unconfined` only for one person or

@@ -5,7 +5,7 @@ import glob
 import os
 import subprocess
 
-from . import images
+from . import config, images
 from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes
 
 
@@ -26,6 +26,8 @@ def step_env(cfg, config_path):
         'AGENTLAB_MEMORY_MAX': str(total),
         'AGENTLAB_MEMORY_HIGH': str(max(total - 2 * 2**30, int(total * 0.9))),  # where the kernel starts reclaiming
         'AGENTLAB_BACKUP_TIME': cfg['backups']['time'],
+        'AGENTLAB_BACKUPS': '1' if cfg['backups']['enabled'] else '',
+        'AGENTLAB_SERVE': '' if config.ports_only(cfg) else '1',  # published-ports setups never touch tailscale serve
         'AGENTLAB_COOLIFY_TOKEN': cfg['coolify']['token_file'],
         'AGENTLAB_COOLIFY_URL': cfg['coolify']['url'],
         'AGENTLAB_TUNNEL_TOKEN': f'{cfg["data"]}/secrets/cloudflare-tunnel.token',

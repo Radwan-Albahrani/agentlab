@@ -60,6 +60,9 @@ def onboarding(agent):
     return {'done': ready and agent in ONBOARDED, 'ready': ready, 'steps': steps}
 
 
+PAIR_BODIES = []  # what the hub sent, so tests can check it passed the page's host
+
+
 def pair(agent, kind):
     if kind == 'app' and agent != 'admin':
         return {
@@ -153,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
             ONBOARDED.add(agent)
             return self.reply({'ok': True, 'error': None, **onboarding(agent)})
         if path == '/api/pair':
+            PAIR_BODIES.append(body)
             return self.reply(pair(agent, body.get('kind')))
         if path == '/api/devices/revoke':
             DEVICES[agent] = [d for d in DEVICES.get(agent, []) if d['id'] != body.get('id')]

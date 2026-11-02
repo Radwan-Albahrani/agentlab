@@ -1,0 +1,31 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security problem? Don't file it here; use the Security tab's private reporting (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+    validations: { required: true }
+  - type: textarea
+    id: doctor
+    attributes:
+      label: agentctl doctor --json
+      description: Paste the output. Remove domains, emails and anything private first.
+      render: json
+  - type: input
+    id: setup
+    attributes:
+      label: Setup
+      description: OS, access mode (cloudflare-access / tailscale / tinyauth), deploy (compose / coolify), isolation.
+      placeholder: Ubuntu 24.04, tailscale, compose, sysbox
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: agentlab commit
+      description: Output of `git -C <repo> rev-parse --short HEAD`.

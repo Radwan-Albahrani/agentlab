@@ -1,6 +1,8 @@
 """<data>/secrets (mounted at /secrets) and what each file is for (secrets-map.json). Cluster secrets sit at the top;
 each companion's in companions/<name>/ (its folder is mounted into it alone). Edits are written in place (services
-that mount a single file see the change); the watcher then applies them where they are used."""
+that mount a single file see the change); the watcher then applies them where they are used.
+Optionally, one more folder from the host ([hub] extra_secrets: secrets of other things on the machine) shows as its
+own group under extra/<file>, described by its own map; the screen is admins only either way."""
 
 import json
 import os
@@ -14,13 +16,22 @@ from .files import keep_version, read_json, read_version, versions, write_in_pla
 
 SECRETS = os.environ.get('SECRETS_DIR', '/secrets')
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'secrets-map.json')
+EXTRA = os.environ.get('HUB_EXTRA_SECRETS', '')  # the mounted host folder, '' when there is none
+EXTRA_MAP = os.environ.get('HUB_EXTRA_SECRETS_MAP', '')
+EXTRA_LABEL = os.environ.get('HUB_EXTRA_SECRETS_LABEL', '') or 'Other secrets'
+EXTRA_PREFIX = 'extra/'
 VERSIONS_KEPT = 5
 FILE_OK = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$')
 
 
 def _folders():
-    """Where secrets live, relative to SECRETS: the top and each configured companion's folder."""
-    return ['', *(f'companions/{n}/' for n in cluster.companions())]
+    """Where secrets live, relative to SECRETS: the top and each configured companion's folder (plus extra/)."""
+    return ['', *(f'companions/{n}/' for n in cluster.companions()), *([EXTRA_PREFIX] if EXTRA else [])]
+
+
+def _root(folder):
+    """(directory on disk, prefix inside it) for one of _folders()."""
+    return (EXTRA, '') if folder == EXTRA_PREFIX else (SECRETS, folder)
 
 
 def _path(name):
@@ -28,10 +39,13 @@ def _path(name):
     folder += '/' if folder else ''
     if folder not in _folders() or not FILE_OK.match(file):
         raise ValueError('Use letters, digits, dots, dashes or underscores (in companions/<name>/ for a companion).')
-    return os.path.join(SECRETS, name)
+    root, inner = _root(folder)
+    return os.path.join(root, inner + file)
 
 
 def _versions_folder(name):
+    if EXTRA and name.startswith(EXTRA_PREFIX):
+        return os.path.join(EXTRA, '.versions', name[len(EXTRA_PREFIX) :])
     return os.path.join(SECRETS, '.versions', name)
 
 
@@ -55,6 +69,8 @@ def secrets_map():
             out |= {key.replace('{companion}', n): _expand(info, n) for n in cluster.companions()}
         else:
             out[key] = info
+    if EXTRA and EXTRA_MAP:
+        out |= {EXTRA_PREFIX + k: v for k, v in read_json(EXTRA_MAP, {}).items() if k != '_about' and '/' not in k}
     return out
 
 
@@ -63,13 +79,16 @@ def all_secrets():
     out = []
     names = []
     for folder in _folders():
+        root, inner = _root(folder)
         try:
-            names += [folder + f for f in sorted(os.listdir(os.path.join(SECRETS, folder)))]
+            names += [folder + f for f in sorted(os.listdir(os.path.join(root, inner)))]
         except OSError:
             continue
     for name in names:
-        path = os.path.join(SECRETS, name)
-        if name.rpartition('/')[2].startswith('.') or not os.path.isfile(path):
+        if not FILE_OK.match(name.rpartition('/')[2]):
+            continue  # hidden entries (.versions) and odd names aren't secrets
+        path = _path(name)
+        if not os.path.isfile(path):
             continue
         info = described.get(name, {})
         out.append(
@@ -81,6 +100,7 @@ def all_secrets():
                 'modified': os.path.getmtime(path),
                 'versions': len(secret_versions(name)),
                 'known': name in described,
+                'group': EXTRA_LABEL if EXTRA and name.startswith(EXTRA_PREFIX) else '',
             }
         )
     return out

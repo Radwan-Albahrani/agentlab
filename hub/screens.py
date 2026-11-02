@@ -418,7 +418,7 @@ def kinds(s):
 
 def secrets():
     items = [
-        {k: s[k] for k in ('name', 'label', 'used_by', 'about', 'how', 'modified', 'versions')}
+        {k: s[k] for k in ('name', 'label', 'used_by', 'about', 'how', 'modified', 'versions', 'group')}
         | {'effect': effect(s), 'kinds': kinds(s)}
         for s in store.secrets.all_secrets()
     ]
