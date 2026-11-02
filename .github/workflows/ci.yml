@@ -26,3 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
       - run: scripts/check.sh ${{ matrix.part }}
+
+  # Base image bumps (Dependabot's docker updates) only show their breakage when the images are built.
+  images:
+    name: build (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [image, gate, hub, companion]
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - run: docker build -t agentlab/${{ matrix.image }}:ci ${{ matrix.image }}
