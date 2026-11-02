@@ -4,6 +4,9 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 [ "${AGENTLAB_INGRESS}" = tailscale ] || { ok "ingress is ${AGENTLAB_INGRESS}: tailscale serve not needed"; exit 0; }
+# Published-ports setups (the hub and every agent's T3 on host ports) keep their own network as the way in: leave
+# Tailscale's settings alone.
+[ -n "${AGENTLAB_SERVE}" ] || { ok "everything is on published ports: tailscale serve not used"; exit 0; }
 # On WSL Tailscale usually runs on Windows: use its CLI (mirrored networking lets it reach WSL's loopback).
 ts=tailscale
 windows="/mnt/c/Program Files/Tailscale/tailscale.exe"

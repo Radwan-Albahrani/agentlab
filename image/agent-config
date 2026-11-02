@@ -13,6 +13,11 @@ import tomllib
 INSTRUCTIONS = '/etc/agent/agent-instructions.md'
 BUILTIN_BEGIN = '# BEGIN agent-builtin (written by the container entrypoint on every start)'
 ALREADY_TOLD = ('agent-environment', 'Your environment (agent:', 'Your environment (agent profile')
+# The one span of an agent's CLAUDE.md / AGENTS.md that is ours (older images wrote "managed by the container"): it is
+# refreshed on every start; every byte outside it belongs to the agent and is never touched.
+BLOCK = re.compile(r'<!-- BEGIN agent-environment\b[^\n]*?-->(\r?\n)(.*?)<!-- END agent-environment -->', re.S)
+BLOCK_BEGIN = '<!-- BEGIN agent-environment (managed by agentlab; edits here are overwritten) -->'
+BLOCK_END = '<!-- END agent-environment -->'
 SKILLS = '/etc/agent/skills'
 MANAGED = '.agentlab-managed'  # marks a skill folder as ours: replaced on every start, never someone else's
 
@@ -57,24 +62,54 @@ def sections(text, keep):
     return text.strip()
 
 
+def refresh_block(text, body):
+    """`text` with its first managed block's content replaced by `body` (in the file's own line endings), or None
+    when it has no complete block."""
+    m = BLOCK.search(text)
+    if not m:
+        return None
+    nl = m.group(1)
+    inner = body.replace('\r\n', '\n').replace('\n', nl)
+    return text[: m.start()] + BLOCK_BEGIN + nl + inner + nl + BLOCK_END + text[m.end() :]
+
+
+def _raw(path):
+    """The file exactly as stored (line endings kept), or None when it's missing or not UTF-8 text."""
+    try:
+        with open(path, encoding='utf-8', newline='') as f:
+            return f.read()
+    except (FileNotFoundError, UnicodeDecodeError):
+        return None
+
+
 def write_notes(agent, home, android=False, companions=()):
-    """environment.md (always current); Claude gets one @import line and Codex (no imports) the text appended once."""
+    """environment.md (always current). Claude gets one @import line, Codex (no imports) the text itself. A file that
+    already has our marked block gets that block refreshed; one without it gets the block appended once, unless it
+    was told some other way before. Nothing else in either file is ever changed."""
     text = read(INSTRUCTIONS).replace('{{AGENT_ID}}', agent).replace('{{COMPANIONS}}', ', '.join(companions))
     text = sections(text, {'android': android, 'companions': bool(companions)})
     notes = os.path.join(home, '.config', 'agent', 'environment.md')
     os.makedirs(os.path.dirname(notes), exist_ok=True)
     with open(notes, 'w') as f:
         f.write(text + '\n')
-    for path, line in (
+    for path, body in (
         (os.path.join(home, '.claude', 'CLAUDE.md'), f'@{notes}'),
         (os.path.join(home, '.codex', 'AGENTS.md'), text),
     ):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        current = read(path)
-        if notes in current or any(marker in current for marker in ALREADY_TOLD):
-            continue  # already told; leave the file alone
-        with open(path, 'a') as f:
-            f.write(('\n\n' if current.strip() else '') + line + '\n')
+        current = _raw(path)
+        if current is None and os.path.exists(path):
+            continue  # not text we can read: leave it
+        refreshed = refresh_block(current or '', body)
+        if refreshed is not None:
+            if refreshed != current:
+                with open(path, 'w', encoding='utf-8', newline='') as f:
+                    f.write(refreshed)
+            continue
+        if current and (notes in current or any(marker in current for marker in ALREADY_TOLD)):
+            continue  # told some other way before (no marked block): leave the file alone
+        with open(path, 'a', encoding='utf-8', newline='') as f:
+            f.write(('\n\n' if (current or '').strip() else '') + f'{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n')
 
 
 def skill_roots(home):

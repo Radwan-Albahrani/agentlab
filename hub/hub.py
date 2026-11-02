@@ -40,6 +40,7 @@ class Handler(BaseHTTPRequestHandler):
     def allowed(self, api):
         try:
             scope.use(access.viewer(self.headers))
+            cluster.use_host(self.headers.get('Host', ''))
         except access.DeniedError as e:
             if api:
                 self.json({'ok': False, 'error': f'not allowed: {e}'}, 403)

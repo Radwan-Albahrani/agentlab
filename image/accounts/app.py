@@ -5,7 +5,7 @@ only; the hub renders it:
   GET  /api/state?p=<flow>     one live sign-in (also mcp-<name>)                   /api/env/value?k=<name>
   POST /api/act                one button: {action, p, ...} (page.act)              /api/env/set|delete|import
   GET  /api/onboarding         {done, ready, steps}                                  POST /api/onboarding/finish
-  POST /api/pair {kind, label} a one-time T3 pairing link (browser | app)          GET  /api/devices
+  POST /api/pair {kind, label, host?} one-time T3 pairing link (browser | app)    GET  /api/devices
   POST /api/devices/revoke {id}                                                    POST /api/t3/*  companion bridge
 No login of its own: people reach it only through the edge, whose gate checks who signed in and that this is their
 agent; the hub and gate call it over the agent's own network, which no other agent can reach. The bridge also needs
@@ -91,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'key': key, 'value': envfile.load().get(key)})
         if url.path == '/browser':  # the viewer runs only while a browser is open
             if browser_up() and (view := public_url('browser', host, proto)):
-                ws = urlparse(view).path.lstrip('/') + '/websockify'  # noVNC sits under a path prefix
+                ws = f'{urlparse(view).path.strip("/")}/websockify'.lstrip('/')  # under the edge's path prefix, if any
                 return self.reply(302, '', 'text/plain', f'{view}/vnc.html?autoconnect=1&resize=scale&path={ws}')
             return self.reply(503, NO_BROWSER, 'text/html; charset=utf-8')
         return self.reply(404, 'not found', 'text/plain')
@@ -116,7 +116,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'ok': not err, 'error': err or None, **onboarding.state()}, 409 if err else 200)
         if path == '/api/pair':
             try:
-                return self.json(pairing.pair(str(body.get('kind', '')), str(body.get('label') or '')))
+                return self.json(
+                    pairing.pair(str(body.get('kind', '')), str(body.get('label') or ''), str(body.get('host') or ''))
+                )
             except ValueError as e:
                 return self.json({'ok': False, 'error': str(e)}, 400)
         if path == '/api/devices/revoke':

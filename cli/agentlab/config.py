@@ -38,7 +38,15 @@ SCHEMA = {  # section -> {key: default}; None = required
         'isolation': 'sysbox',
         'publish_address': '127.0.0.1',
     },
-    'hub': {'publish': 0, 'extra_stacks': [], 'bark_url': '', 'bark_public': ''},
+    'hub': {
+        'publish': 0,
+        'extra_stacks': [],
+        'bark_url': '',
+        'bark_public': '',
+        'extra_secrets': '',  # a host folder of other secrets to show (admins only) on the Secrets screen
+        'extra_secrets_map': '',  # its secrets-map (same format as hub/secrets-map.json), optional
+        'extra_secrets_label': 'Other secrets',
+    },
     'auth': {
         'mode': 'cloudflare-access',
         'ingress': '',
@@ -59,7 +67,7 @@ SCHEMA = {  # section -> {key: default}; None = required
     'storage': {'mode': 'shared', 'pool_size': '', 'pool_image': '', 'person_size': '80G', 'person_sizes': {}},
     'limits': {'total_memory': '96g', 'throttle_io_psi_max': 25},
     'android': {'enabled': False, 'system_image': 'system-images;android-35;google_apis;x86_64'},
-    'backups': {'keep_days': 14, 'time': '03:30'},
+    'backups': {'enabled': True, 'keep_days': 14, 'time': '03:30'},
     'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': ''},
     'coolify': {'url': 'http://127.0.0.1:8000', 'token_file': '', 'project': 'agentlab'},
     'images': {'registry': '', 'tag': 'latest'},
@@ -306,6 +314,11 @@ def resolve(raw, previous=None, state=None):
     if not isinstance(extra, list) or not all(isinstance(x, str) and PROJECT.match(x) for x in extra):
         problems.append('[hub] extra_stacks must be a list of Compose project names (lowercase, digits, - and _)')
         hub['extra_stacks'] = []
+    for key in ('extra_secrets', 'extra_secrets_map'):
+        if hub[key] and not str(hub[key]).startswith('/'):
+            problems.append(f'[hub] {key} must be an absolute path on this host')
+    if hub['extra_secrets_map'] and not hub['extra_secrets']:
+        problems.append('[hub] extra_secrets_map needs extra_secrets (the folder it describes)')
     for key in ('bark_url', 'bark_public'):
         if hub[key] and not re.match(r'^https?://[^\s/]+', str(hub[key])):
             problems.append(f'[hub] {key} must be an http(s) address, e.g. "http://host.docker.internal:7192"')
@@ -463,6 +476,8 @@ def resolve(raw, previous=None, state=None):
     seeds = [c for c in companions if c['name'] not in seeded and c['name'] not in have]
     companions = live + seeds
 
+    if not isinstance(backups['enabled'], bool):
+        problems.append('[backups] enabled must be true or false')
     if not TIME.match(str(backups['time'])):
         problems.append('[backups] time must be HH:MM')
     if not isinstance(backups['keep_days'], int) or backups['keep_days'] < 1:
@@ -493,7 +508,15 @@ def resolve(raw, previous=None, state=None):
         },
         'hub_domain': c['hub_domain'],
         'publish_address': str(c['publish_address']),
-        'hub': {'publish': hub['publish'], 'extra_stacks': hub['extra_stacks']},
+        'hub': {
+            'publish': hub['publish'],
+            'extra_stacks': hub['extra_stacks'],
+            'extra_secrets': {
+                'folder': str(hub['extra_secrets']).rstrip('/'),
+                'map': str(hub['extra_secrets_map']),
+                'label': str(hub['extra_secrets_label']) or 'Other secrets',
+            },
+        },
         'bark': {'url': str(hub['bark_url']).rstrip('/'), 'public': str(hub['bark_public']).rstrip('/')},
         'coolify_domain': c['coolify_domain'],
         'pair_domain': c['pair_domain'],
@@ -509,7 +532,7 @@ def resolve(raw, previous=None, state=None):
             'throttle': {'agent_gb': gb(default_memory), 'pool_gb': gb(total), 'io_psi_max': psi},
         },
         'android': {'enabled': bool(android['enabled']), 'system_image': android['system_image']},
-        'backups': {'keep_days': backups['keep_days'], 'time': backups['time']},
+        'backups': {'enabled': backups['enabled'], 'keep_days': backups['keep_days'], 'time': backups['time']},
         'companions': companions,
         'seed': [c['name'] for c in seeds],  # cluster.toml entries apply records in the state file
         'companion_policy': policy,
@@ -529,6 +552,13 @@ def public(cfg):
 
 def to_json(cfg):
     return json.dumps(public(cfg), indent=2) + '\n'
+
+
+def ports_only(cfg):
+    """Whether people reach everything on published ports (the hub and every agent's T3): a one-person setup that
+    keeps its own network as the way in, so `tailscale serve`, tailnet HTTPS and the edge's ingress aren't used."""
+    agents = cfg['agents']
+    return bool(cfg['hub']['publish']) and bool(agents) and all('t3' in a['publish'] for a in agents)
 
 
 def agent(cfg, agent_id):

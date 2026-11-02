@@ -370,6 +370,20 @@ def _tailscale(cfg, c):
         f'Tailscale {state or "not running"}' + (' (Windows)' if cli == WINDOWS_TAILSCALE else ''),
         'install Tailscale and run: sudo tailscale up (on WSL: Tailscale for Windows, signed in)',
     )
+    if config.ports_only(cfg):
+        c.add(
+            'tailscale-ports',
+            True,
+            'everything is on published ports over your tailnet: tailscale serve and tailnet HTTPS are not used',
+        )
+        c.add(
+            'tailscale-acl',
+            False,
+            "who may reach the published ports is decided by your tailnet ACL and this host's firewall",
+            'manual: allow only your own devices to reach this node on the published ports',
+            'warning',
+        )
+        return
     if state == 'Running':
         c.add(
             'tailscale-https',
@@ -447,15 +461,12 @@ def cluster(cfg, c):
             f'{a["id"]} files at {a["path"]}',
             'agentctl apply',
         )
-    for unit in (
-        'agentlab-disks.service',
-        'agentlab-throttle.service',
-        'agentlab-watch.service',
-        'agentlab-janitor.timer',
-        'agentlab-backup.timer',
-        'agentlab-firewall.service',
-    ):
+    units = ['agentlab-disks.service', 'agentlab-throttle.service', 'agentlab-watch.service', 'agentlab-janitor.timer']
+    units += ['agentlab-backup.timer'] if cfg['backups']['enabled'] else []
+    for unit in [*units, 'agentlab-firewall.service']:
         c.add(f'unit-{unit}', _active(unit), f'{unit} active', 'agentctl install')
+    if not cfg['backups']['enabled']:
+        c.add('backups', True, 'nightly backups are off ([backups] enabled = false); `agentctl backup run` still works')
     c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'agentctl install')
     if not is_root():
         c.sudo('firewall', 'the agentlab firewall table (nft needs root)')

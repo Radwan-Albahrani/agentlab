@@ -76,12 +76,16 @@ owner = "sara@example.com"
 #                                  # project names, or Coolify project names (all of that project's services)
 # bark_url = "http://host.docker.internal:7192"   # optional phone pushes through a Bark server (the hub posts here)
 # bark_public = "http://100.64.0.1:7192"          # the address the phone app registers with (default: bark_url)
+# extra_secrets = "/srv/other/secrets"            # another folder of secrets on this host, shown (admins only) as
+# extra_secrets_map = "/srv/other/secrets-map.json" # its own group on Secrets; its map (hub/secrets-map.json format)
+# extra_secrets_label = "Homelab"                  # may restart allowed containers or copy into an agent's home
 
 [android]
 enabled = true                     # Android emulator on demand (needs /dev/kvm: bare metal or nested virt)
 system_image = "system-images;android-35;google_apis;x86_64"
 
 [backups]
+enabled = true                     # nightly backups of chats and companion data; `agentctl backup run` works either way
 keep_days = 14
 time = "03:30"
 

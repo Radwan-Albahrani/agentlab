@@ -17,8 +17,9 @@ def home(tmp_path, monkeypatch):
     for attr, sub in (('REQUESTS', 'requests'), ('RESULTS', 'results'), ('STATE', 'state'), ('CODE', 'code')):
         monkeypatch.setattr(companion, attr, str(tmp_path / sub))
     monkeypatch.setattr(companion, 'LIVE', str(tmp_path / 'companions.json'))
-    monkeypatch.setattr(companion, 'WAIT_S', 3)
-    monkeypatch.setattr(companion, 'CREATE_WAIT_S', 3)
+    # generous: a busy CI box can starve the fake watcher thread for a few seconds; answered requests return at once
+    monkeypatch.setattr(companion, 'WAIT_S', 15)
+    monkeypatch.setattr(companion, 'CREATE_WAIT_S', 15)
     monkeypatch.setenv('AGENTLAB_COMPANIONS', 'helper, bad/name,other')
     (tmp_path / 'results').mkdir()
     return tmp_path
@@ -34,7 +35,9 @@ def watcher(home, base, answer, seen):
         seen['mode'] = stat.S_IMODE(os.stat(request).st_mode)
         seen['payload'] = json.loads(request.read_text())
         request.unlink()
-        (home / 'results' / f'{base}.json').write_text(json.dumps(answer))
+        tmp = home / 'results' / f'.{base}.tmp'
+        tmp.write_text(json.dumps(answer))
+        tmp.replace(home / 'results' / f'{base}.json')  # like the real watcher: never a half-written answer
 
     t = threading.Thread(target=run, daemon=True)
     t.start()

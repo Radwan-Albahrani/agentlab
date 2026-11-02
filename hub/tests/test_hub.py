@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = tempfile.mkdtemp(prefix='hub-test-')
@@ -268,6 +269,34 @@ class Scope(unittest.TestCase):
             with self.subTest(path), self.assertRaises(routes.ForbiddenError):
                 routes.resolve(table, path)
 
+    def test_extra_secrets_are_their_own_group_for_admins_only(self):
+        sec = store.secrets
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, 'jellyfin-api-key.txt').write_text('k1')
+            Path(d, 'map.json').write_text(json.dumps({'jellyfin-api-key.txt': {'label': 'Jellyfin API key'}}))
+            with (
+                mock.patch.object(sec, 'EXTRA', d),
+                mock.patch.object(sec, 'EXTRA_MAP', f'{d}/map.json'),
+                mock.patch.object(sec, 'EXTRA_LABEL', 'Homelab'),
+            ):
+                scope.use(scope.ADMIN)
+                items = {s['name']: s for s in screens.secrets()['items']}
+                extra = items['extra/jellyfin-api-key.txt']
+                self.assertEqual((extra['group'], extra['label']), ('Homelab', 'Jellyfin API key'))
+                self.assertEqual(items['extra/map.json']['group'], 'Homelab')  # the map itself is a file there too
+                self.assertTrue(sec.save('extra/jellyfin-api-key.txt', 'k2'))
+                self.assertEqual(Path(d, 'jellyfin-api-key.txt').read_text(), 'k2')
+                self.assertEqual(len(sec.secret_versions('extra/jellyfin-api-key.txt')), 1)
+                with self.assertRaises(ValueError):
+                    sec.save('extra/../jellyfin-api-key.txt', 'x')
+                as_person('sara@example.com')
+                for table, path in ((routes.GET, '/api/secrets'), (routes.POST, '/api/secrets/save')):
+                    with self.subTest(path), self.assertRaises(routes.ForbiddenError):
+                        routes.resolve(table, path)
+                # A companion owner's secret calls can only name their own companion's folder, never extra/.
+                with self.assertRaises((ValueError, routes.ForbiddenError)):
+                    actions.companion('helper', 'secret', {'file': '../../extra/jellyfin-api-key.txt', 'value': 'x'})
+
     def test_own_things_work(self):
         as_person('sara@example.com')
         for path in (
@@ -301,6 +330,12 @@ class Scope(unittest.TestCase):
         link = post('/api/agents/sara/pair', {'kind': 'browser', 'label': 'x', 'evil': 1})
         self.assertTrue(link['url'].startswith('https://agents.example.com/pair#token='))
         self.assertFalse(post('/api/agents/sara/pair', {'kind': 'app', 'label': 'iPhone'})['available'])
+        cluster.use_host('homebox:7190')
+        try:
+            post('/api/agents/sara/pair', {'kind': 'browser', 'label': 'x', 'host': 'evil.com'})
+        finally:
+            cluster.use_host('')
+        self.assertEqual(fake_agent.PAIR_BODIES[-1], {'kind': 'browser', 'label': 'x', 'host': 'homebox'})
 
     def test_companion_secret_and_logs(self):
         as_person('admin@example.com')
@@ -348,6 +383,26 @@ class Screens(unittest.TestCase):
         )
         self.assertIn('/_agentlab/view/admin?next=/_agentlab/accounts/browser', card['links']['browser'])
         self.assertIsNone(screens.agents('')['agents'][1]['links']['browser'])  # sara has no browser open
+
+    def test_published_tools_link_straight_to_their_ports(self):
+        ports = {'t3': 7101, 'terminal': 7104, 'files': 7105, 'browser': 7103}
+        with mock.patch.object(cluster, 'published', lambda agent_id: ports if agent_id == 'admin' else {}):
+            cluster.use_host('HomeBox.tail.ts.net:7190')
+            try:
+                links = cluster.links('admin')
+                other = cluster.links('sara')
+            finally:
+                cluster.use_host('')
+        self.assertEqual(links['chat'], 'http://homebox.tail.ts.net:7101/')
+        self.assertEqual(links['terminal'], 'http://homebox.tail.ts.net:7104/_agentlab/terminal/')
+        self.assertEqual(links['files'], 'http://homebox.tail.ts.net:7105/_agentlab/files/')
+        self.assertTrue(links['browser'].startswith('http://homebox.tail.ts.net:7103/vnc.html'))
+        self.assertEqual(links['accounts'], '/agents/admin/accounts')
+        self.assertTrue(other['chat'].startswith('https://agents.example.com/_agentlab/view/sara'))
+        for odd in ('[::1]:7190', 'a b', 'x/y'):  # never put an odd Host header into a link
+            cluster.use_host(odd)
+            self.assertEqual(cluster.request_host(), '')
+        cluster.use_host('')
 
     def test_stacks_group_by_agent(self):
         self.assertEqual(domains.domain_of('agentlab-agent-sara'), ('sara', 'agent'))

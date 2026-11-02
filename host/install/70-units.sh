@@ -20,8 +20,15 @@ for u in "${units[@]}"; do
 done
 [ -n "${any}" ] && systemctl daemon-reload
 systemctl start agentlab.slice
-for u in agentlab-disks.service agentlab-throttle.service agentlab-watch.service agentlab-janitor.timer \
-  agentlab-backup.timer; do
+enable=(agentlab-disks.service agentlab-throttle.service agentlab-watch.service agentlab-janitor.timer)
+# Nightly backups are optional ([backups] enabled); `agentctl backup run` works either way.
+if [ -n "${AGENTLAB_BACKUPS}" ]; then
+  enable+=(agentlab-backup.timer)
+elif systemctl is-enabled -q agentlab-backup.timer 2>/dev/null; then
+  systemctl disable -q --now agentlab-backup.timer
+  changed "agentlab-backup.timer off ([backups] enabled = false)"
+fi
+for u in "${enable[@]}"; do
   systemctl enable -q "${u}"
   if [ -n "${any}" ] || ! systemctl is-active -q "${u}"; then systemctl restart "${u}"; fi
 done

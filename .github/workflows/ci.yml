@@ -1,0 +1,28 @@
+# Every part's lint and tests on each pull request and on main. scripts/check.sh runs them in pinned containers, so
+# the runner only needs Docker.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.part }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [lint, cli, host, gate, companion, image, shell, hub]
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - run: scripts/check.sh ${{ matrix.part }}

@@ -219,6 +219,50 @@ class Watch(unittest.TestCase):
         self.assertEqual(secrets.match(rules, 'companions/helper/other.txt'), (None, {}))
         self.assertEqual(secrets.changes({}, {'a': '1'}), ([], []))
 
+    def test_extra_secrets_apply_only_their_narrow_rules(self):
+        home = f'{TMP}/agents/sara/home/.config'
+        os.makedirs(home, exist_ok=True)
+        with tempfile.TemporaryDirectory() as d:
+            for f in ('media.txt', 'pass.txt', 'evil.txt'):
+                with open(f'{d}/{f}', 'w') as fh:
+                    fh.write('v1')
+            rules = {
+                'media.txt': {'apply': [{'restart': 'jellyfin'}, {'restart': 'coolify-'}]},
+                'pass.txt': {'apply': [{'copy': f'{home}/pass-token'}]},
+                'evil.txt': {'apply': [{'copy': '/etc/evil'}, {'redeploy': 'core'}]},
+            }
+            with open(f'{d}/map.json', 'w') as fh:
+                json.dump(rules, fh)
+            extra = {'folder': d, 'map': f'{d}/map.json'}
+            events, restarted = [], []
+            containers = {
+                'items': [
+                    {'name': 'jellyfin-abc', 'stack': 'media'},
+                    {'name': 'coolify-proxy', 'stack': 'coolify'},
+                ]
+            }
+            with (
+                mock.patch.object(store, 'event', side_effect=lambda *a, **k: events.append(a)),
+                mock.patch.object(store, 'load', return_value=containers),
+                mock.patch.object(secrets.host, 'run', side_effect=lambda cmd: (restarted.append(cmd), (0, ''))[1]),
+                mock.patch.object(secrets.os, 'chown'),
+            ):
+                state = {}
+                secrets.check_extra(state, extra)  # first look only records
+                self.assertEqual(events, [])
+                for f in ('media.txt', 'pass.txt', 'evil.txt'):
+                    with open(f'{d}/{f}', 'w') as fh:
+                        fh.write('v2')
+                secrets.check_extra(state, extra)
+            by = {e[1].split()[0]: e for e in events}
+            self.assertEqual(restarted, [['docker', 'restart', 'jellyfin-abc']])  # coolify's own never
+            self.assertIn('✗ no container coolify-*', by['extra/media.txt'][2])
+            with open(f'{home}/pass-token') as fh:
+                self.assertEqual(fh.read(), 'v2')
+            self.assertIn("not inside an agent's home", by['extra/evil.txt'][2])
+            self.assertIn('not allowed for extra secrets', by['extra/evil.txt'][2])
+            self.assertFalse(os.path.exists('/etc/evil'))
+
     def test_hub_requests(self):
         self.assertEqual(page_requests.parse('deploy~agentlab-agent-sara'), ('deploy', 'agentlab-agent-sara'))
         self.assertIsNone(page_requests.parse('format~disk'))

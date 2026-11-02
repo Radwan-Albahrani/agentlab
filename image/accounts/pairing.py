@@ -3,17 +3,26 @@
 host the link names, so the link must use a host that device can reach:
   browser  the cluster domain (the person is signed in there already), 5 minutes
   app      the agent's pair host (cloudflare-access / tinyauth: Access bypass straight to T3), or the cluster domain on a
-           tailnet (identity comes with the connection), 10 minutes; the hub draws the QR from `url`."""
+           tailnet (identity comes with the connection), 10 minutes; the hub draws the QR from `url`.
+When T3 is published on a host port (one-person setups reached over their own network, AGENTLAB_PUBLISHED), both
+kinds use http://<the host the hub page was opened with>:<that port>, as the hub passes it in `host`."""
 
 import json
 import os
 import re
 
-from util import run, sh_quote
+from util import published, run, sh_quote
 
 TTL = {'browser': '5m', 'app': '10m'}
 DEVICE_SUBJECT = 'one-time-token'  # sessions made by redeeming a pairing link (not the bridge's short tokens)
 NO_DEVICE = 'No such device.'
+
+
+def _published(host):
+    """http://host:port when T3 is published and the caller named a plain hostname or IPv4 address, else ''."""
+    port, host = published('t3'), (host or '').strip().lower()
+    ok = bool(port) and 0 < len(host) <= 253 and all(c.isalnum() or c in '.-' for c in host)
+    return f'http://{host}:{port}' if ok and not host.startswith(('.', '-')) else ''
 
 
 def _host(kind):
@@ -31,17 +40,20 @@ def _host(kind):
     return host, reason
 
 
-def pair(kind, label):
-    """A fresh pairing link -> {available, url, token, expires, id} or {available: False, reason}."""
+def pair(kind, label, host=''):
+    """A fresh pairing link -> {available, url, token, expires, id} or {available: False, reason}. `host`: the host
+    the hub page was opened with (used only when T3 is published on a port)."""
     if kind not in TTL:
         raise ValueError('kind must be browser or app')
-    host, reason = _host(kind)
-    if not host:
-        return {'available': False, 'reason': reason}
+    base = _published(host)
+    if not base:
+        host, reason = _host(kind)
+        if not host:
+            return {'available': False, 'reason': reason}
+        base = 'https://' + host
     label = re.sub(r'[^\w .@-]', '', label)[:40] or kind
     rc, out = run(
-        f't3 auth pairing create --json --ttl {TTL[kind]} --label {sh_quote(label)} '
-        f'--base-url {sh_quote("https://" + host)}',
+        f't3 auth pairing create --json --ttl {TTL[kind]} --label {sh_quote(label)} --base-url {sh_quote(base)}',
         timeout=30,
     )
     try:
@@ -51,7 +63,7 @@ def pair(kind, label):
     token = made.get('token') or made.get('credential') or ''
     if not token:
         return {'available': False, 'reason': f'T3 could not make a pairing link: {out[-200:]}'}
-    url = made.get('pairUrl') or made.get('url') or f'https://{host}/pair#token={token}'
+    url = made.get('pairUrl') or made.get('url') or f'{base}/pair#token={token}'
     return {
         'available': True,
         'kind': kind,
