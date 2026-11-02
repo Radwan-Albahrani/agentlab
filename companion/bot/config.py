@@ -26,7 +26,6 @@ def optional_secret(name):
 
 NAME = os.environ.get('COMPANION_NAME', 'Companion')  # how it calls itself in Slack and in the agent's prompts
 ID = os.environ.get('COMPANION_ID', NAME.lower())  # its folder names and its id on the hub
-ORG = os.environ.get('COMPANION_ORG', 'the company')  # where the owner works, for the agent's prompts
 OWNER = secret('owner.txt')  # the Slack user id of the only person it works for
 AGENT = os.environ.get('COMPANION_AGENT', 'agent')  # the agent whose environment it lives in
 BRIDGE = os.environ.get('COMPANION_BRIDGE', f'http://agent-{AGENT}:8790')  # that agent's Accounts bridge
@@ -36,7 +35,6 @@ T3 = os.environ.get('COMPANION_T3', '/t3')  # the agent's ~/.t3/userdata (read-o
 FILES = os.path.join(os.environ.get('COMPANION_FILES', '/files'), ID)
 AGENT_FILES = f'/workspace/.companion/{ID}'
 DATA = os.environ.get('COMPANION_DATA', '/data')  # <data>/companions/<name>/: its database + what the hub reads
-DEFAULT_PROJECT = os.environ.get('COMPANION_DEFAULT_PROJECT', '/workspace')
 
 POLL = 3  # s between checks of every task
 SETTLE = 60  # s an orchestrator gets to start more workers before its turn counts as finished
@@ -78,6 +76,20 @@ SCHEMA = [
         'help': 'When a run fails on capacity, rate limits or a server error, say "continue" after 30 s, 90 s and 3 min.',
     },
     {
+        'key': 'org',
+        'label': 'Where you work',
+        'type': 'text',
+        'default': os.environ.get('COMPANION_ORG', 'the company'),
+        'help': "Used in the agent's prompts: what counts as going outside, who colleagues are.",
+    },
+    {
+        'key': 'default_project',
+        'label': 'Default project',
+        'type': 'text',
+        'default': os.environ.get('COMPANION_DEFAULT_PROJECT', '/workspace'),
+        'help': "The T3 project (a folder in the agent's /workspace) for tasks that name no known project.",
+    },
+    {
         'key': 'github_user',
         'label': 'Your GitHub username',
         'type': 'text',
@@ -111,6 +123,14 @@ def mode():
 
 def auto_retry():
     return COMP.setting('auto_retry')
+
+
+def org():
+    return (COMP.setting('org') or '').strip() or 'the company'
+
+
+def default_project():
+    return (COMP.setting('default_project') or '').strip() or '/workspace'
 
 
 def publish_channel():

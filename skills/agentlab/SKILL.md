@@ -13,6 +13,11 @@ work; you decide the order, read its JSON, and handle what it can't do alone (hu
 
 - **Drive `agentctl` with `--json`** and act on the result, not on prose. Exit codes: `0` done, `1` failed (read the
   error, fix, retry), `2` needs a human step or a confirmation (show the human exactly what and wait).
+- **No `sudo` in front of `agentctl`.** Commands that change the host re-run themselves through `sudo -n`; read-only
+  ones (`doctor`, `status`, `config`, `agent list`) run as you. If sudo wants a password you get exit 2 with
+  `result.needs = "sudo"` and the exact command: ask the human to run it, or to allow passwordless sudo for
+  agentctl (the error shows the sudoers line). `doctor` run without root marks root-only checks "not checked";
+  run `sudo agentctl doctor --json` when you need them.
 - **Never pass `--yes` on your own.** Destructive commands (`agent remove` without `--keep-data`, `backup restore`)
   print a plan and stop; show the plan to the human and only re-run with `--yes` after they say so.
 - **Always `--dry-run` first** for `apply` and `cloudflare setup` on a cluster that already serves people, and show
@@ -20,7 +25,6 @@ work; you decide the order, read its JSON, and handle what it can't do alone (hu
 - **Secrets never go in chat, git, or command lines.** Ask the human to put them in the file `doctor` names (e.g.
   `<data>/secrets/cloudflare-api.token`) with `sudo install -m 600 /dev/stdin <file>` and paste into the terminal.
 - **One change at a time on a live cluster**, then `agentctl status --json` to confirm before the next.
-- Use `sudo` for `agentctl` (it manages systemd, Docker, disks and the firewall).
 
 ## Install, from zero
 
@@ -43,19 +47,20 @@ Then:
 
 ```sh
 git clone <repo> /opt/agentlab && cd /opt/agentlab
-sudo ./cli/agentctl doctor --json            # host facts; nothing changes
-sudo install -D -m 640 cluster.example.toml /etc/agentlab/cluster.toml   # then edit it with the answers above
-sudo ./cli/agentctl doctor --json            # now also checks the config
-sudo ./cli/agentctl install --json           # Docker, Sysbox, ingress tools, units, firewall, images
+cli/agentctl init --json                 # agentctl on PATH, the agentlab group, /etc/agentlab/cluster.toml
+# edit /etc/agentlab/cluster.toml with the answers above (sudoedit; `agentctl config edit` is for people)
+agentctl config --json                   # validates it and shows the resolved config
+agentctl doctor --json                   # host facts and config checks; nothing changes
+agentctl install --json                  # Docker, Sysbox, ingress tools, units, firewall, images
 ```
 
 Read every `doctor` check with `ok: false`: `fix` is either a command you run or a manual step for the human.
 Then the access mode's own steps from [access.md](references/access.md), then:
 
 ```sh
-sudo ./cli/agentctl apply --dry-run --json   # show the plan
-sudo ./cli/agentctl apply --json
-sudo ./cli/agentctl status --json            # every agent running and healthy
+agentctl apply --dry-run --json          # show the plan
+agentctl apply --json
+agentctl status --json                   # every agent running and healthy
 ```
 
 **Verify like a user**, not just by status: open the domain signed in as an admin (the human does this), check the

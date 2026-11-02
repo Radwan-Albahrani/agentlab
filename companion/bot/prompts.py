@@ -3,7 +3,7 @@ review."""
 
 from datetime import datetime
 
-from .config import AGENT_FILES, NAME, ORG, work_tools
+from .config import AGENT_FILES, NAME, org, work_tools
 
 
 def outbox(folder):
@@ -133,7 +133,7 @@ def approvals(folder, who, owner):
     return (
         f"\n\nSensitive things need {owner}'s explicit approval first: permissions or access, money, deleting"
         ' anything, changing settings or data in any account, sharing anything confidential (contracts, HR,'
-        f' salaries, customer data, credentials), and anything going outside {ORG}. Routine documents (invoices,'
+        f' salaries, customer data, credentials), and anything going outside {org()}. Routine documents (invoices,'
         f' receipts) and answers for the colleague who asked do NOT need approval: hand them over with'
         f' manifest.json as described below; {NAME} shows them to {owner} anyway. For the sensitive ones,'
         ' prepare everything WITHOUT changing anything (sign in, find the exact place, the person, the setting),'
@@ -151,7 +151,7 @@ def approvals(folder, who, owner):
 def triage(owner, who, convo, texts):
     """Team mode: what does a colleague's message to the owner need? Errand is the strict one."""
     return (
-        f'You triage Slack messages for {owner} (works at {ORG}) and their assistant. The assistant can use'
+        f'You triage Slack messages for {owner} (works at {org()}) and their assistant. The assistant can use'
         f" {owner}'s browser logins to work tools and the codebase"
         + (', plus their work accounts' if work_tools() else '')
         + '.\n\nEarlier in this conversation:\n'

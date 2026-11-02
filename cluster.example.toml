@@ -72,7 +72,10 @@ owner = "sara@example.com"
 
 # [hub]
 # publish = 7190                   # one-person setups only, like [agents.publish]
-# extra_stacks = ["media"]         # other Compose projects on this host the hub should show (status, restart, logs)
+# extra_stacks = ["media"]         # other stacks on this host the hub should show (status, restart, logs): Compose
+#                                  # project names, or Coolify project names (all of that project's services)
+# bark_url = "http://host.docker.internal:7192"   # optional phone pushes through a Bark server (the hub posts here)
+# bark_public = "http://100.64.0.1:7192"          # the address the phone app registers with (default: bark_url)
 
 [android]
 enabled = true                     # Android emulator on demand (needs /dev/kvm: bare metal or nested virt)

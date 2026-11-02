@@ -1,12 +1,12 @@
 """agentctl: make one Linux server a private cluster of AI coding agents, from /etc/agentlab/cluster.toml.
-Run any command with --json for machine-readable output. Exit codes: 0 done, 1 failed, 2 needs --yes or a manual
-step. Nothing ever prompts."""
+Run any command with --json for machine-readable output. Exit codes: 0 done, 1 failed, 2 needs --yes, sudo or a
+manual step. Nothing ever prompts; commands that change the host re-run themselves through sudo."""
 
 import argparse
 import json
 import sys
 
-from . import agents, apply, backup, cloudflare, companions, config, doctor, images, install, status
+from . import agents, apply, backup, cloudflare, companions, config, doctor, images, init, install, privileges, status
 from .util import NEEDS, OK, OUT, Failed, Plan
 
 
@@ -15,6 +15,7 @@ def parser():
     p.add_argument('--config', default=config.DEFAULT_PATH, help=f'cluster.toml (default {config.DEFAULT_PATH})')
     p.add_argument('--json', action='store_true', help='machine-readable output on stdout')
     sub = p.add_subparsers(dest='cmd', required=True)
+    sub.add_parser('init', help='first command on a new server: agentctl on PATH, the agentlab group, a starter config')
     sub.add_parser('doctor', help='check the host and the config; every problem comes with its fix')
     i = sub.add_parser('install', help='one-time host setup (Docker, Sysbox, cloudflared, Coolify, KVM, units)')
     i.add_argument('--only', nargs='+', metavar='STEP', help='run only these steps (e.g. units firewall)')
@@ -65,7 +66,8 @@ def parser():
     cr.add_argument('agent', help="the companion's agent ('-': whichever agent it belongs to)")
     cr.add_argument('name')
     sub.add_parser('status', help='agents, health, memory and disk at a glance')
-    sub.add_parser('config', help="print the resolved config (what cluster.json holds, plus agentctl's own keys)")
+    cf_ = sub.add_parser('config', help='print the resolved config, or `config edit` to change it')
+    cf_.add_argument('action', nargs='?', choices=['show', 'edit'], default='show')
     return p
 
 
@@ -80,6 +82,10 @@ def dispatch(args):
         return companions.remove(args.config, companions.owner_of(config.load(args.config), args.name), args.name)
     if args.cmd == 'companion':
         return companions.remove(args.config, args.agent, args.name)
+    if args.cmd == 'init':
+        return init.init(args.config)
+    if args.cmd == 'config' and args.action == 'edit':
+        return init.edit(args.config)
     cfg = config.load(args.config)
     if args.cmd == 'doctor':
         return run_doctor(cfg)
@@ -155,10 +161,12 @@ def global_first(argv):
 
 
 def main(argv=None):
-    args = parser().parse_args(global_first(sys.argv[1:] if argv is None else list(argv)))
+    argv = global_first(sys.argv[1:] if argv is None else list(argv))
+    args = parser().parse_args(argv)
     OUT.json = args.json
     result, code, error = {}, OK, ''
     try:
+        privileges.elevate(args, argv)
         result = dispatch(args) or {}
     except Failed as e:
         code, error = e.code, str(e)

@@ -1,179 +1,165 @@
-# agentlab
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+    <img alt="agentlab: your team's AI coding agents, on your own server" src="docs/assets/banner-light.svg" width="100%">
+  </picture>
+</p>
 
-**Your own AI coding agents, on your own server, one private workspace per person.**
+<p align="center">
+  <b>One server. A private AI coding agent for every person on your team.</b><br>
+  Claude Code and Codex, with a real browser, Docker, a terminal and a phone emulator,<br>
+  running around the clock on hardware you own.
+</p>
 
-agentlab turns one Linux machine into a place where every person on a team gets their own always-on AI coding agent:
-[T3](https://github.com/pingdotgg/t3code) chats driving Claude Code or Codex with *their own* accounts, a real browser,
-Docker, a terminal, a file manager and an Android emulator. People sign in with the company's login and land straight
-in their own agent; nobody can open anyone else's. Agents keep running when laptops close, and their Slack companions
-keep working with them.
-
-One config file describes the whole cluster. One command, `agentctl apply`, makes the server match it. And because
-every command speaks JSON and never prompts, an AI agent with SSH access can install and run the whole thing for you,
-following the [bundled skill](skills/agentlab/SKILL.md).
-
-> **Status: early.** Every part is tested ([`scripts/check.sh`](scripts/check.sh)) and the full cluster has run end to
-> end. Not yet proven on real hardware: Sysbox isolation, the Android emulator on KVM, live Cloudflare / Tailscale /
-> tinyauth sign-in and Coolify deploys. `agentctl doctor` checks each one; please report what breaks.
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="#what-everyone-gets">What everyone gets</a> ·
+  <a href="#is-it-safe">Is it safe?</a> ·
+  <a href="docs/architecture.md">How it works</a>
+</p>
 
 ---
 
-## What each person gets
+## Why
 
-| | |
-|---|---|
-| **Their agent** at `https://agents.example.com` | Chosen by who they signed in as. Own several? They get a picker and can switch any time. |
-| **Chats that live on the server** | T3 keeps every thread and worktree on the server. Close the laptop, the agent keeps going; open it on the phone and carry on. |
-| **Their own AI accounts** | First visit is onboarding: sign in to Claude Code and/or Codex, add MCP connectors, optionally GitHub. Then straight into T3. |
-| **Desktop and mobile apps** | Pair the T3 app with a QR code from their hub; revoke devices any time. |
-| **Real tools** | A Chrome the agent drives (and they can watch), Docker for tests and databases, a terminal, a file manager, an Android emulator for mobile QA. |
-| **Their hub** at `https://agents-hub.example.com` | Usage, disk, sign-ins, devices, and their companions: tasks, polls, pull-request reviews, settings, secrets, logs. |
-| **Companions** | Slack bots that belong to their agent and hand work back and forth with it. The agent creates, changes and restarts its own companion: *"add a /standup command to my bot"* just works. |
+AI coding agents are at their best when they never stop: a long refactor that runs overnight, a test suite that takes
+an hour, a pull request reviewed while you sleep. Laptops close, though, and handing your whole team one shared box
+means everyone can see everyone's code, chats and logins.
 
-Admins get all of that for every agent, plus the cluster screens: services, configs, storage, secrets.
+**agentlab gives each person their own agent on a shared server**, behind your company's sign-in, so it keeps working
+when they walk away and nobody can look over anyone else's shoulder.
 
-## How it works
+## What everyone gets
 
-```mermaid
-flowchart LR
-    P([person's browser<br/>or T3 app]) --> S{{"sign-in<br/>Cloudflare Access · Tailscale · tinyauth"}}
-    S --> E[edge<br/>Traefik]
-    E -- every request --> G[gate<br/>who are you, which agent]
-    E --> A1[agent: sara<br/>T3 · Claude · Codex · Chrome · Docker]
-    E --> A2[agent: omar]
-    E --> H[hub]
-    A1 <--> C1[sara's companion<br/>Slack]
-    subgraph server [one Linux server]
-        E
-        G
-        A1
-        A2
-        H
-        C1
-    end
-```
+<table>
+<tr>
+<td width="50%" valign="top">
 
-- **Sign-in happens before anything reaches an agent.** The gate checks every request on the server (it verifies
-  Cloudflare's signed token, or the identity `tailscale serve` / tinyauth vouch for) and decides which agent you get.
-  Routing follows the gate's answer, never a header the browser sent.
-- **Agents can't see each other.** Each one has its own container and its own Docker network, and a firewall table stops
-  agents from opening connections to shared services or the host. With [Sysbox](https://github.com/nestybox/sysbox),
-  containers are user-namespaced and run Docker inside without privileged mode.
-- **T3 has its own lock too.** It only answers paired devices, so even a routing mistake wouldn't open someone's chats.
-- **Heavy work queues instead of crashing the box.** A throttle admits builds and test runs by memory and disk
-  pressure; a janitor clears settled worktrees and caches; a memory cap holds all agents together.
-- **Nothing is lost on restart.** Homes and workspaces live on the host (one shared pool, or a capped disk per person),
-  and T3 databases are backed up nightly.
+### 🧠 Their own agent
+They open `agents.yourcompany.com`, sign in with their work account and land in **their** agent. Not a shared one,
+not someone else's. Own more than one? They pick.
 
-Details, names and every contract between the parts: [docs/architecture.md](docs/architecture.md).
+</td>
+<td width="50%" valign="top">
 
-## Pick how people get in
+### 🔑 Their own AI accounts
+The first visit walks them through signing in to **Claude** or **Codex** with their own subscription, and connecting
+the tools they use (Linear, Notion, GitHub…). Then they're in.
 
-| Mode | Good for | People sign in with |
-|---|---|---|
-| `cloudflare-access` | Companies already on Cloudflare. Nothing listens publicly; a tunnel brings traffic in. | Any Zero Trust login: Google, Microsoft, or a one-time code by email |
-| `tailscale` | Teams already on one tailnet. Simplest; the tailnet is the sign-in. | Being on the tailnet |
-| `tinyauth` | No Cloudflare, no tailnet. Public ports with Let's Encrypt, or a tunnel. | Google (or another OAuth provider) on the server |
+</td>
+</tr>
+<tr>
+<td valign="top">
 
-Allowed people are always the agents' owners plus the admins, optionally plus whole email domains
-(`allow_domains = ["example.com"]`: anyone there can sign in; only owners get an agent). `agentctl` keeps the sign-in
-system's allow list in sync on every apply. Step-by-step setup for each mode:
-[references/access.md](skills/agentlab/references/access.md).
+### 💬 Chats that never stop
+Conversations live on the server in [T3](https://github.com/pingdotgg/t3code). Start something on the desktop, close
+the lid, check on it from your phone. Pair the T3 app with a QR code.
+
+</td>
+<td valign="top">
+
+### 🛠️ A real workshop
+Their agent drives a **Chrome** they can watch live, runs **Docker** for databases and tests, has a **terminal**, a
+**file manager**, and an **Android emulator** for testing mobile apps.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🌱 A companion in Slack
+Each agent can have a Slack bot that works with it: takes requests from the team, runs polls, reviews pull requests
+with screenshots, posts updates. Ask your agent *"add a standup command to my bot"* and it changes the bot itself.
+
+</td>
+<td valign="top">
+
+### 📊 Their own dashboard
+Usage, storage, connected devices, their bot's tasks and settings, all in one place, showing only their own things.
+Admins see the whole team.
+
+</td>
+</tr>
+</table>
+
+## Is it safe?
+
+The short answer: everyone gets a locked room, and the admin holds the master key.
+
+- 🔐 **Nobody gets in without your company's sign-in.** Use Cloudflare (Google, Microsoft or an email code), your
+  Tailscale network, or a Google login on the server itself. Only the people you list, or your company's email domain,
+  get through.
+- 🚪 **Everyone stays in their own room.** Each agent is sealed off from the others: it can't see their files, reach
+  their chats or talk to the shared services. Every single request is checked on the server, not just at the door.
+- 💾 **Nothing is lost.** Work lives on the server, chats are backed up every night, and one person filling their disk
+  doesn't stop anyone else.
+- 👀 **The admin can see everything.** That's on purpose, so you can help when something breaks. Tell your team.
 
 ## Get started
 
-### Let an AI agent do it
+### The easy way: let an AI agent install it
 
-Give Claude Code or Codex SSH access to the server, this repo, and say *"install agentlab using skills/agentlab"*. The
-[skill](skills/agentlab/SKILL.md) tells it what to ask you (names, people, access mode, storage), which steps need a
-human (creating a Cloudflare token, signing in to Tailscale), and what it must never do on its own (delete data, open
-ports, weaken isolation). Destructive commands always stop for your yes.
+Give Claude Code or Codex SSH access to your server and say:
 
-### Or do it yourself
+> *Install agentlab from https://github.com/Radwan-Albahrani/agentlab using its skill.*
+
+It reads the [bundled skill](skills/agentlab/SKILL.md), asks you the few things only you know (your domain, who gets
+an agent, how people sign in), does the rest, and stops for your yes before anything it can't undo.
+
+### The hands-on way
 
 ```sh
-git clone <this repo> /opt/agentlab && cd /opt/agentlab
-sudo install -D -m 640 cluster.example.toml /etc/agentlab/cluster.toml
-sudo nano /etc/agentlab/cluster.toml          # domain, people, access mode, storage
-sudo cli/agentctl doctor                      # what's missing, with the exact fix for each
-sudo cli/agentctl install                     # Docker, Sysbox, ingress tools, systemd units, firewall, images
-sudo cli/agentctl cloudflare setup            # cloudflare-access only: tunnel, DNS, Access app
-sudo cli/agentctl apply --dry-run             # see the plan
-sudo cli/agentctl apply
-sudo cli/agentctl status
+git clone https://github.com/Radwan-Albahrani/agentlab.git && cd agentlab
+cli/agentctl init            # one-time: puts agentctl on your PATH
+agentctl config edit         # your domain, your people, how they sign in
+agentctl doctor              # tells you what's missing and exactly how to fix it
+agentctl install             # sets up the server
+agentctl apply               # brings everyone's agent to life
 ```
 
-A minimal config:
+That's the whole loop. Change the config, run `agentctl apply`, done. Adding a teammate is one line:
 
-```toml
-[cluster]
-name = "example"
-domain = "agents.example.com"
-hub_domain = "agents-hub.example.com"
-deploy = "compose"            # or "coolify"
-isolation = "sysbox"          # "unconfined" only for one person / WSL
-
-[auth]
-mode = "cloudflare-access"
-admins = ["admin@example.com"]
-allow_domains = ["example.com"]
-
-[auth.cloudflare]
-team = "example"
-
-[[agents]]
-id = "sara"
-owner = "sara@example.com"
-
-[[agents]]
-id = "omar"
-owner = "omar@example.com"
+```sh
+agentctl agent add sara sara@yourcompany.com && agentctl apply
 ```
 
-Everything else has a sensible default; [`cluster.example.toml`](cluster.example.toml) documents every key.
+The sign-in setup for each option (Cloudflare, Tailscale, Google login) is in the
+[access guide](skills/agentlab/references/access.md).
 
-### Just you?
+### Just for you?
 
-agentlab works for one person too: `auth.mode = "tailscale"`, `isolation = "unconfined"` (runs on WSL), and optionally
-publish the tools on fixed ports so existing T3 app pairings keep working. Point `storage.pool_image` at an existing
-disk image and `agentctl agent adopt` brings agents that already have data and sign-ins under management without
-onboarding them again.
+agentlab works great for one person too: run it on a home server or a Windows PC with WSL, reach it over Tailscale,
+and pair the T3 app on your phone.
 
-## Day to day
+## What you need
 
-| You want to | Run |
+- A Linux server with Docker. Ubuntu 24.04 is what it's built on.
+- Roughly **12 GB of memory and 30–60 GB of disk per busy person**. A 128 GB / 512 GB machine is comfortable for 6–8
+  people.
+- One way in: a **Cloudflare** account, a **Tailscale** network, or a domain pointing at the server.
+
+## Status
+
+agentlab is **early**. Every part is tested and the whole system has run end to end, but a few pieces haven't been
+proven on real hardware yet: the strongest isolation mode (Sysbox), the Android emulator, live Cloudflare / Tailscale
+sign-in, and Coolify deploys. `agentctl doctor` checks each of them; if something breaks, please open an issue.
+
+<details>
+<summary><b>For the curious: what's inside</b></summary>
+
+<br>
+
+| Folder | What it is |
 |---|---|
-| Add a person | `agentctl agent add omar omar@example.com`, then `agentctl apply` |
-| Give someone a second agent | the same, with another id and the same email |
-| See everything at a glance | `agentctl status` (or the hub) |
-| Restore someone's chats | `agentctl backup list`, then `agentctl backup restore <date> <agent> --yes` |
-| Upgrade | `git pull`, `agentctl images build`, `agentctl apply --dry-run`, `agentctl apply` |
+| [`cli/`](cli/README.md) | `agentctl`, the one command that sets up and runs everything |
+| [`image/`](image/README.md) | what each person's agent runs: T3, Claude Code, Codex, Chrome, Docker, Android |
+| [`gate/`](gate/README.md) | the sign-in check in front of every request |
+| [`hub/`](hub/README.md) | the dashboard |
+| [`companion/`](companion/README.md) | the Slack companion |
+| [`host/`](host/README.md) | the background services that keep the server healthy: memory, disk, backups, firewall |
+| [`skills/agentlab/`](skills/agentlab/SKILL.md) | the instructions an AI agent follows to install and run it |
+| [`docs/architecture.md`](docs/architecture.md) | the full technical design |
 
-Every command takes `--json`, never prompts, and exits `0` done, `1` failed, `2` needs a human (or `--yes`).
-Troubleshooting: [references/operate.md](skills/agentlab/references/operate.md).
+Working on agentlab itself? `scripts/check.sh` runs every test with nothing but Docker installed.
 
-## Requirements
-
-- Linux with systemd and Docker (developed on Ubuntu 24.04); Python 3.12 for `agentctl` (standard library only).
-- Roughly 12 GB RAM and 30–60 GB disk per busy agent. A 128 GB / 512 GB server comfortably hosts 6–8 people.
-- More than one person: a kernel that runs Sysbox (not WSL).
-- Android emulator: `/dev/kvm` (bare metal or nested virtualization).
-
-## What's inside
-
-| Folder | What |
-|---|---|
-| [`cli/`](cli/README.md) | `agentctl`: doctor, install, apply, agents, companions, Cloudflare, backups, images, status |
-| [`host/`](host/README.md) | host services: throttle, watcher, janitor, storage mounts, firewall, install steps, systemd units |
-| [`image/`](image/README.md) | the agent image: T3, Claude Code, Codex, Chrome, Docker, Android, onboarding and pairing, the `companion` skill |
-| [`gate/`](gate/README.md) | the sign-in check behind every request, and the `/_agentlab/` menu |
-| [`hub/`](hub/README.md) | the dashboard (Python + React) |
-| [`companion/`](companion/README.md) | the Slack companion template: tasks, polls, posts, PR review and QA |
-| [`skills/agentlab/`](skills/agentlab/SKILL.md) | the install-and-operate skill for an AI agent |
-| [`docs/architecture.md`](docs/architecture.md) | how it all fits together |
-
-## Develop
-
-`scripts/check.sh` lints and tests every part in pinned containers (only Docker needed); `scripts/check.sh cli gate`
-runs just those. The hub has its own `hub/test.sh` (build, throwaway instance, Playwright in light, dark and phone
-sizes). Change [docs/architecture.md](docs/architecture.md) first when a change crosses parts.
+</details>

@@ -1,7 +1,7 @@
 # Operating and troubleshooting
 
-Start every investigation with `sudo agentctl status --json` and `sudo agentctl doctor --json`; most problems show up
-there with a `fix`.
+Start every investigation with `agentctl status --json` and `agentctl doctor --json` (prefix `sudo` to include
+the root-only checks); most problems show up there with a `fix`.
 
 ## Someone can't get in
 

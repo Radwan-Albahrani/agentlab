@@ -273,7 +273,7 @@ Agent links are always `https://<domain>/...`; to open a specific agent, `https:
 | `edge` | `traefik:v3.3.4` | `agentlab-edge` + every `agentlab-<id>` | entrypoints `ingress` :8088 (published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
 | `gate` | `agentlab/gate` | `agentlab-edge` + every `agentlab-<id>` | `:8080`, reads `cluster.json`; asks agents for onboarding state |
 | `tinyauth` | `ghcr.io/tinyauthapp/tinyauth:v5.1.3` (≥ 5.1.3: fixes CVE-2026-77560) | `agentlab-edge` | tinyauth mode only |
-| `hub` | `agentlab/hub` | `agentlab-edge` + every `agentlab-<id>` | `:8080`; mounts `rendered/` ro, `hub/watch`, `companions/`, `secrets/`, each agent's `path` at `/agents/<id>`, volume `hub-data`; `[hub] publish` (one-person setups) maps a host port and sets `HUB_PUBLISHED_OWNER` |
+| `hub` | `agentlab/hub` | `agentlab-edge` + every `agentlab-<id>` | `:8080`; mounts `rendered/` ro, `hub/watch`, `companions/`, `secrets/`, each agent's `path` at `/agents/<id>`, its state `<data>/hub/data` at `/data` (phone-push keys, display settings); optional `[hub] bark_url` / `bark_public` turn phone pushes on; `[hub] publish` (one-person setups) maps a host port and sets `HUB_PUBLISHED_OWNER` |
 | `companion-<name>` | `agentlab/companion` (base) | `agentlab-<agent id>` | runs the agent's checkout `/workspace/companions/<name>` mounted ro at `/app`; talks to its agent's Accounts bridge |
 
 Ports inside an agent: 3773 T3, 8790 Accounts, 6080 noVNC, 7681 terminal; the files sidecar listens on 80.
@@ -296,9 +296,14 @@ Stacks (one Compose project / Coolify service each, so deploying one never resta
 
 ## agentctl commands
 
-See [`cli/README.md`](../cli/README.md) for the full list (`agentctl --help`). In short: `doctor`, `install`,
+See [`cli/README.md`](../cli/README.md) for the full list (`agentctl --help`). In short: `init`, `doctor`, `install`,
 `apply [--dry-run] [--stack S]`, `agent add|remove|list|adopt`, `companion create|remove`, `cloudflare setup`,
-`backup run|list|restore`, `images build|pull`, `status`, `config`.
+`backup run|list|restore`, `images build|pull`, `status`, `config [edit]`.
+
+Privileges: commands that change the host re-run themselves through sudo (`sudo -n` without a terminal or with
+`--json`; refused → exit 2, `result.needs = "sudo"`). Read-only ones run as the caller: members of the `agentlab`
+group read `/etc/agentlab/cluster.toml` (root:agentlab 0640); `<data>/rendered` stays world-readable because the
+gate and hub (non-root users) mount it, and holds no secrets; `<data>/secrets` and `<data>/backups` stay root-only.
 
 Every command takes `--json` (one object: `{ok, exit, error, result, changes, messages, warnings}`), never prompts,
 and exits 0 (done), 1 (failed) or 2 (needs a human step or `--yes`). `AGENTLAB_CONFIG` or `--config` overrides the

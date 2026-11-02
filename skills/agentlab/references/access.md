@@ -54,12 +54,12 @@ api_token_file = "/srv/agentlab/secrets/cloudflare-api.token"
    - Zone · **DNS** → Edit (not "Zone DNS Settings"), with Zone Resources limited to the cluster's zone
 
    Put it in `api_token_file` (`sudo install -m 600 /dev/stdin <file>`, paste, Ctrl-D), then
-   `sudo agentctl doctor --json`: it verifies the token and probes each area read-only, and a missing one shows as
+   `sudo agentctl doctor --json` (root, to read the token): it verifies the token and probes each area read-only, and a missing one shows as
    "token lacks <permission>" with that permission's name as the fix.
-3. `sudo agentctl cloudflare setup --dry-run --json`, show the plan, then without `--dry-run`. It creates the tunnel,
+3. `agentctl cloudflare setup --dry-run --json`, show the plan, then without `--dry-run`. It creates the tunnel,
    DNS records for exactly the cluster's hostnames (no wildcard), the Access application (allow list = owners +
    admins), the Bypass application for pair hosts, and writes the AUD tag into the config.
-4. `sudo agentctl apply --json`, then `doctor --json`: `cloudflared` connected, Access app found, AUD matches.
+4. `agentctl apply --json`, then `doctor --json`: `cloudflared` connected, Access app found, AUD matches.
 
 Each `apply` re-syncs the Access allow list with the config (the people by name, plus an email-domain rule per
 `allow_domains` entry), so adding a person needs no dashboard visit.
@@ -95,7 +95,7 @@ hub_port = 8443                         # hub is served on this port of the same
 3. **human**: access controls must let the owners reach the server on 443 and `hub_port`, and nothing more is needed;
    don't share the machine with people who shouldn't get in (Tailscale identity is the sign-in here).
    `doctor` prints a suggested ACL snippet.
-4. `sudo agentctl apply --json`; it configures `tailscale serve` for 443 and `hub_port`.
+4. `agentctl apply --json`; it configures `tailscale serve` for 443 and `hub_port`.
 
 **Desktop / mobile app**: works directly: the app connects to the tailnet URL from a device on the tailnet, and the
 person's tailnet identity picks their agent. No `pair_domain`.
@@ -133,7 +133,7 @@ google_client_secret_file = "/srv/agentlab/secrets/tinyauth-google-secret"
    - `public`: **human** points DNS A/AAAA records for every cluster hostname (domain, hub, auth, each pair host) at
      the server (no proxy), and opens TCP 80 and 443 to it. The edge gets Let's Encrypt certificates itself.
    - `cloudflared`: as in cloudflare-access steps 2–3 but `agentctl cloudflare setup` skips the Access applications.
-3. `sudo agentctl apply --json`; tinyauth's allow list is rendered from owners + admins (plus a regex per `allow_domains` entry) on every
+3. `agentctl apply --json`; tinyauth's allow list is rendered from owners + admins (plus a regex per `allow_domains` entry) on every
    apply.
 
 `doctor` refuses tinyauth versions affected by CVE-2026-77560 (per-app allowlist bypass with mixed-case hosts); the

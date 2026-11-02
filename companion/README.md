@@ -56,8 +56,8 @@ folder shows up on the hub.
 | `COMPANION_ID` | `NAME` lowercased | The companion's id on the hub. |
 | `COMPANION_AGENT` | `agent` | The agent it lives in. |
 | `COMPANION_BRIDGE` | `http://agent-<agent>:8790` | That agent's Accounts bridge. |
-| `COMPANION_ORG` | `the company` | Where the owner works (prompt wording, what counts as "outside"). |
-| `COMPANION_DEFAULT_PROJECT` | `/workspace` | T3 project for tasks it can't place in a known project. |
+| `COMPANION_ORG` | `the company` | Default for the "Where you work" setting (prompt wording, what counts as "outside"). |
+| `COMPANION_DEFAULT_PROJECT` | `/workspace` | Default for the "Default project" setting: T3 project for tasks it can't place in a known project. |
 | `COMPANION_MODE` | `tag` | Default mode (`tag`, `team`, `owner` = dry run); the hub setting overrides it live. |
 | `COMPANION_GITHUB_USER` | | Default for "Your GitHub username" (the PR list puts yours first). |
 | `COMPANION_QA_EVIDENCE` | | Default for "QA screenshots repository" (`owner/repo`). |
@@ -128,7 +128,8 @@ Where things are:
 | What | Where |
 |---|---|
 | Persona, wording of everything it tells you (the agent) | `bot/prompts.py` |
-| Its name and the company name | `COMPANION_NAME`, `COMPANION_ORG` (set by the cluster config; ask the owner) |
+| Its name | `COMPANION_NAME` (set by the cluster config; ask the owner) |
+| The company name, the default project | settings `org` and `default_project`: `companion settings <name> '{"org": "..."}'` or the hub |
 | Which Slack message goes where (tags, DMs, threads) | `bot/routing.py`, then `bot/requests.py` for the owner's tags on other people's messages |
 | A task: Slack thread <-> T3 chat, progress lines, retries | `bot/tasks.py` (T3 access in `bot/t3.py`) |
 | What you hand back through files (posts, polls, approvals, logins) | `bot/outbox.py`, `bot/posts.py`, `bot/polls.py`, `bot/errands.py` |

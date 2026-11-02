@@ -174,24 +174,29 @@ def core(cfg):
             'volumes': [
                 *mounts,
                 f'{data}/rendered:/rendered:ro',  # the Configs screen shows the rendered stacks
-                'hub-data:/data',
+                f'{data}/hub/data:/data',  # its own state (phone pushes, display settings): on the host, in backups
                 f'{data}/hub/watch:/watch',  # the host watcher's output, and requests/ for its buttons
                 f'{data}/companions:/companions',  # what companions publish; the hub writes their settings.json
                 f'{data}/secrets:/secrets',  # the Secrets screen
                 # One mount per agent, wherever its storage puts it; writable because SQLite readers need -shm.
                 *[f'{a["path"]}:/agents/{a["id"]}' for a in cfg['agents']],
             ],
+            'extra_hosts': ['host.docker.internal:host-gateway'],  # a Bark server on the host, say
             'networks': {EDGE_NETWORK: {'aliases': ['hub']}},
             'mem_limit': '512m',
         },
     }
+    if cfg['bark']['url']:
+        # Phone pushes: where the hub posts them, and the address the phone app registers with.
+        services['hub']['environment']['BARK_URL'] = cfg['bark']['url']
+        services['hub']['environment']['BARK_PUBLIC'] = cfg['bark']['public'] or cfg['bark']['url']
     if cfg['hub']['publish']:
         services['hub']['ports'] = [f'{cfg["publish_address"]}:{cfg["hub"]["publish"]}:8080']
         # Requests on the published port skip the edge and the gate, so the hub treats them as this one person.
         services['hub']['environment']['HUB_PUBLISHED_OWNER'] = cfg['agents'][0]['owner']
     if cfg['auth']['mode'] == 'tinyauth':
         services['tinyauth'] = tinyauth_service(cfg)
-    return {'services': services, 'networks': _external(EDGE_NETWORK), 'volumes': {'hub-data': {}}}
+    return {'services': services, 'networks': _external(EDGE_NETWORK)}
 
 
 def kvm_gid():
@@ -199,6 +204,14 @@ def kvm_gid():
         return grp.getgrnam('kvm').gr_gid
     except KeyError:
         return None
+
+
+def hub_address(cfg):
+    """host[:port] people reach the hub on: its own name, or on Tailscale the shared MagicDNS name on hub_port."""
+    auth = cfg['auth']
+    if auth['ingress'] == 'tailscale' and cfg['hub_domain'] == cfg['domain']:
+        return f'{cfg["hub_domain"]}:{auth["hub_port"]}'
+    return cfg['hub_domain']
 
 
 def agent(cfg, a):
@@ -212,7 +225,7 @@ def agent(cfg, a):
             'AGENT_ID': aid,
             'AGENT_OWNER': a['owner'],
             'AGENTLAB_DOMAIN': cfg['domain'],
-            'AGENTLAB_HUB_DOMAIN': cfg['hub_domain'],
+            'AGENTLAB_HUB_DOMAIN': hub_address(cfg),
             'AGENTLAB_PAIR_HOST': a['pair_host'],
             'AGENTLAB_AUTH_MODE': cfg['auth']['mode'],
             'ANDROID_ENABLED': '1' if cfg['android']['enabled'] else '',

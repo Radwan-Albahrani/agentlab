@@ -16,7 +16,9 @@ FIREWALL_UNIT = 'agentlab-firewall.service'
 
 def folders(cfg, plan):
     data = cfg['data']
+    # hub/data holds the phone-push keys (Bark device key, encryption key): root only, like the secrets.
     private = [f'{data}/secrets', f'{data}/secrets/agents', f'{data}/secrets/companions', f'{data}/backups']
+    private.append(f'{data}/hub/data')
     shared = [
         f'{data}/disks',
         f'{data}/shared',

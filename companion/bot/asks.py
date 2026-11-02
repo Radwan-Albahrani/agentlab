@@ -5,7 +5,7 @@ The page also changes polls this way (type "poll": single / multiple choice, clo
 open pull requests (type "pulls") and asks for a review of one (type "review")."""
 
 from . import jobs, polls, prompts, reviews, slack, t3, tasks
-from .config import COMP, DEFAULT_PROJECT, OWNER, log
+from .config import COMP, OWNER, default_project, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
 
@@ -51,7 +51,7 @@ def start(ask):
     folder = f'ask-{head.replace(".", "")}'
     member = [c for c in slack.channels() if c['member']]
     prompt = prompts.ask(text, slack.name(OWNER), channel, member, folder, review, polls.for_prompt())
-    tid, err = t3.start_thread(DEFAULT_PROJECT, title, prompt)
+    tid, err = t3.start_thread(default_project(), title, prompt)
     if not tid:
         slack.post(dm, head, f"Couldn't start: {err}", md=f":warning: I couldn't start on it: {err}")
         COMP.event('failed', f'Could not start: {title}', task=key(dm, head), detail=err, ok=False)

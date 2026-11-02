@@ -245,6 +245,18 @@ class Watch(unittest.TestCase):
         self.assertFalse(page_requests.allowed('restart', 'stray', rows))
         self.assertFalse(page_requests.allowed('deploy', 'media-jellyfin', rows))
 
+    def test_an_extra_stack_can_be_a_coolify_project(self):
+        coolify = 'com.docker.compose.project={uuid},com.docker.compose.service={svc},coolify.projectName={project}'
+        lines = [
+            json.dumps({'Names': f'{svc}-x', 'Labels': coolify.format(uuid=u, svc=svc, project=p), 'State': 'running'})
+            for u, svc, p in (('u1', 'jellyfin', 'media'), ('u2', 'sonarr', 'media'), ('u3', 'secret', 'other'))
+        ]
+        rows = {r['name']: r for r in inventory.tag(lines, [], ['media'])}
+        self.assertEqual([rows[n]['stack'] for n in ('jellyfin-x', 'sonarr-x', 'secret-x')], ['media', 'media', ''])
+        self.assertEqual(rows['jellyfin-x']['service'], 'jellyfin')
+        self.assertTrue(page_requests.allowed('restart', 'sonarr-x', rows))
+        self.assertFalse(page_requests.allowed('restart', 'secret-x', rows))
+
     def test_inventory_tags_by_compose_project(self):
         stacks = [{'id': 'agentlab-core', 'uuid': ''}, {'id': 'agentlab-agent-sara', 'uuid': 'u1'}]
         lines = [
