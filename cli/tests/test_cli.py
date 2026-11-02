@@ -1144,6 +1144,7 @@ class Init(unittest.TestCase):
         self.init()
         with open(self.etc, 'w') as f:
             f.write('# mine\n')
+        self.groups['agentlab'].gr_gid = os.stat(self.etc).st_gid  # chown is mocked: line the group up with the file
         self.ran.clear()
         util.OUT.changes.clear()
         result = self.init()
@@ -1152,6 +1153,17 @@ class Init(unittest.TestCase):
         with open(self.etc) as f:
             self.assertEqual(f.read(), '# mine\n')
         self.assertNotIn('newgrp', result['next'][0])
+
+    def test_a_config_placed_before_init_gets_the_group_but_keeps_its_content(self):
+        os.makedirs(os.path.dirname(self.etc))
+        with open(self.etc, 'w') as f:
+            f.write('# placed by hand\n')
+        os.chmod(self.etc, 0o600)
+        self.init()
+        self.assertEqual(os.stat(self.etc).st_mode & 0o777, 0o640)
+        init.os.chown.assert_any_call(self.etc, 0, 1234)
+        with open(self.etc) as f:
+            self.assertEqual(f.read(), '# placed by hand\n')
 
     def test_refuses_to_replace_a_real_file_on_path(self):
         os.makedirs(self.bin)
