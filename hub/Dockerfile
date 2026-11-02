@@ -7,7 +7,7 @@ COPY web/ ./
 # only the bundle: types, lint, format and tests already passed in `test.sh check`, which every build runs first
 RUN bun --bun vite build --logLevel warn
 
-FROM python:3.13.1-alpine
+FROM python:3.15.0-alpine
 # Alpine has no zone database: without it TZ (the cluster's timezone) is ignored and every time shows as UTC.
 RUN apk add --no-cache tzdata
 WORKDIR /app
