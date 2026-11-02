@@ -1,7 +1,7 @@
 # One image for every agent. Fast-moving CLIs (Claude Code, Codex, T3, ...) are installed into the agent's home by the
 # entrypoint, so this image rarely needs rebuilding. Build: image/build.sh
 # Node >= 24.22.1 carries the CA list without the distrusted emSign root (see the CA step below).
-FROM node:24.22.1-bookworm
+FROM node:26.13.0-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TTYD_VERSION=1.7.7
