@@ -60,6 +60,8 @@ Setup writes `/etc/agentlab/cluster.toml`, then installs everything, sets up Clo
 agents. When it stops with exit 2 it's waiting on a person: a Cloudflare API token to save (`agentctl secret set
 cloudflare-api`), a Tailscale login link to open, a Coolify token to create. Pass the ask on word for word, wait for
 them, and run `agentctl setup --json` again; it picks up where it stopped and keeps the config it already wrote.
+Setup fetches the latest agentlab itself each time, so there's nothing to pull first. If an exit-2 message only asks
+for an `agentctl` command, that's an agentlab bug: run it yourself, carry on, and open an issue.
 
 When it's done, check it the way people will use it: the admin opens the address, sees the agents on the menu, the
 dashboard loads, and a new person lands on onboarding. Then tell everyone their address, and that the admin can see

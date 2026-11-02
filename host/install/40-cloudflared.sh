@@ -10,8 +10,9 @@ if ! have cloudflared; then
     > /etc/apt/sources.list.d/cloudflared.list
   apt_install cloudflared
 fi
+# agentctl install creates the tunnel before this step whenever the Cloudflare API token is saved
 [ -s "${AGENTLAB_TUNNEL_TOKEN}" ] ||
-  manual "run: sudo agentctl cloudflare setup (it writes ${AGENTLAB_TUNNEL_TOKEN}), then sudo agentctl install"
+  manual "save your Cloudflare API token (agentctl secret set cloudflare-api), then run agentctl setup again"
 systemctl enable -q cloudflared 2>/dev/null || true
 if ! systemctl is-active -q cloudflared; then
   systemctl restart cloudflared

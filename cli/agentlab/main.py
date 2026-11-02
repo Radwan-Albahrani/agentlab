@@ -5,6 +5,7 @@ the host re-run themselves through sudo."""
 
 import argparse
 import json
+import os
 import sys
 
 from . import (
@@ -24,7 +25,7 @@ from . import (
     status,
     update,
 )
-from .util import NEEDS, OK, OUT, Failed, Plan
+from .util import NEEDS, OK, OUT, Failed, Plan, say, warn
 
 
 def parser():
@@ -34,6 +35,8 @@ def parser():
     sub = p.add_subparsers(dest='cmd', required=True)
     st = sub.add_parser('setup', help='guided setup: asks a few questions, then installs and starts everything')
     st.add_argument('--reach', choices=list(setup.REACH), help='how people reach the agents')
+    st.add_argument('--no-pull', action='store_true', help="don't fetch the latest agentlab first")
+    st.add_argument('--pulled', action='store_true', help=argparse.SUPPRESS)  # the re-run after a pull
     st.add_argument('--admin', help='your email (the admin)')
     st.add_argument('--domain', help='the address of the agents (a machine name on your own network)')
     st.add_argument('--hub-domain', help='the address of the dashboard (cloudflare, tinyauth)')
@@ -128,6 +131,8 @@ def dispatch(args):
     if args.cmd == 'init':
         return init.init(args.config)
     if args.cmd == 'setup':
+        if not (args.pulled or args.no_pull):
+            fresh_code_then_rerun()
         keys = ('reach', 'admin', 'domain', 'hub_domain', 'tinyauth_domain', 'people', 'agents', 'allow_domains')
         flags = {k: getattr(args, k) for k in (*keys, 'storage', 'android', 'deploy', 'isolation', 'name')}
         flags.update(yes=args.yes, config_only=args.config_only)
@@ -187,6 +192,19 @@ class DoctorFailed(Failed):
     def __init__(self, checks):
         super().__init__(f'{sum(ch["severity"] == "error" for ch in checks)} checks failed')
         self.result = {'checks': checks}
+
+
+def fresh_code_then_rerun():
+    """Setup is what people re-run after a fix, so it starts on the latest agentlab: fast-forward the checkout and
+    re-run on the new code. Anything that stops the pull (not a checkout, local changes) is a note, not a failure."""
+    try:
+        before, after = update.pull('main')
+    except Failed as e:
+        warn(f'not fetching the latest agentlab: {e}')
+        return
+    if before != after:
+        say(f'agentlab {before} -> {after}; continuing with the new code')
+        os.execv(sys.executable, [sys.executable, *sys.argv, '--pulled'])
 
 
 def run_doctor(cfg):

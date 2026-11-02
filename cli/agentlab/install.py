@@ -5,7 +5,7 @@ import glob
 import os
 import subprocess
 
-from . import config, images, preflight
+from . import cloudflare, config, images, preflight
 from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes
 
 
@@ -38,6 +38,17 @@ def step_env(cfg, config_path):
     }
 
 
+def tunnel_first(cfg, env, config_path):
+    """The cloudflared step needs the tunnel token that `cloudflare setup` writes; with the API token saved that's
+    agentctl's own job, so do it here instead of stopping for a person."""
+    if cfg['auth']['ingress'] != 'cloudflared' or os.path.exists(env['AGENTLAB_TUNNEL_TOKEN']):
+        return
+    if not os.path.exists(cfg['cloudflare']['api_token_file']):
+        return  # the step itself asks for the API token
+    say('  creating the Cloudflare tunnel first (agentctl cloudflare setup)')
+    cloudflare.setup(cfg, Plan(False), config_path)
+
+
 def steps():
     return sorted(glob.glob(os.path.join(REPO, 'host', 'install', '[0-9][0-9]-*.sh')))
 
@@ -54,6 +65,8 @@ def install(cfg, config_path, only=None, skip_images=False):
         if only and name not in only:
             continue
         say(f'== {name}')
+        if name == 'cloudflared':
+            tunnel_first(cfg, env, config_path)
         # People watch long steps (Docker, the Android SDK) live; agents get the output in the JSON at the end.
         p = subprocess.run(['bash', path], env=env, check=False, capture_output=OUT.json, text=True)
         for line in ((p.stdout or '') + (p.stderr or '')).splitlines():
@@ -66,5 +79,5 @@ def install(cfg, config_path, only=None, skip_images=False):
         say('== images')
         images.ensure(cfg, Plan(False))
     if manual:
-        raise Needs(f'manual steps needed ({", ".join(manual)}): see above, then re-run agentctl install')
+        raise Needs(f'steps that need you ({", ".join(manual)}): see above, then run agentctl setup again')
     return {'steps': [os.path.basename(p)[3:-3] for p in steps()]}

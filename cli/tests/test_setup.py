@@ -369,3 +369,77 @@ owner = "b@example.com"
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FreshCode(unittest.TestCase):
+    """Setup is what people re-run after a fix, so it pulls the latest agentlab first and re-runs on it."""
+
+    def run_setup(self, *extra, pull=('aaa', 'aaa')):
+        from agentlab import main, update  # noqa: PLC0415 - main pulls in every command
+
+        execv = mock.Mock()
+        pulled = mock.Mock(side_effect=pull) if isinstance(pull, Exception) else mock.Mock(return_value=pull)
+        with (
+            mock.patch.object(update, 'pull', pulled),
+            mock.patch.object(main.os, 'execv', execv),
+            mock.patch.object(main.privileges, 'elevate'),
+            mock.patch.object(setup, 'setup', return_value={}) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            main.main(['setup', '--reach', 'me', *extra])
+        return pulled, execv, run
+
+    def test_new_code_reruns_setup_on_it(self):
+        pulled, execv, _ = self.run_setup(pull=('aaa', 'bbb'))
+        pulled.assert_called_once_with('main')
+        self.assertEqual(execv.call_args.args[1][-1], '--pulled')
+
+    def test_current_code_just_continues(self):
+        _, execv, run = self.run_setup()
+        execv.assert_not_called()
+        run.assert_called_once()
+
+    def test_a_pull_that_cannot_happen_is_only_a_note(self):
+        _, execv, run = self.run_setup(pull=util.Failed('/opt/agentlab has local changes'))
+        execv.assert_not_called()
+        run.assert_called_once()
+
+    def test_no_pull_and_the_rerun_skip_it(self):
+        for flag in ('--no-pull', '--pulled'):
+            pulled, _, run = self.run_setup(flag)
+            pulled.assert_not_called()
+            run.assert_called_once()
+
+
+class TunnelFirst(unittest.TestCase):
+    """The cloudflared step never stops for a person when agentctl can create the tunnel itself."""
+
+    def setUp(self):
+        from agentlab import install  # noqa: PLC0415
+
+        self.install = install
+        self.tmp = tempfile.mkdtemp()
+        self.api = os.path.join(self.tmp, 'cloudflare-api.token')
+        self.env = {'AGENTLAB_TUNNEL_TOKEN': os.path.join(self.tmp, 'cloudflare-tunnel.token')}
+        self.cfg = {'auth': {'ingress': 'cloudflared'}, 'cloudflare': {'api_token_file': self.api}}
+
+    def run_it(self):
+        with mock.patch.object(self.install.cloudflare, 'setup') as cf, contextlib.redirect_stdout(io.StringIO()):
+            self.install.tunnel_first(self.cfg, self.env, '/etc/agentlab/cluster.toml')
+        return cf
+
+    def test_creates_the_tunnel_when_the_api_token_is_saved(self):
+        open(self.api, 'w').close()
+        self.run_it().assert_called_once()
+
+    def test_leaves_it_to_the_step_without_an_api_token(self):
+        self.run_it().assert_not_called()
+
+    def test_nothing_to_do_when_the_tunnel_exists_or_another_way_in(self):
+        open(self.api, 'w').close()
+        open(self.env['AGENTLAB_TUNNEL_TOKEN'], 'w').close()
+        self.run_it().assert_not_called()
+        os.remove(self.env['AGENTLAB_TUNNEL_TOKEN'])
+        self.cfg['auth']['ingress'] = 'tailscale'
+        self.run_it().assert_not_called()
