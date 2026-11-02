@@ -1,6 +1,6 @@
 # The gate: Traefik forwardAuth + landing page. Runs as an unprivileged user; it only needs to read cluster.json
 # (mounted read-only at /etc/agentlab/cluster.json) and reach Cloudflare for the Access signing keys.
-FROM python:3.15-alpine
+FROM python:3.12-alpine
 
 RUN adduser -D -H -u 10001 gate
 COPY requirements.txt /app/requirements.txt

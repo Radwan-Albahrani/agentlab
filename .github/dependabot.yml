@@ -17,7 +17,9 @@ updates:
     directory: /hub/web
     schedule: { interval: weekly }
     commit-message: { prefix: "chore(deps)" }
-    groups: { web: { patterns: ["*"] } }
+    # majors (React, the router, TypeScript, Vite…) change code, so each comes as its own pull request instead of
+    # failing the whole weekly group
+    groups: { web: { patterns: ["*"], update-types: [minor, patch] } }
 
   - package-ecosystem: docker
     directories: [/image, /gate, /hub, /companion]
