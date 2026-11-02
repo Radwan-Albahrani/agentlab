@@ -56,9 +56,11 @@ and `doctor` explains it).
 
 **Cloudflare networks.** `[auth.cloudflare] network = "private"` (the default) publishes nothing: the tunnel carries
 the cluster's names as private hostname routes (`/zerotrust/routes/hostname`, comment `agentlab-<name>`), so only
-devices on the organization's Cloudflare One (WARP) client reach them, through Gateway. cloudflared resolves each name
-on the host, where `apply` keeps a marked block in `/etc/hosts` pointing them at `127.0.0.1`, and connects on port 80,
-which the edge also publishes on loopback. The Access application has private destinations (`port_range` 80) and
+devices on the organization's Cloudflare One (WARP) client reach them, through Gateway. cloudflared runs as a
+container in the core stack (not on the host), on the edge network only: `extra_hosts` points each name at the edge's
+fixed address (`10.207.0.2`) and it connects on port 80, where the edge's ingress listens inside the container, so no
+host port is taken (Coolify's proxy may hold 80). It reads its token from a copy only its uid can read, never from
+the compose file. The Access application has private destinations (`port_range` 80) and
 `allow_authenticate_via_warp`, so the client session signs people in (the T3 apps included) and Access hands the
 origin the same `Cf-Access-Jwt-Assertion` it does for public apps: plain HTTP inside the client's tunnel is what lets
 it do that without Gateway TLS decryption. agentlab's own public DNS records and the pair-host Bypass app are removed;
@@ -299,7 +301,8 @@ Agent links are always `https://<domain>/...`; to open a specific agent, `https:
 |---|---|---|---|
 | `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `AGENTLAB_ISOLATION`, `AGENTLAB_PUBLISHED` (`t3=7101,...`) and `AGENTLAB_PUBLISHED_HUB`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
 | `files-<id>` | `gtstef/filebrowser:2.0.2-stable` | `agentlab-<id>` | in the agent's stack; uid 1000; mounts only that agent's `workspace` (and `home` read-only); config in `<data>/files/<id>` (not on the agent's disk); noauth behind the gate; heavy folders excluded from indexing only |
-| `edge` | `traefik:v3.3.4` | `agentlab-edge` + every `agentlab-<id>` | entrypoints `ingress` :8088 (published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
+| `edge` | `traefik:v3.3.4` | `agentlab-edge` (fixed `10.207.0.2`) + every `agentlab-<id>` | entrypoints `ingress` :8088 (:80 for private names; published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
+| `cloudflared` | `cloudflare/cloudflared` (pinned) | `agentlab-edge` | private names only: the tunnel, next to the edge; no host ports |
 | `gate` | `agentlab/gate` | `agentlab-edge` + every `agentlab-<id>` | `:8080`, reads `cluster.json`; asks agents for onboarding state |
 | `tinyauth` | `ghcr.io/tinyauthapp/tinyauth:v5.1.3` (≥ 5.1.3: fixes CVE-2026-77560) | `agentlab-edge` | tinyauth mode only |
 | `hub` | `agentlab/hub` | `agentlab-edge` + every `agentlab-<id>` | `:8080`; mounts `rendered/` ro, `hub/watch`, `companions/`, `secrets/`, each agent's `path` at `/agents/<id>`, its state `<data>/hub/data` at `/data` (phone-push keys, display settings); optional `[hub] bark_url` / `bark_public` turn phone pushes on; `[hub] publish` (one-person setups) maps a host port and sets `HUB_PUBLISHED_OWNER`; `[hub] extra_secrets` mounts another host folder of secrets (admins only, its own group, its own map) |

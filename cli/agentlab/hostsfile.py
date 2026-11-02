@@ -1,6 +1,6 @@
-"""The names a private network serves, in the host's /etc/hosts. Private hostname routes make cloudflared resolve
-each name on this host and connect to it on port 80, where the edge listens on loopback; public DNS has no record
-for them. Only agentlab's marked block is ever written."""
+"""agentlab's marked block in /etc/hosts. An earlier version pointed the private names at the edge here for a host
+cloudflared; the tunnel now runs as a container that resolves them itself, so apply only removes the block. Nothing
+outside the marked block is ever touched."""
 
 from .util import write_if_changed
 

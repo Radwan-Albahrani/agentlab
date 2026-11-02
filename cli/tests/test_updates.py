@@ -299,6 +299,7 @@ class Settle(unittest.TestCase):
         self.views = []
         self.slept = 0
         self.t = 0.0
+        self.errors = {}  # container name -> the error Docker recorded starting it
 
     def rows(self, *rows):
         return [dict(zip(('name', 'state', 'status', 'service', 'rendered'), r, strict=True)) for r in rows]
@@ -315,8 +316,25 @@ class Settle(unittest.TestCase):
             self.slept += 1
             self.t += s
 
-        with mock.patch('agentlab.deploy.stack_containers', seen):
+        with (
+            mock.patch('agentlab.deploy.stack_containers', seen),
+            mock.patch('agentlab.deploy.docker_error', lambda name: self.errors.get(name, '')),
+        ):
             deploy.settle(self.cfg, 'agentlab-agent-sara', kind, AGENT_TEXT, timeout_s, sleep, lambda: self.t)
+
+    def test_a_container_docker_could_not_start_fails_at_once_with_its_error(self):
+        # #22: the edge stayed Created because its port was taken; that never resolves by waiting
+        self.views = [
+            self.rows(
+                ('agent-x', 'created', 'Created', 'agent', 'abc123'), ('files-x', 'running', 'Up', 'files', 'abc123')
+            )
+        ]
+        self.errors = {'agent-x': 'Bind for 0.0.0.0:80 failed: port is already allocated'}
+        with self.assertRaises(util.Failed) as e:
+            self.settle()
+        self.assertEqual(self.slept, 0)
+        self.assertIn('failed to start', str(e.exception))
+        self.assertIn('port is already allocated', str(e.exception))
 
     def test_waits_until_every_service_runs(self):
         created = self.rows(

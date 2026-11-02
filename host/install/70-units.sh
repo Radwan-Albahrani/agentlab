@@ -6,7 +6,8 @@ src=${AGENTLAB_REPO}/host/systemd
 units=(agentlab.slice agentlab-disks.service agentlab-throttle.service agentlab-watch.service
   agentlab-janitor.service agentlab-janitor.timer agentlab-backup.service agentlab-backup.timer
   agentlab-firewall.service agentlab-update.service agentlab-update.timer)
-[ "${AGENTLAB_INGRESS}" = cloudflared ] && units+=(cloudflared.service)
+# private names run cloudflared as a container in the core stack instead
+[ "${AGENTLAB_INGRESS}" = cloudflared ] && [ "${AGENTLAB_CF_NETWORK:-}" != private ] && units+=(cloudflared.service)
 any=""
 for u in "${units[@]}"; do
   new=$(sed -e "s|@REPO@|${AGENTLAB_REPO}|g" -e "s|@DATA@|${AGENTLAB_DATA}|g" -e "s|@CONFIG@|${AGENTLAB_CONFIG}|g" \

@@ -9,7 +9,7 @@ import shutil
 import socket
 import urllib.request
 
-from . import cloudflare, config, coolify, deploy, disks, health, hostsfile, preflight, render
+from . import cloudflare, config, coolify, deploy, disks, health, preflight, render
 from .util import is_root, run, size_bytes
 
 
@@ -365,21 +365,8 @@ def _cloudflare_access(cfg, c):
 
 
 def _client_only(cfg, c):
-    """network = "private" or require_warp: the routes, the app and the organization settings it depends on, plus
-    this host's half (the names resolve to the edge, which holds loopback port 80)."""
-    if config.private_network(cfg):
-        names = cloudflare.signed_in_hosts(cfg)
-        try:
-            with open(hostsfile.PATH) as f:
-                text = f.read()
-        except OSError:
-            text = ''
-        c.add(
-            'hosts-file',
-            hostsfile.merged(text, names) == text,
-            f'{hostsfile.PATH} sends {", ".join(names)} to the edge (cloudflared resolves them here)',
-            'agentctl apply',
-        )
+    """network = "private" or require_warp: the routes, the app and the organization settings it depends on (the
+    tunnel container and the edge it reaches are core checks)."""
     if not cloudflare.configured(cfg) or (
         not is_root() and not os.access(cfg['cloudflare']['api_token_file'], os.R_OK)
     ):
@@ -566,6 +553,7 @@ def run_all(cfg):
     prerequisites(cfg, c)
     if docker(cfg, c):
         cluster(cfg, c)
+        health.core_checks(cfg, c)
         health.checks(cfg, c)
     android(cfg, c)
     access(cfg, c)

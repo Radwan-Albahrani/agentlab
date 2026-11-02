@@ -53,6 +53,41 @@ def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
     )
 
 
+def core_state(cfg, service):
+    """(state, detail) of one agentlab-core service: running/healthy/starting/unhealthy, or Docker's own state
+    (created, exited, restarting) with the error Docker recorded starting it."""
+    ids = deploy.containers(cfg, 'agentlab-core', service, all_states=True)
+    if not ids:
+        return 'missing', 'no container'
+    rc, out = run(['docker', 'inspect', '-f', '{{json .State}}', ids[0]], check=False)
+    try:
+        st = json.loads(out) if rc == 0 else {}
+    except ValueError:
+        st = {}
+    if st.get('Status') != 'running' or st.get('Restarting'):
+        status = 'restarting' if st.get('Restarting') else st.get('Status', 'unknown')
+        return status, ' '.join(str(st.get('Error') or f'exit {st.get("ExitCode", "?")}').split())[-300:]
+    health = (st.get('Health') or {}).get('Status')
+    return health or 'running', ''
+
+
+def core_checks(cfg, c):
+    """For doctor: every core service (edge, gate, hub, tinyauth, the tunnel) up; anything else is an error with
+    Docker's reason, since nobody gets in while one is down."""
+    from . import render  # noqa: PLC0415 - render imports this module's neighbours
+
+    for service in render.core(cfg)['services']:
+        s, detail = core_state(cfg, service)
+        ok = s in ('running', 'healthy')
+        c.add(
+            f'core-{service}',
+            ok,
+            f'core {service} {s}' + (f': {detail}' if detail else ''),
+            'agentctl apply; if it stays down, docker logs on it',
+            'warning' if s == 'starting' else 'error',
+        )
+
+
 def checks(cfg, c):
     """For doctor: a starting agent is a warning (first starts take minutes), a stuck one an error."""
     for a in cfg['agents']:

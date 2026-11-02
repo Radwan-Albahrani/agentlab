@@ -20,6 +20,7 @@ def step_env(cfg, config_path):
         'AGENTLAB_ISOLATION': cfg['isolation'],
         'AGENTLAB_MODE': cfg['auth']['mode'],
         'AGENTLAB_INGRESS': cfg['auth']['ingress'],
+        'AGENTLAB_CF_NETWORK': 'private' if config.private_network(cfg) else '',
         'AGENTLAB_HUB_PORT': str(cfg['auth']['hub_port']),
         'AGENTLAB_ANDROID': '1' if cfg['android']['enabled'] else '',
         'AGENTLAB_SYSTEM_IMAGE': cfg['android']['system_image'],

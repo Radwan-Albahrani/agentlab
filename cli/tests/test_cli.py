@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import tomllib
@@ -1457,11 +1458,47 @@ class PrivateNetwork(unittest.TestCase):
         with self.assertRaisesRegex(util.Failed, 'pair_domain'):
             config.load(self.config_path)
 
-    def test_edge_answers_on_loopback_port_80_for_cloudflared(self):
+    def test_the_tunnel_runs_next_to_the_edge_with_no_host_port_80(self):
+        # #22: a host port 80 collided with Coolify's proxy; the tunnel container reaches the edge directly instead
         cfg = config.load(self.config_path)
-        self.assertIn('127.0.0.1:80:8088', render.edge_service(cfg)['ports'])
+        edge = render.edge_service(cfg)
+        self.assertNotIn('80', [p.split(':')[-2] for p in edge['ports']])  # no host port 80 at all
+        self.assertIn('--entrypoints.ingress.address=:80', edge['command'])
+        self.assertEqual(edge['networks']['agentlab-edge']['ipv4_address'], render.EDGE_IP)
+        tunnel = render.core(cfg)['services']['cloudflared']
+        self.assertEqual(
+            tunnel['extra_hosts'], [f'agents.example.com:{render.EDGE_IP}', f'agents-hub.example.com:{render.EDGE_IP}']
+        )
+        self.assertEqual(list(tunnel['networks']), ['agentlab-edge'])  # never an agent's network
+        self.assertNotIn('ports', tunnel)
+        self.assertIn('--token-file', tunnel['command'])
+
+    def test_the_token_never_appears_in_the_compose_text(self):
+        cfg = config.load(self.config_path)
+        os.makedirs(f'{cfg["data"]}/secrets', exist_ok=True)
+        with open(f'{cfg["data"]}/secrets/cloudflare-tunnel.token', 'w') as f:
+            f.write('eyJ-secret-tunnel-token')
+        text = render.all_files(cfg)['compose/agentlab-core/docker-compose.yml']
+        self.assertNotIn('eyJ-secret-tunnel-token', text)
+        self.assertNotIn('TUNNEL_TOKEN', text)
+
+    def test_public_keeps_the_host_tunnel_and_loopback_ingress(self):
         public = resolve(PUBLIC)
-        self.assertNotIn('127.0.0.1:80:8088', render.edge_service(public)['ports'])
+        self.assertNotIn('cloudflared', render.core(public)['services'])
+        self.assertIn('127.0.0.1:8088:8088', render.edge_service(public)['ports'])
+        self.assertIn('--entrypoints.ingress.address=:8088', render.edge_service(public)['command'])
+
+    def test_the_tunnel_container_gets_its_own_copy_of_the_token(self):
+        cfg = config.load(self.config_path)
+        with open(f'{cfg["data"]}/secrets/cloudflare-tunnel.token', 'w') as f:
+            f.write('tok\n')
+        with mock.patch.object(apply.os, 'chown') as chown:
+            apply.tunnel_token_copy(cfg, util.Plan(False))
+        dst = f'{cfg["data"]}/{render.TUNNEL_TOKEN_DIR}/token'
+        with open(dst) as f:
+            self.assertEqual(f.read(), 'tok')
+        self.assertEqual(stat.S_IMODE(os.stat(dst).st_mode), 0o400)
+        chown.assert_any_call(dst, render.CLOUDFLARED_UID, render.CLOUDFLARED_UID)
 
     def test_doctor_facts(self):
         self.run_setup()

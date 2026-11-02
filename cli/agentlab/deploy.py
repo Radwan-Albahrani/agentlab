@@ -227,7 +227,7 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
 
     sleep, clock = sleep or time.sleep, clock or time.time
     want, services = render.rendered_digest(text), compose_services(text)
-    deadline = clock() + timeout_s
+    deadline, broken = clock() + timeout_s, []
     while True:
         rows = stack_containers(cfg, stack)
         ours = [r for r in rows if not LEFTOVER.match(r['name']) and (not want or r['rendered'] == want)]
@@ -239,11 +239,26 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
                     f'{stack}: containers left by an earlier, interrupted deploy: {", ".join(leftovers)} (docker rm them)'
                 )
             return
-        if clock() >= deadline:
+        # Docker gave up on a container (a port already taken, a missing mount): waiting won't change that
+        broken = [(r['name'], err) for r in ours if r['service'] not in up and (err := docker_error(r['name']))]
+        if broken or clock() >= deadline:
             break
         sleep(5)
-    states = ', '.join(f'{r["name"]} {r["state"]}' for r in rows) or 'no containers'
-    raise Failed(f'{stack} did not come up within {timeout_s // 60} min: {states}{coolify_status(cfg, stack)}')
+    errors = dict(broken)
+    states = (
+        ', '.join(
+            f'{r["name"]} {r["state"]}' + (f' ({errors[r["name"]]})' if r['name'] in errors else '') for r in rows
+        )
+        or 'no containers'
+    )
+    why = 'failed to start' if errors else f'did not come up within {timeout_s // 60} min'
+    raise Failed(f'{stack} {why}: {states}{coolify_status(cfg, stack)}')
+
+
+def docker_error(name):
+    """The error Docker recorded starting a container (State.Error), '' when there is none."""
+    rc, out = run(['docker', 'inspect', '-f', '{{.State.Error}}', name], check=False)
+    return out.strip() if rc == 0 else ''
 
 
 def _up(row, kind):

@@ -111,6 +111,37 @@ class DoctorCheck(unittest.TestCase):
         self.assertTrue(self.checks({'sara': ('healthy', ''), 'omar': ('healthy', '')})['agent-health-sara']['ok'])
 
 
+class CoreChecks(unittest.TestCase):
+    """#22: doctor said all OK while the edge and gate were only Created."""
+
+    def checks(self, states):
+        from agentlab import doctor  # noqa: PLC0415
+
+        c = doctor.Checks()
+        with mock.patch.object(health, 'core_state', side_effect=lambda _cfg, s: states.get(s, ('running', ''))):
+            health.core_checks(resolve(), c)
+        return {i['id']: i for i in c.items}
+
+    def test_a_created_edge_is_an_error_with_dockers_reason(self):
+        items = self.checks({'edge': ('created', 'Bind for 0.0.0.0:80 failed: port is already allocated')})
+        self.assertEqual(items['core-edge']['severity'], 'error')
+        self.assertIn('port is already allocated', items['core-edge']['message'])
+        self.assertTrue(items['core-gate']['ok'])
+
+    def test_running_and_healthy_are_ok_starting_is_a_warning(self):
+        items = self.checks({'gate': ('healthy', ''), 'hub': ('starting', '')})
+        self.assertTrue(items['core-gate']['ok'])
+        self.assertEqual(items['core-hub']['severity'], 'warning')
+
+    def test_state_reads_dockers_error_for_a_container_that_never_started(self):
+        st = '{"Status": "created", "Running": false, "Restarting": false, "ExitCode": 0, "Error": "port is already allocated"}'
+        with (
+            mock.patch.object(health.deploy, 'containers', return_value=['c1']),
+            mock.patch.object(health, 'run', return_value=(0, st)),
+        ):
+            self.assertEqual(health.core_state(resolve(), 'edge'), ('created', 'port is already allocated'))
+
+
 class NetworkWait(unittest.TestCase):
     def test_only_coolify_agents_wait_for_their_own_address(self):
         for mode, expect_wait in (('compose', False), ('coolify', True)):

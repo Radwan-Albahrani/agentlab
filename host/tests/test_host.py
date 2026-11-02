@@ -509,6 +509,51 @@ class PickPackage(unittest.TestCase):
         self.assertEqual(self.pick({'openjdk-21-jre-headless': '(none)'}).returncode, 1)
 
 
+class HostTunnel(unittest.TestCase):
+    """Private names run cloudflared in the core stack: the host unit agentlab installed for public names stops, and a
+    cloudflared someone else runs is left alone (#22)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(dir=TMP)
+        self.calls = os.path.join(self.dir, 'calls')
+        bin_dir = os.path.join(self.dir, 'bin')
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, 'systemctl'), 'w') as f:
+            # is-enabled/is-active say yes; everything is recorded
+            f.write(f'#!/bin/sh\necho "systemctl $*" >> {self.calls}\nexit 0\n')
+        os.chmod(os.path.join(bin_dir, 'systemctl'), 0o755)
+        self.path = f'{bin_dir}:{os.environ["PATH"]}'
+        self.unit = os.path.join(self.dir, 'cloudflared.service')
+
+    def retire(self, unit_text):
+        with open(self.unit, 'w') as f:
+            f.write(unit_text)
+        script = os.path.join(HOST, 'install', '40-cloudflared.sh')
+        out = subprocess.run(
+            ['bash', '-c', f'source "{script}" && retire_host_tunnel "{self.unit}"'],
+            capture_output=True,
+            text=True,
+            env={**os.environ, 'PATH': self.path},
+            check=True,
+        )
+        if not os.path.exists(self.calls):
+            return out.stdout, []
+        with open(self.calls) as f:
+            return out.stdout, f.read().splitlines()
+
+    def test_ours_stops(self):
+        out, calls = self.retire(
+            'ExecStart=/bin/sh -c \'TUNNEL_TOKEN="$(cat /srv/agentlab/secrets/cloudflare-tunnel.token)" exec x\''
+        )
+        self.assertIn('systemctl disable -q --now cloudflared', calls)
+        self.assertIn('host cloudflared stopped', out)
+
+    def test_someone_elses_stays(self):
+        out, calls = self.retire('ExecStart=/usr/bin/cloudflared tunnel run --token-file /etc/other/token')
+        self.assertEqual([c for c in calls if 'disable' in c], [])
+        self.assertEqual(out, '')
+
+
 class SysboxInstall(unittest.TestCase):
     """The installer never adds sysbox-mgr options and removes the one drop-in an earlier version left (bad flag)."""
 
