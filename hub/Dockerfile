@@ -8,6 +8,8 @@ COPY web/ ./
 RUN bun --bun vite build --logLevel warn
 
 FROM python:3.13.1-alpine
+# Alpine has no zone database: without it TZ (the cluster's timezone) is ignored and every time shows as UTC.
+RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY *.py secrets-map.json ./
 COPY notify/ notify/
