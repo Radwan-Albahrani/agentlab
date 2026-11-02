@@ -1,6 +1,7 @@
 """agentctl: make one Linux server a private cluster of AI coding agents, from /etc/agentlab/cluster.toml.
 Run any command with --json for machine-readable output. Exit codes: 0 done, 1 failed, 2 needs --yes, sudo or a
-manual step. Nothing ever prompts; commands that change the host re-run themselves through sudo."""
+manual step. Only `setup` (at a terminal) and `secret set` (a hidden prompt) ever ask anything; commands that change
+the host re-run themselves through sudo."""
 
 import argparse
 import json
@@ -18,6 +19,8 @@ from . import (
     init,
     install,
     privileges,
+    secret,
+    setup,
     status,
     update,
 )
@@ -29,6 +32,28 @@ def parser():
     p.add_argument('--config', default=config.DEFAULT_PATH, help=f'cluster.toml (default {config.DEFAULT_PATH})')
     p.add_argument('--json', action='store_true', help='machine-readable output on stdout')
     sub = p.add_subparsers(dest='cmd', required=True)
+    st = sub.add_parser('setup', help='guided setup: asks a few questions, then installs and starts everything')
+    st.add_argument('--reach', choices=list(setup.REACH), help='how people reach the agents')
+    st.add_argument('--admin', help='your email (the admin)')
+    st.add_argument('--domain', help='the address of the agents (a machine name on your own network)')
+    st.add_argument('--hub-domain', help='the address of the dashboard (cloudflare, tinyauth)')
+    st.add_argument('--tinyauth-domain', help='the address of the sign-in page (tinyauth)')
+    st.add_argument('--people', help='who gets agents: "sara@example.com=2, omar@example.com"')
+    st.add_argument('--agents', help='just me: your agents\' names, e.g. "work, personal"')
+    st.add_argument('--allow-domains', help='also let everyone at these email domains sign in')
+    st.add_argument('--storage', choices=['shared', 'per-person'])
+    st.add_argument('--android', action=argparse.BooleanOptionalAction, default=None)
+    st.add_argument('--deploy', choices=['compose', 'coolify'])
+    st.add_argument('--isolation', choices=['sysbox', 'unconfined'])
+    st.add_argument('--name', help='a short name for this cluster (default: the machine name)')
+    st.add_argument('--yes', action='store_true', help='replace an existing cluster.toml with the new answers')
+    st.add_argument('--config-only', action='store_true', help='write cluster.toml and stop')
+    se = sub.add_parser('secret', help='save a secret where agentlab reads it').add_subparsers(
+        dest='action', required=True
+    )
+    ss = se.add_parser('set', help='save a secret from stdin (hidden prompt at a terminal)')
+    ss.add_argument('name', help='e.g. cloudflare-api, coolify, tailscale-authkey, companion/<name>/bot-token.txt')
+    se.add_parser('list', help='the secrets this cluster uses and whether each is saved')
     sub.add_parser('init', help='first command on a new server: agentctl on PATH, the agentlab group, a starter config')
     sub.add_parser('doctor', help='check the host and the config; every problem comes with its fix')
     i = sub.add_parser('install', help='one-time host setup (Docker, Sysbox, cloudflared, Coolify, KVM, units)')
@@ -102,6 +127,11 @@ def dispatch(args):
         return companions.remove(args.config, args.agent, args.name)
     if args.cmd == 'init':
         return init.init(args.config)
+    if args.cmd == 'setup':
+        keys = ('reach', 'admin', 'domain', 'hub_domain', 'tinyauth_domain', 'people', 'agents', 'allow_domains')
+        flags = {k: getattr(args, k) for k in (*keys, 'storage', 'android', 'deploy', 'isolation', 'name')}
+        flags.update(yes=args.yes, config_only=args.config_only)
+        return setup.setup(args.config, flags)
     if args.cmd == 'config' and args.action == 'edit':
         return init.edit(args.config)
     cfg = config.load(args.config)
@@ -111,6 +141,14 @@ def dispatch(args):
         return install.install(cfg, args.config, args.only, args.skip_images)
     if args.cmd == 'apply':
         return apply.apply(cfg, args.config, args.dry_run, args.stack, args.build, force=args.force)
+    if args.cmd == 'secret' and args.action == 'set':
+        return secret.set_secret(cfg, args.name)
+    if args.cmd == 'secret':
+        rows = secret.listing(cfg)
+        if not OUT.json:
+            for r in rows:
+                print(f'{"set    " if r["set"] else "missing"} {r["name"]}: {r["about"]}')
+        return {'secrets': rows}
     if args.cmd == 'agent' and args.action == 'adopt':
         return agents.adopt(cfg, args.id)
     if args.cmd == 'agent':

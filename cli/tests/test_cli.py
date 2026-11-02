@@ -149,7 +149,8 @@ class Config(unittest.TestCase):
     def test_required_and_reserved(self):
         self.assertIn('domain is required', problems(BASE.replace('domain = "agents.example.com"\n', '')))
         self.assertIn("id 'hub'", problems(BASE.replace('id = "omar"', 'id = "hub"')))
-        self.assertIn('team is required', problems(BASE.replace('team = "example"', 'team = ""')))
+        self.assertEqual('', problems(BASE.replace('team = "example"', 'team = ""')))  # cloudflare setup finds it
+        self.assertIn('team must be', problems(BASE.replace('team = "example"', 'team = "Not A Team"')))
 
     def test_ingress_must_suit_the_mode(self):
         self.assertIn('does not work with mode', problems(auth__ingress='public'))

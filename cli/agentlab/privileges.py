@@ -46,7 +46,11 @@ def dry_run_needs_root(args):
         return True
     if not docker_ok():
         return True
-    return not readable(cfg['cloudflare'].get('api_token_file'))
+    token = cfg['cloudflare'].get('api_token_file')
+    folder = os.path.dirname(token)
+    if os.path.isdir(folder) and not os.access(folder, os.R_OK | os.X_OK):
+        return True  # the secrets folder is root-only: whether a token is saved can't even be seen
+    return os.path.exists(token) and not readable(token)
 
 
 def _backups_readable(args):

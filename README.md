@@ -36,18 +36,17 @@
 
 > *Set up agentlab from https://github.com/Radwan-Albahrani/agentlab using its skill.*
 
-**By hand:**
+**Yourself:**
 
 ```sh
-git clone https://github.com/Radwan-Albahrani/agentlab.git && cd agentlab
-cli/agentctl init        # puts agentctl on your PATH
-agentctl config edit     # who gets an agent, and how you'll reach it
-agentctl doctor          # what's missing, and how to fix it
-agentctl install && agentctl apply
+git clone https://github.com/Radwan-Albahrani/agentlab.git && agentlab/cli/agentctl setup
 ```
 
-New agent? `agentctl agent add side-project you@example.com && agentctl apply`.
-Reaching it from anywhere: [access guide](skills/agentlab/references/access.md).
+A few questions (how you'll reach it, your email, your agents), then it installs and starts everything. It only
+stops when it needs you for something, like a token to paste or a link to open, and carries on from there.
+
+New agent later? `agentctl agent add side-project you@example.com && agentctl apply`.
+Ways to reach it from anywhere: [access guide](skills/agentlab/references/access.md).
 
 ## 📦 You'll need
 

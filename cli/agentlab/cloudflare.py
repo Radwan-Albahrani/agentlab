@@ -3,10 +3,13 @@ hostname. With cloudflare-access sign-in also two Access applications: the peopl
 policy listing exactly the agent owners and admins, and the apps' (pair hosts) with Bypass, because the T3 apps
 can't do a browser sign-in and T3 accepts only paired sessions there. Every apply re-syncs the people policy, so
 adding or removing an agent is also adding or removing their sign-in. Any Zero Trust login method works (the
-one-time PIN by email needs no setup); `[auth.cloudflare] login_method` pins the people's app to one of them."""
+one-time PIN by email needs no setup); `[auth.cloudflare] login_method` pins the people's app to one of them, and an
+account with exactly one method gets that one. Only the API token is required: the account, the zone and the Zero
+Trust team are read from the token and the domain, and written into cluster.toml the first time."""
 
 import json
 import os
+import tomllib
 import urllib.error
 import urllib.request
 
@@ -60,19 +63,60 @@ def people(cfg):
 
 
 def configured(cfg):
-    cf = cfg['cloudflare']
-    return bool(cf['account_id'] and cf['zone'] and cf['api_token_file'] and os.path.isfile(cf['api_token_file']))
+    return os.path.isfile(cfg['cloudflare']['api_token_file'])
 
 
 def api_for(cfg, opener=None):
+    """The API with the saved token; the account, zone and team are filled in from it when the config leaves them
+    out."""
     if not configured(cfg):
         raise Needs(
-            'Cloudflare is not configured: set [cloudflare] account_id and zone in cluster.toml and save an API token '
-            f'({"; ".join(PERMISSIONS.values())}) to '
-            f'{cfg["cloudflare"]["api_token_file"] or "<data>/secrets/cloudflare-api.token"}'
+            'a Cloudflare API token is needed: create one (My Profile → API Tokens → Create Token → Custom) with '
+            f'{"; ".join(PERMISSIONS.values())}, then save it with: agentctl secret set cloudflare-api'
         )
     with open(cfg['cloudflare']['api_token_file']) as f:
-        return Api(f.read().strip(), opener)
+        api = Api(f.read().strip(), opener)
+    discover(cfg, api)
+    return api
+
+
+def zone_of(api, host):
+    """The zone serving `host`: the longest of its parent names this token can see."""
+    labels = host.split('.')
+    for i in range(len(labels) - 1):
+        zones = api.call('GET', f'/zones?name={".".join(labels[i:])}') or []
+        if zones:
+            return zones[0]
+    return None
+
+
+def discover(cfg, api):
+    """Fill in what the config leaves out, in memory: the zone and its account from the domain (else the token's
+    only account), and the Zero Trust team from the account."""
+    cf = cfg['cloudflare']
+    if not cf['zone'] or not cf['account_id']:
+        zone = zone_of(api, cfg['domain'])
+        if zone:
+            cf['zone'] = cf['zone'] or zone['name']
+            cf['account_id'] = cf['account_id'] or (zone.get('account') or {}).get('id', '')
+    if not cf['account_id']:
+        accounts = api.call('GET', '/accounts') or []
+        if len(accounts) != 1:
+            raise Failed(
+                f'{cfg["domain"]} is in no zone this token can see, and the token reaches {len(accounts)} accounts: '
+                'give the token DNS access to the zone, or set [cloudflare] account_id'
+            )
+        cf['account_id'] = accounts[0]['id']
+    if cfg['auth']['ingress'] == 'cloudflared' and not cf['zone']:
+        raise Failed(f'no zone this token can see serves {cfg["domain"]}: give the token DNS access to it')
+    if cfg['auth']['mode'] == 'cloudflare-access' and not cfg['auth']['cloudflare']['team']:
+        org = api.call('GET', f'/accounts/{cf["account_id"]}/access/organizations') or {}
+        team = str(org.get('auth_domain', '')).removesuffix('.cloudflareaccess.com')
+        if not team:
+            raise Failed(
+                'this account has no Zero Trust organization yet: open one.dash.cloudflare.com once to make it'
+            )
+        cfg['auth']['cloudflare']['team'] = team
 
 
 class Setup:
@@ -222,17 +266,24 @@ class Setup:
             self.app('apps', pair_hosts(self.cfg), bypass, [])
         return aud
 
-    def audience(self, aud, config_path):
-        if not aud or aud == self.cfg['auth']['cloudflare']['audience']:
-            return
-        if self.plan.dry:
-            self.plan.do(f'write [auth.cloudflare] audience = {aud} into {config_path}')
-            return
+    def remember(self, config_path, values):
+        """Write what setup found or made into cluster.toml: the gate reads the team and audience from there, and
+        later commands skip the lookups."""
         with open(config_path) as f:
             text = f.read()
-        write_if_changed(config_path, tomledit.set_key(text, 'auth.cloudflare', 'audience', aud))
-        self.cfg['auth']['cloudflare']['audience'] = aud
-        self.plan.do(f'wrote [auth.cloudflare] audience into {config_path} (the gate checks tokens against it)')
+        current, new = tomllib.loads(text), text
+        for (section, key), value in values.items():
+            head, _, sub = section.partition('.')
+            table = (current.get(head) or {}).get(sub) or {} if sub else current.get(head) or {}
+            if not value or table.get(key) == value:
+                continue
+            if self.plan.dry:
+                self.plan.do(f'write [{section}] {key} = {value} into {config_path}')
+                continue
+            new = tomledit.set_key(new, section, key, value)
+            self.plan.do(f'wrote [{section}] {key} into {config_path}')
+        if new != text:
+            write_if_changed(config_path, new)
 
 
 def _includes(policy):
@@ -248,8 +299,14 @@ def setup(cfg, plan, config_path, opener=None):
         s.ingress(tunnel)
         s.token(tunnel)
         s.dns(tunnel)
+    cf = cfg['cloudflare']
+    found = {('cloudflare', 'account_id'): cf['account_id'], ('cloudflare', 'zone'): cf['zone']}
     if cfg['auth']['mode'] == 'cloudflare-access':
-        s.audience(s.access(), config_path)
+        access = cfg['auth']['cloudflare']
+        access['audience'] = s.access() or access['audience']
+        found[('auth.cloudflare', 'team')] = access['team']
+        found[('auth.cloudflare', 'audience')] = access['audience']
+    s.remember(config_path, found)
     say(f'  Cloudflare: {", ".join(hostnames(cfg))} -> tunnel {s.name}; {len(people(cfg))} people may sign in')
 
 
@@ -266,7 +323,8 @@ def sync_people(cfg, plan, opener=None):
 def login_methods(cfg, providers):
     """The identity provider ids people may use. With [auth.cloudflare] login_method set: exactly that one, so
     Access sends people straight there and doesn't offer the account's other methods (a one-time PIN meant for
-    other apps, say). Otherwise none: Access offers every method the account has."""
+    other apps, say). With a single method in the account: that one, for the same straight-through sign-in.
+    Otherwise none: Access offers every method the account has."""
     wanted = cfg['cloudflare'].get('login_method') or ''
     if wanted:
         match = [i['id'] for i in providers if str(i.get('name', '')).strip().lower() == wanted.strip().lower()]
@@ -274,7 +332,7 @@ def login_methods(cfg, providers):
             names = ', '.join(repr(i.get('name')) for i in providers) or 'none'
             raise Failed(f'[auth.cloudflare] login_method {wanted!r} is not a login method of this account ({names})')
         return match[:1]
-    return []
+    return [providers[0]['id']] if len(providers) == 1 and providers[0].get('id') else []
 
 
 # What each part of `cloudflare setup` needs, named as the token page in the dashboard shows it.

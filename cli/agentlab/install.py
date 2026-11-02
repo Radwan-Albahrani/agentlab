@@ -32,6 +32,8 @@ def step_env(cfg, config_path):
         'AGENTLAB_SERVE': '' if config.ports_only(cfg) else '1',  # published-ports setups never touch tailscale serve
         'AGENTLAB_COOLIFY_TOKEN': cfg['coolify']['token_file'],
         'AGENTLAB_COOLIFY_URL': cfg['coolify']['url'],
+        'AGENTLAB_COOLIFY_DOMAIN': cfg['coolify_domain'],
+        'AGENTLAB_ADMIN_EMAIL': cfg['auth']['admins'][0],
         'AGENTLAB_TUNNEL_TOKEN': f'{cfg["data"]}/secrets/cloudflare-tunnel.token',
     }
 

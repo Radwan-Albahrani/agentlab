@@ -1,6 +1,7 @@
 """`agentctl init`: the first command on a new server. Puts `agentctl` on PATH, creates the `agentlab` group (its
 members read the config and run the read-only commands without sudo) with the caller in it, and starts
-/etc/agentlab/cluster.toml from the example. Safe to re-run: it never overwrites a config."""
+/etc/agentlab/cluster.toml from the example. Safe to re-run: it never overwrites a config. `agentctl setup` runs it
+for you."""
 
 import os
 import shutil
@@ -77,10 +78,8 @@ def init(config_path, bin_dir='/usr/local/bin', user=None, get=_group, plan=None
     joined = group(plan, GROUP, user, get)
     config_file(plan, config_path, os.path.join(REPO, 'cluster.example.toml'), GROUP, get)
     steps = [
-        f'agentctl config edit       # domain, people, access mode, storage ({config_path})',
-        'agentctl doctor            # what is missing, with the fix for each',
-        'agentctl install           # Docker, Sysbox, ingress tools, systemd units, firewall, images',
-        'agentctl apply --dry-run   # then: agentctl apply',
+        'agentctl setup             # a few questions, then everything is installed and started',
+        f'(or edit {config_path} yourself, then: agentctl install && agentctl apply)',
     ]
     if joined:
         steps.insert(0, f'log out and back in (or run `newgrp {GROUP}`) so {user} is in the {GROUP} group')

@@ -1,65 +1,67 @@
-# Operating and troubleshooting
+# Looking after a cluster
 
-Start every investigation with `agentctl status --json` and `agentctl doctor --json` (prefix `sudo` to include
-the root-only checks); most problems show up there with a `fix`.
+`agentctl status --json` and `agentctl doctor --json` are the place to start; most problems show up there along with
+their fix. Some checks need root to see (the secrets, the firewall): `sudo agentctl doctor --json` includes them.
 
 ## Someone can't get in
 
-| Symptom | Look at |
+| What they see | Usually |
 |---|---|
-| Cloudflare / tinyauth / Tailscale refuses them | they're not an owner or admin in `cluster.toml`, or `apply` hasn't run since they were added; tailscale: the ACL |
-| Gate page "not available" (403) | signed in as a different account than their `owner` (check case and alias domains); cloudflare: AUD in config doesn't match the Access app (`doctor`) |
-| "No agent yet" | they're allowed in but own no agent: `agentctl agent add` |
-| Redirected to onboarding every time | they haven't finished it: at least one AI sign-in + Finish in their hub |
-| Desktop/mobile app can't connect | `pair_domain` unset (cloudflare/tinyauth), DNS for their pair host missing (`cloudflare setup`), or the pairing link expired (make a new one in the hub) |
+| Cloudflare, tinyauth or Tailscale turns them away | they're not an owner or admin in the config, or `apply` hasn't run since they were added; on a tailnet, its access controls |
+| "Not available" from agentlab | they signed in with a different account than the one that owns the agent (check spelling and alias domains); on Cloudflare, `doctor` shows whether the Access application still matches |
+| "No agent yet" | they may sign in but own no agent: `agentctl agent add` |
+| Onboarding every time | they haven't finished it: one AI sign-in, then Finish, in their dashboard |
+| The desktop or phone app won't connect | on Cloudflare or tinyauth `pair_domain` isn't set, or its DNS record is missing (`cloudflare setup` adds it); or the pairing link expired and needs a new one |
 
-The gate logs every refusal with the reason: `docker logs <gate container>`.
+The gate logs every refusal with its reason: `docker logs` on the gate container.
 
-## An agent is unhealthy
+## An agent isn't well
 
-1. `status` shows which check fails (Accounts, terminal, T3).
-2. `docker logs <agent container>`, then inside: `docker exec -u agent <agent> tail -n 100 /home/agent/logs/<program>.log`
-   (t3, accounts, terminal, dockerd, docker-proxy).
-3. Out of memory: the hub's agent page shows usage; heavy jobs queue in the throttle (`journalctl -u agentlab-throttle`)
-   rather than run at once; raise the agent's `memory` only if the host has room under `limits.total_memory`.
-4. Restart one agent: hub → agent → Restart, or `docker restart <agent>`. Its chats and files survive restarts.
+`status` names the check that fails (Accounts, terminal or T3). The container's logs come next, then the program's own
+log inside it: `docker exec -u agent <container> tail -n 100 /home/agent/logs/<t3|accounts|terminal|dockerd>.log`.
 
-## Disk
+If it's memory, the dashboard's agent page shows usage. Heavy jobs wait their turn in the throttle (`journalctl -u
+agentlab-throttle`) rather than all running at once; raise an agent's `memory` only when the machine has room under
+`limits.total_memory`. Restarting an agent (dashboard → agent → Restart, or `docker restart`) keeps its chats and
+files.
 
-- `status` shows each storage unit (the pool, or each person's disk). The janitor (nightly, and at 75%+) removes
-  settled worktrees (clean, pushed, idle 12 h+), package caches and agents' Docker leftovers.
-- A per-person disk full only stops that person; tell them, or raise `person_size` (grows, never shrinks) and `apply`.
-- Never delete inside someone's workspace without asking them or the admin.
+## Disk space
+
+`status` shows each disk: the shared pool, or each person's. The janitor tidies nightly and whenever a disk passes
+75%: settled worktrees (clean, pushed, idle 12 hours or more), package caches, and the agents' Docker leftovers. A
+person's full disk only stops that person; tell them, or raise `person_size` (disks grow, never shrink) and `apply`.
+Nothing inside someone's workspace gets deleted without asking them or the admin.
 
 ## Companions
 
-- Code is the owner's: `<agent path>/workspace/companions/<name>/` (git). Their agent changes it and restarts it with
-  the `companion` command; you normally don't touch it.
-- Down after a change: logs at `<agent path>/workspace/.companion/<name>/logs/companion.log`, status in `status.json`
-  next to it. Tell the owner (their agent can `git revert` and `companion restart`).
-- "not configured": its Slack secrets are missing — the owner adds them in their hub (Secrets).
-- Template updates: every `apply` / `update` merges a changed `companion/` template into each checkout as a
-  `chore: merge agentlab template …` commit when the checkout is clean and nothing conflicts, restarts the companion
-  and undoes that merge if it then fails to start. `agentctl status` lists companions that aren't up to date:
-  `skipped` (uncommitted changes; retried next time), `conflict` (needs merging: the owner's agent runs
-  `git merge template`, resolves, tests, commits, restarts), `reverted` (the merged code didn't start; the error is in
-  the line and the companion's log). Don't merge or reset in someone's checkout yourself.
+A companion's code belongs to its agent (`<agent path>/workspace/companions/<name>/`, a git repo); the agent changes
+and restarts it with its `companion` command, so you normally leave it alone. If one is down after a change, its log is
+in `<agent path>/workspace/.companion/<name>/logs/companion.log` with `status.json` beside it; let the owner know, and
+their agent can revert and restart. "Not configured" means its Slack secrets are missing: the owner adds them in their
+dashboard, or an admin with `agentctl secret set companion/<name>/bot-token.txt` (and `app-token.txt`).
+
+Template updates arrive on their own: every `apply` and `update` merges a changed companion template into each
+checkout as a commit, restarts the companion, and undoes that merge if it then won't start. `agentctl status` lists
+the ones that aren't current: `skipped` means the agent had uncommitted work (tried again next time), `conflict` means
+the agent needs to merge it (`git merge template`, resolve, test, commit, restart), and `reverted` means the merged
+code didn't start (the error is in the line and the companion's log). Don't merge or reset someone's checkout
+yourself.
 
 ## Backups
 
-Nightly at `backups.time`: T3 databases, companion databases, the config, kept `keep_days`. They are on the same
-server: for real disaster recovery, ask the human where to copy `<data>/backups/` off-machine.
+Each night at `backups.time` agentlab keeps the T3 databases, the companion databases and the config, for
+`keep_days`. They live on the same machine, so for real disaster recovery copy `<data>/backups/` somewhere else.
 
-## Upgrades
+## Updates
 
-`agentctl update` does it all: fast-forward the repo (it stops on local changes or a diverged branch rather than
-merging), rebuild or pull the images, `apply`. Agents restart only if their image or settings changed, and only while
-no T3 turn is running: busy ones are waited for up to `[updates] wait_hours`, then `on_busy` decides (`defer` to the
-next run, or `resume`: restart and tell the interrupted chats to continue). `agentctl status` shows the last run.
+`agentctl update` pulls the repo (only fast-forward: it stops on local changes rather than merging), rebuilds the
+images and applies. Agents restart only when something they run changed, and never mid-turn: a busy agent is waited
+for up to `[updates] wait_hours`, then `on_busy` decides between `defer` (next time) and `resume` (restart it and tell
+its interrupted chats to carry on). `agentctl status` shows the last run.
 
-- Nightly: `[updates] agentlab = "daily"` (and `time`), then `agentctl install --only units` to enable the timer;
-  `"off"` disables it again. A failed nightly run shows in `doctor`.
-- Inside each agent, T3 / Claude Code / Codex refresh every `agent_tools_hours` on their own (0 turns it off); a new
-  T3 server version goes live at the next idle moment. Its log: `~/logs/updater.log` in the agent.
-- Need it now and someone is mid-turn: `agentctl apply --force` restarts them anyway (warn them first).
-- The repo copy on the server must be a git checkout for `update` (a copied folder can't be pulled).
+- Nightly updates: set `[updates] agentlab = "daily"` and run `agentctl install --only units`; `"off"` stops them. A
+  failed night shows in `doctor`.
+- Inside each agent, T3, Claude Code and Codex keep themselves current every `agent_tools_hours` (0 turns that off),
+  and a new T3 goes live at the next idle moment; the agent's `~/logs/updater.log` has the details.
+- In a hurry while someone's mid-turn: `agentctl apply --force` restarts them anyway, after you've warned them.
+- `update` needs the repo on the server to be a git clone; a copied folder can't be pulled.

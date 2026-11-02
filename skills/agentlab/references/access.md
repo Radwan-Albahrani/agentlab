@@ -1,136 +1,44 @@
-# Access modes: setup per mode
+# How people get in
 
-Every mode ends the same way: people open `https://<domain>`, prove who they are, and land on their own agent (or a
-picker if they have several). Only the agent owners and `auth.admins` get in, plus, with `[auth] allow_domains =
-["example.com"]` (Cloudflare Access and tinyauth), anyone with an email in those domains: they can sign in, but only
-owners get an agent (the rest see "no agent yet" until an admin adds one), and admins still come only from
-`auth.admins`. Pick one mode per cluster. Just you? The plainest option is
-[plain ports on your tailnet or LAN](#just-you-plain-ports-on-your-tailnet-or-lan): no certificates, no sign-in page.
+Whichever way you choose, it ends the same: someone opens the address, proves who they are, and lands in their own
+agent (or picks one, if they have several). Only the people who own agents and the admins get in. With Cloudflare or
+tinyauth you can also let a whole email domain sign in (`allow_domains = ["example.com"]`); they'll see "no agent
+yet" until an admin gives them one.
 
-Steps marked **human** need someone with the account; give them the exact text below and wait.
+`agentctl setup` asks which way you want and does the setup below for you. This page is for knowing what each way
+means, and for the few things only you can do.
 
-## cloudflare-access
+## Just you, on your own network
 
-People sign in at Cloudflare's edge (one-time PIN by email, Google, or any login method set up in Zero Trust); a Cloudflare Tunnel brings
-traffic to the server, so the server opens no ports. Separate from any tunnel the company already uses for other
-things: this cluster gets its own tunnel and its own Access applications, and being allowed here grants nothing
-anywhere else.
+The plainest option for one person. Each agent's tools listen on fixed ports of the machine (T3 on
+`http://my-server:7101`, and so on), and your own network decides who can reach them: your tailnet's access controls,
+or simply your home LAN. There are no certificates and no sign-in page. T3 still only talks to devices you paired, and
+pairing links use the same ports, so the desktop and phone apps work as usual.
 
-Config:
+It's one person only, because the ports skip the sign-in check; agentctl refuses it when several people own agents.
+Make sure only your devices can reach those ports, and `doctor` will remind you which ones are open.
 
-```toml
-[cluster]
-domain = "agents.example.com"          # first-level under the zone: covered by the free certificate
-hub_domain = "agents-hub.example.com"
-pair_domain = "{id}-t3.example.com"    # optional: lets the T3 desktop/mobile app connect (see below)
-
-[auth]
-mode = "cloudflare-access"
-admins = ["admin@example.com"]
-
-[auth.cloudflare]
-team = "example"                       # the part before .cloudflareaccess.com
-
-[cloudflare]
-account_id = "..."
-zone = "example.com"
-api_token_file = "/srv/agentlab/secrets/cloudflare-api.token"
-```
-
-1. Sign-in method: **any Zero Trust login method works**. The one-time PIN by email needs no setup at all (people
-   type their email, get a code). Google Workspace or Microsoft Entra ID are optional, for one-click sign-in:
-   - **human**, Google Workspace: Google Cloud console → OAuth consent screen (User type **Internal**) → Credentials →
-     OAuth client ID (Web application), redirect URI `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`;
-     then Zero Trust → Settings → Authentication → Login methods → Add new → **Google Workspace**, paste client
-     id/secret, Workspace domain = the company domain, **Test**. Microsoft 365 companies use **Microsoft Entra ID**.
-   - Other apps in the account keep their own methods (each Access application picks its own).
-   - Leave `[auth.cloudflare] login_method` empty to offer every method the account has, or set it to one method's
-     exact name (`"One-time PIN"`, `"Google Workspace"`) so the agents' application offers only that one.
-2. **human**: Cloudflare dashboard → My Profile → API Tokens → Create token → Custom token, with these permissions
-   (names as the token page shows them):
-   - Account · **Cloudflare One Connector: cloudflared** → Edit (older accounts: **Argo Tunnel (Legacy)** → Edit;
-     the docs call it Cloudflare Tunnel Write)
-   - Account · **Access: Apps and Policies** → Edit
-   - Account · **Access: Identity Providers** → Read (only for `login_method`; older dashboards bundle it as "Access: Organizations, Identity Providers, and Groups"). Not Groups, not Organizations.
-   - Zone · **DNS** → Edit (not "Zone DNS Settings"), with Zone Resources limited to the cluster's zone
-
-   Put it in `api_token_file` (`sudo install -m 600 /dev/stdin <file>`, paste, Ctrl-D), then
-   `sudo agentctl doctor --json` (root, to read the token): it verifies the token and probes each area read-only, and a missing one shows as
-   "token lacks <permission>" with that permission's name as the fix.
-3. `agentctl cloudflare setup --dry-run --json`, show the plan, then without `--dry-run`. It creates the tunnel,
-   DNS records for exactly the cluster's hostnames (no wildcard), the Access application (allow list = owners +
-   admins), the Bypass application for pair hosts, and writes the AUD tag into the config.
-4. `agentctl apply --json`, then `doctor --json`: `cloudflared` connected, Access app found, AUD matches.
-
-Each `apply` re-syncs the Access allow list with the config (the people by name, plus an email-domain rule per
-`allow_domains` entry), so adding a person needs no dashboard visit.
-
-**Desktop / mobile app**: apps can't do the browser sign-in, so with `pair_domain` set each agent gets its own
-hostname that skips Access and goes straight to that agent's T3, which only accepts devices paired from that person's
-hub (one-time links). Without `pair_domain`, people use T3 in the browser only.
-
-**Certificates**: Cloudflare's free certificate covers `*.example.com` only. Keep every hostname one level under the
-zone (`agents.example.com`, `sara-t3.example.com`); `agents.sub.example.com` would need Advanced Certificate Manager.
-
-## tailscale
-
-People are on the company tailnet; `tailscale serve` on the server gives HTTPS and tells the edge who each request is
-from. Nothing is public. Simplest for small teams already on Tailscale.
-
-Config:
-
-```toml
-[cluster]
-domain = "agents.tailnet-name.ts.net"   # the server's MagicDNS name
-hub_domain = "agents.tailnet-name.ts.net"
-
-[auth]
-mode = "tailscale"
-admins = ["admin@example.com"]          # tailnet login names
-hub_port = 8443                         # hub is served on this port of the same name
-```
-
-1. **human**: Tailscale admin console → DNS: MagicDNS on and HTTPS Certificates enabled.
-2. `agentctl install` installs Tailscale; **human** runs `sudo tailscale up --hostname agents` on the server and
-   approves it (or provides an auth key file).
-3. **human**: access controls must let the owners reach the server on 443 and `hub_port`, and nothing more is needed;
-   don't share the machine with people who shouldn't get in (Tailscale identity is the sign-in here).
-   `doctor` prints a suggested ACL snippet.
-4. `agentctl apply --json`; it configures `tailscale serve` for 443 and `hub_port`.
-
-**Desktop / mobile app**: works directly: the app connects to the tailnet URL from a device on the tailnet, and the
-person's tailnet identity picks their agent. No `pair_domain`.
-
-Logins are tailnet login names (often emails, sometimes `name@github`): use exactly what `tailscale status` shows as
-owners and admins.
+`agentctl setup --reach me` writes this for you. By hand it looks like this:
 
 ### Just you: plain ports on your tailnet (or LAN)
 
-The simplest setup of all, for one person: no HTTPS certificates, no `tailscale serve`, no sign-in page. Each agent's
-tools listen on fixed ports of the machine (e.g. T3 on `http://my-server:7101`), and your network decides who can
-reach them: your tailnet's ACL, or only your home LAN. T3 still only answers devices you paired, and pairing links
-use the same ports, so the desktop and phone apps work as usual.
-
-Only for a single owner: published ports skip the gate, so with several people anyone who can reach a port could open
-that agent. `agentctl` refuses `publish` with more than one owner.
-
 ```toml
 [cluster]
-domain = "my-server"                    # the name you reach the machine by (MagicDNS name, LAN name or IP)
-deploy = "compose"                      # or "coolify" if you run Coolify
-publish_address = "0.0.0.0"             # listen on the network; keep "127.0.0.1" if you only tunnel in
+domain = "my-server"                    # the name you reach the machine by: tailnet or LAN name, or an IP
+hub_domain = "my-server"
+publish_address = "0.0.0.0"             # listen on your network; "127.0.0.1" if you only tunnel in
 
 [auth]
-mode = "tailscale"                      # on a trusted LAN without Tailscale: "none", plus hub_domain = another name
+mode = "tailscale"                      # on a LAN without Tailscale: "none", with hub_domain = "agentlab-hub"
 admins = ["you@example.com"]
 
 [hub]
-publish = 7190                          # the hub at http://my-server:7190
+publish = 7190                          # the dashboard: http://my-server:7190
 
 [[agents]]
 id = "work"
 owner = "you@example.com"
-[agents.publish]                        # this agent's tools, one port each
+[agents.publish]
 t3 = 7101
 accounts = 7102
 browser = 7103
@@ -148,51 +56,64 @@ terminal = 7114
 files = 7115
 ```
 
-1. Make sure only you can reach those ports: a tailnet ACL that allows just your devices, or a host firewall that
-   allows only your LAN. `doctor` warns about every published port as a reminder.
-2. `agentctl apply --json`. Nothing touches Tailscale's settings in this setup.
-3. Open the hub at `http://my-server:7190`; "Open T3" and "Pair a device" make links on the address you opened the
-   hub with plus the agent's port.
+Moving to a shared setup later is a config change: drop the `publish` tables, choose one of the ways below, and run
+`agentctl apply`.
 
-Moving to a shared setup later is a config change: drop the `publish` tables, pick a sign-in mode above, `apply`.
+## A group on one tailnet
 
-## tinyauth
+Everyone is already on the same tailnet, and that's the sign-in: `tailscale serve` on the server gives HTTPS and tells
+agentlab who each visitor is. Nothing is public. agentctl installs Tailscale and signs the machine in, either with an
+auth key you saved (`agentctl secret set tailscale-authkey`) or by giving you a login link to open.
 
-Google sign-in handled on the server by tinyauth. Use when the company has no Cloudflare Access and no tailnet.
-The server is reachable from the internet (public ingress) or through a Cloudflare Tunnel without Access.
+Two things are yours in the Tailscale admin console: turn on MagicDNS and HTTPS Certificates (DNS page), and make sure
+the access controls let the agent owners reach this machine on port 443 and the dashboard's port (8443 by default).
+Use people's tailnet login names as owners and admins, exactly as `tailscale status` shows them.
 
-Config:
+The desktop and phone apps just work here: they connect over the tailnet, and the person's tailnet identity picks
+their agent.
 
-```toml
-[cluster]
-domain = "agents.example.com"
-hub_domain = "agents-hub.example.com"
-pair_domain = "{id}-t3.example.com"     # optional, as in cloudflare-access
+## Cloudflare
 
-[auth]
-mode = "tinyauth"
-ingress = "public"                      # or "cloudflared"
-admins = ["admin@example.com"]
+People sign in at Cloudflare (a code by email, Google, Microsoft, or anything set up in Zero Trust), and a Cloudflare
+tunnel brings the traffic in, so the server opens no ports. The cluster gets its own tunnel and its own Access
+application; being allowed here grants nothing anywhere else in the account.
 
-[auth.tinyauth]
-domain = "agents-auth.example.com"      # tinyauth's login page; same parent domain as the others (cookies)
-google_client_id_file = "/srv/agentlab/secrets/tinyauth-google-id"
-google_client_secret_file = "/srv/agentlab/secrets/tinyauth-google-secret"
-```
+You'll need a Cloudflare API token. Create it under My Profile → API Tokens → Create Token → Custom, with:
 
-1. **human**: Google Cloud console → OAuth client (Web), redirect URI `https://<auth.tinyauth.domain>/api/oauth/callback/google`.
-   Put the id and secret in the two files.
-2. Ingress:
-   - `public`: **human** points DNS A/AAAA records for every cluster hostname (domain, hub, auth, each pair host) at
-     the server (no proxy), and opens TCP 80 and 443 to it. The edge gets Let's Encrypt certificates itself.
-   - `cloudflared`: as in cloudflare-access steps 2–3 but `agentctl cloudflare setup` skips the Access applications.
-3. `agentctl apply --json`; tinyauth's allow list is rendered from owners + admins (plus a regex per `allow_domains` entry) on every
-   apply.
+- Account · Cloudflare One Connector: cloudflared → Edit (older accounts call it Argo Tunnel (Legacy))
+- Account · Access: Apps and Policies → Edit
+- Account · Access: Identity Providers → Read
+- Zone · DNS → Edit, limited to your domain's zone (the plain "DNS" row, not "Zone DNS Settings")
 
-`doctor` refuses tinyauth versions affected by CVE-2026-77560 (per-app allowlist bypass with mixed-case hosts); the
-gate also checks identity itself, so a tinyauth bug alone can't open someone else's agent.
+Save it on the server with `agentctl secret set cloudflare-api` (setup asks for it). From the token and your address,
+agentlab finds the account, the zone and your Zero Trust team by itself, then creates the tunnel, the DNS records for
+exactly your addresses, and the Access application allowing exactly your people. Adding a person later updates that
+list on the next `apply`; no dashboard visit needed. `agentctl doctor` checks the token and names any permission it
+lacks.
 
-## none (testing only)
+Sign-in methods are up to you. The code by email needs no setup at all. For one-click sign-in add Google Workspace or
+Microsoft Entra ID in Zero Trust → Settings → Authentication (the redirect address is
+`https://<your-team>.cloudflareaccess.com/cdn-cgi/access/callback`). If the account has a single method, agentlab uses
+it straight away; with several, everyone is offered all of them unless you set `login_method` to one.
 
-`auth.mode = "none"` lets everyone in as admin and binds only to loopback. Use it to try agentlab on a laptop
-(`curl -H 'Host: agents.localhost' http://127.0.0.1:8088/`). Never on a server other people can reach.
+Keep every address one level under your domain (`agents.example.com`, `agents-hub.example.com`): Cloudflare's free
+certificate covers only that level. For the T3 desktop and phone apps, set `pair_domain = "{id}-t3.example.com"`: each
+agent then gets an address that skips the browser sign-in and only accepts devices its owner paired.
+
+## Google sign-in on the server (tinyauth)
+
+For when there's no Cloudflare and no tailnet: tinyauth shows a Google sign-in page on the server itself, and the
+server is reachable from the internet on ports 80 and 443 (certificates come from Let's Encrypt automatically).
+
+You'll need a Google OAuth client (Google Cloud console → Credentials → OAuth client ID, Web application) with the
+redirect address `https://<sign-in address>/api/oauth/callback/google`. Save its id and secret with `agentctl secret
+set tinyauth-google-id` and `agentctl secret set tinyauth-google-secret`. Point DNS records for every address (agents,
+dashboard, sign-in page) at the server, and open ports 80 and 443 to it.
+
+agentlab checks identity again behind tinyauth, and refuses tinyauth versions with known sign-in bypasses, so a bug in
+tinyauth alone can't open someone else's agent.
+
+## Testing on your own machine
+
+`mode = "none"` lets everyone in as admin and listens only on the machine itself. It's for trying agentlab out
+(`curl -H 'Host: agents.localhost' http://127.0.0.1:8088/`), never for a machine other people can reach.

@@ -5,88 +5,87 @@ description: Install, upgrade and operate an agentlab cluster (private AI coding
 
 # agentlab
 
-You are setting up or running an agentlab cluster on a server you reach over SSH. `agentctl` on the server does the
-work; you decide the order, read its JSON, and handle what it can't do alone (human steps). Read
-`docs/architecture.md` in the repo once before the first install: it is the contract for how everything fits.
+You're setting up or looking after an agentlab cluster on a server you can reach over SSH. `agentctl` on the server
+does the work. Your job is to pick the order, read what it reports, and bring in the person you're working for only
+when something genuinely needs them: a token they create, a link they open, a yes to something that can't be
+undone. If you want the full picture of how the parts fit, `docs/architecture.md` in the repo has it.
 
-## Ground rules
+## How to drive agentctl
 
-- **Drive `agentctl` with `--json`** and act on the result, not on prose. Exit codes: `0` done, `1` failed (read the
-  error, fix, retry), `2` needs a human step or a confirmation (show the human exactly what and wait).
-- **No `sudo` in front of `agentctl`.** Commands that change the host re-run themselves through `sudo -n`; read-only
-  ones (`doctor`, `status`, `config`, `agent list`) run as you. If sudo wants a password you get exit 2 with
-  `result.needs = "sudo"` and the exact command: ask the human to run it, or to allow passwordless sudo for
-  agentctl (the error shows the sudoers line). `doctor` run without root marks root-only checks "not checked";
-  run `sudo agentctl doctor --json` when you need them.
-- **Never pass `--yes` on your own.** Destructive commands (`agent remove` without `--keep-data`, `backup restore`)
-  print a plan and stop; show the plan to the human and only re-run with `--yes` after they say so.
-- **Always `--dry-run` first** for `apply` and `cloudflare setup` on a cluster that already serves people, and show
-  the plan if it restarts anyone's agent.
-- **Secrets never go in chat, git, or command lines.** Ask the human to put them in the file `doctor` names (e.g.
-  `<data>/secrets/cloudflare-api.token`) with `sudo install -m 600 /dev/stdin <file>` and paste into the terminal.
-- **One change at a time on a live cluster**, then `agentctl status --json` to confirm before the next.
+Add `--json` to every command and act on the result rather than the prose. The exit code tells you what happened: `0`
+means done, `1` means it failed (the error says why; fix it and try again), and `2` means it stopped for a person or
+a confirmation, with the exact ask in the error.
 
-## Install, from zero
+Don't put `sudo` in front of it. Commands that change the server re-run themselves through `sudo -n`, and read-only
+ones (`doctor`, `status`, `config`, `agent list`) run as you. If sudo wants a password you'll get exit 2 with
+`result.needs = "sudo"` and the command to run: ask the person to run it, or to allow passwordless sudo for agentctl
+(the error includes the sudoers line).
 
-Ask the human these first (they decide the whole shape; don't guess):
+A few rules keep people's work safe:
 
-1. **How do people reach it?** → `auth.mode` (see [access.md](references/access.md)):
-   `cloudflare-access` (company already on Cloudflare; Google sign-in at Cloudflare's edge),
-   `tailscale` (everyone is on one tailnet), or `tinyauth` (no Cloudflare Access; Google sign-in on the server).
-   Just one person? Offer plain ports on their tailnet or LAN (access.md, "Just you"): no certificates, no sign-in.
-2. **Domain names** (first-level, e.g. `agents.example.com`, `agents-hub.example.com`) or, for tailscale, the
-   machine's MagicDNS name.
-3. **Who:** admin emails, and each person's email with how many agents they want. Admins are people too: ask how
-   many agents each admin wants for themselves (being admin only adds the right to open everyone's; it doesn't give
-   them an agent).
-4. **Storage:** `shared` (one pool; simplest) or `per-person` (a capped disk per person; for shared servers where one
-   person must not fill the disk for everyone). Sizes against the server's free disk.
-5. **Isolation:** `sysbox` for anything more than one person on a real Linux host; `unconfined` only for one person or
-   WSL.
-6. **Deploy:** `coolify` (they want a UI for stacks) or `compose`.
-7. Android emulator (needs `/dev/kvm`), companions (Slack bots), backups time.
+- `--yes` is theirs to give. Anything that deletes (an agent's data, a restore over current chats) prints its plan and
+  stops; show them the plan and only re-run with `--yes` once they agree.
+- On a cluster people already use, run `apply --dry-run` and `cloudflare setup --dry-run` first, and mention it if
+  the plan restarts someone's agent.
+- Secrets never pass through you, a chat or a command line. When one is needed, ask the person to run
+  `agentctl secret set <name>` in a terminal on the server: it prompts without echoing and saves it in the right
+  place. `agentctl secret list --json` tells you which are saved.
+- On a live cluster, make one change at a time and check `agentctl status --json` before the next.
 
-Then:
+## Setting it up
+
+The quickest route is the guided setup, which takes every answer as a flag when you drive it:
 
 ```sh
-git clone <repo> /opt/agentlab && cd /opt/agentlab
-cli/agentctl init --json                 # agentctl on PATH, the agentlab group, /etc/agentlab/cluster.toml
-# edit /etc/agentlab/cluster.toml with the answers above (sudoedit; `agentctl config edit` is for people)
-agentctl config --json                   # validates it and shows the resolved config
-agentctl doctor --json                   # host facts and config checks; nothing changes
-agentctl install --json                  # Docker, Sysbox, ingress tools, units, firewall, images
+git clone https://github.com/Radwan-Albahrani/agentlab.git /opt/agentlab
+/opt/agentlab/cli/agentctl setup --json --reach <me|tailnet|cloudflare|tinyauth> --admin <email> [...]
 ```
 
-Read every `doctor` check with `ok: false`: `fix` is either a command you run or a manual step for the human.
-Then the access mode's own steps from [access.md](references/access.md), then:
+Ask the person first; these choices shape everything and aren't yours to guess:
 
-```sh
-agentctl apply --dry-run --json          # show the plan
-agentctl apply --json
-agentctl status --json                   # every agent running and healthy
-```
+- **How people will reach it.** For one person, `--reach me`: plain ports on their own tailnet or LAN, nothing to
+  set up. For a group on one tailnet, `tailnet`. For a company on Cloudflare, `cloudflare` (sign-in through
+  Cloudflare Access). Without either, `tinyauth` (a Google sign-in page on the server). [access.md](references/access.md)
+  explains each.
+- **The address** (`--domain`, and `--hub-domain` for the dashboard). On Cloudflare keep both one level under the zone
+  (`agents.example.com`, `agents-hub.example.com`). For `me` and `tailnet` the machine's own name is the default.
+- **Who gets agents** (`--people "sara@example.com=2, omar@example.com"`; for `me`, `--agents "work, personal"`). The
+  admin is a person too: ask how many agents they want for themselves, since being admin only adds the right to open
+  everyone else's.
+- Optionally: `--storage per-person` (a capped disk per person, the default when several people share it),
+  `--android` / `--no-android`, `--allow-domains example.com` (anyone at that domain may sign in, only owners get an
+  agent), `--deploy coolify` (if they want Coolify's UI; plain Docker Compose is the default).
 
-**Verify like a user**, not just by status: open the domain signed in as an admin (the human does this), check the
-menu lists the agents, the hub loads, and a test person lands on onboarding. Then tell each person their URL and
-that the admin can see their agent.
+Setup writes `/etc/agentlab/cluster.toml`, then installs everything, sets up Cloudflare when chosen, and starts the
+agents. When it stops with exit 2 it's waiting on a person: a Cloudflare API token to save (`agentctl secret set
+cloudflare-api`), a Tailscale login link to open, a Coolify token to create. Pass the ask on word for word, wait for
+them, and run `agentctl setup --json` again; it picks up where it stopped and keeps the config it already wrote.
 
-## Day-to-day
+When it's done, check it the way people will use it: the admin opens the address, sees the agents on the menu, the
+dashboard loads, and a new person lands on onboarding. Then tell everyone their address, and that the admin can see
+their agent.
 
-| Ask | Do |
+If someone prefers to edit the config by hand, the long way still works: `agentctl init`, edit
+`/etc/agentlab/cluster.toml` (every key is explained in `cluster.example.toml`), `agentctl doctor`, `agentctl
+install`, `agentctl cloudflare setup` when using Cloudflare, `agentctl apply`.
+
+## Day to day
+
+| They ask for | You run |
 |---|---|
-| Add a person / agent | `agentctl agent add <id> <email> --json`, then `apply` (it also updates the sign-in allow list where it can) |
-| Remove an agent | `agentctl agent remove <id> --keep-data` (safe); without `--keep-data` show the plan, wait for yes |
-| Someone's T3 threads are gone | `agentctl backup list --json`, show the dates, `backup restore <date> <agent>` after yes |
-| Disk nearly full | `status` shows the storage unit; the janitor runs nightly; look at the biggest agents in the hub's Storage screen before deleting anything, and ask |
-| Upgrade | `git pull`, `agentctl images build`, `apply --dry-run`, then `apply`. Companion checkouts in agents' workspaces are theirs: never overwrite them; tell owners the template has updates (`git fetch upstream` in their checkout) |
-| Change access mode | Plan it with the human: it changes how everyone signs in. Follow both modes' sections in access.md |
+| A new person or agent | `agentctl agent add <id> <email> --json`, then `apply` (their sign-in is allowed with it) |
+| Removing an agent | `agentctl agent remove <id> --keep-data` is safe; deleting the data needs their yes on the plan |
+| Lost chats | `agentctl backup list --json`, show the dates, then `backup restore <date> <agent>` once they say yes |
+| A full disk | `status` shows each disk; the janitor tidies nightly; look at the biggest agents in the dashboard's Storage screen and ask before deleting anything |
+| An upgrade | `agentctl update --json` (pull, rebuild, apply; busy agents are waited for). Companion code in agents' workspaces belongs to them; template changes reach it as merge commits on its own |
+| A different sign-in | Plan it with them first, since it changes how everyone gets in; [access.md](references/access.md) covers each way |
 
-Troubleshooting: [operate.md](references/operate.md).
+When something's off, [operate.md](references/operate.md) has the usual causes.
 
-## What you must not do
+## Off limits
 
-- Don't edit anything inside an agent's home or workspace except through `agentctl` (it's that person's machine).
-- Don't read people's T3 chats, code or credentials while debugging unless the human asks for that specific thing.
-- Don't open ports, disable the firewall table `agentlab`, or switch `isolation` to `unconfined` to "make it work".
-- Don't put company secrets (vaults, production credentials) into agents or companions unless the human says which
-  and where.
+- Anything inside an agent's home or workspace, except through agentctl: it's that person's machine.
+- People's chats, code or logins, unless the person you work for asks for that specific thing.
+- Opening ports, disabling the `agentlab` firewall table, or switching `isolation` to `unconfined` to make something
+  work.
+- Company secrets (vaults, production credentials) in agents or companions, unless you're told which and where.

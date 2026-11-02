@@ -314,7 +314,8 @@ Stacks (one Compose project / Coolify service each, so deploying one never resta
 
 ## agentctl commands
 
-See [`cli/README.md`](../cli/README.md) for the full list (`agentctl --help`). In short: `init`, `doctor`, `install`,
+See [`cli/README.md`](../cli/README.md) for the full list (`agentctl --help`). In short: `setup` (the guided way:
+questions or flags, cluster.toml, then everything below in order), `secret set|list`, `init`, `doctor`, `install`,
 `apply [--dry-run] [--stack S]`, `agent add|remove|list|adopt`, `companion create|remove`, `cloudflare setup`,
 `backup run|list|restore`, `images build|pull`, `status`, `config [edit]`.
 
@@ -323,8 +324,9 @@ Privileges: commands that change the host re-run themselves through sudo (`sudo 
 group read `/etc/agentlab/cluster.toml` (root:agentlab 0640); `<data>/rendered` stays world-readable because the
 gate and hub (non-root users) mount it, and holds no secrets; `<data>/secrets` and `<data>/backups` stay root-only.
 
-Every command takes `--json` (one object: `{ok, exit, error, result, changes, messages, warnings}`), never prompts,
-and exits 0 (done), 1 (failed) or 2 (needs a human step or `--yes`). `AGENTLAB_CONFIG` or `--config` overrides the
+Every command takes `--json` (one object: `{ok, exit, error, result, changes, messages, warnings}`) and exits 0
+(done), 1 (failed) or 2 (stopped for a person: a token, a login link, or `--yes`). Only `setup` at a terminal and
+`secret set` ask anything; with `--json` setup takes every answer as a flag and names any that are missing. `AGENTLAB_CONFIG` or `--config` overrides the
 config path. Destructive commands (`agent remove` without `--keep-data`, `backup restore`) print what they will
 delete and need `--yes`.
 

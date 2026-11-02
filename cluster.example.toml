@@ -1,5 +1,6 @@
-# agentlab cluster config. Copy to /etc/agentlab/cluster.toml, edit, then `agentctl apply`.
-# Only `cluster.name`, `cluster.domain`, `auth` and at least one agent are required; everything else has a default.
+# Every setting agentlab understands, with its default. `agentctl setup` writes a short cluster.toml for you; this
+# file is the reference when you want to change something by hand (then run `agentctl apply`).
+# Only the cluster's name and domain, the admins and at least one agent are required.
 
 [cluster]
 name = "example"
@@ -9,7 +10,7 @@ coolify_domain = ""                # optional, e.g. "agents-coolify.example.com"
 pair_domain = ""                   # optional, e.g. "{id}-t3.example.com": where the T3 desktop/mobile apps connect
 timezone = "UTC"
 data = "/srv/agentlab"
-deploy = "coolify"                 # "coolify" or "compose"
+deploy = "compose"                 # plain Docker Compose; "coolify" if you'd like Coolify's UI for the stacks
 isolation = "sysbox"               # "sysbox" (multi-person servers) or "unconfined" (WSL, one person)
 publish_address = "127.0.0.1"      # where [agents.publish] / [hub] publish ports listen (one-person setups only)
 
@@ -22,15 +23,15 @@ allow_domains = []                 # optional, e.g. ["example.com"]: anyone with
 hub_port = 8443                    # tailscale mode: the hub's port on the machine's MagicDNS name
 
 [auth.cloudflare]                  # mode = "cloudflare-access"
-team = "example"                   # https://<team>.cloudflareaccess.com
-audience = ""                      # the Access application's AUD tag; `agentctl cloudflare setup` fills it in
+team = ""                          # your Zero Trust team (<team>.cloudflareaccess.com); setup finds and fills it in
+audience = ""                      # the Access application's id for the gate; filled in by setup too
 login_method = ""                  # "" = every Zero Trust login method is offered (the one-time PIN by email needs no
                                    # setup); or pin one, e.g. "One-time PIN" or "Google Workspace" (one-click)
 
 [auth.tinyauth]                    # mode = "tinyauth"
 domain = ""                        # its login page, e.g. "login.example.com"
-google_client_id_file = ""         # e.g. "/srv/agentlab/secrets/google-client-id.txt"
-google_client_secret_file = ""
+google_client_id_file = ""         # "" = <data>/secrets/tinyauth-google-id (agentctl secret set tinyauth-google-id)
+google_client_secret_file = ""     # "" = <data>/secrets/tinyauth-google-secret
 # image = "ghcr.io/tinyauthapp/tinyauth:v5.1.3"   # >= 5.1.3: fixes CVE-2026-77560 and GHSA-r27r-rr9v-vv37
 
 [defaults]                         # per-agent limits unless the agent overrides them
@@ -98,14 +99,14 @@ agent_tools_hours = 6              # each agent refreshes T3, Claude Code, Codex
 wait_hours = 4                     # a busy agent (a T3 turn running) is waited for this long, checked every 5 min
 on_busy = "defer"                  # still busy then: "defer" (next run) or "resume" (restart it, tell its chats to continue)
 
-[cloudflare]                       # used by `agentctl cloudflare setup`
-account_id = ""
-zone = "example.com"
-api_token_file = "/srv/agentlab/secrets/cloudflare-api.token"   # permissions: skills/agentlab/references/access.md (doctor checks them)
+[cloudflare]                       # only the API token is needed (agentctl secret set cloudflare-api)
+account_id = ""                    # found from the token and the domain when empty
+zone = ""                          # found the same way
+api_token_file = ""                # "" = <data>/secrets/cloudflare-api.token
 
-[coolify]                          # used when cluster.deploy = "coolify"
+[coolify]                          # only with deploy = "coolify"
 url = "http://127.0.0.1:8000"
-token_file = "/srv/agentlab/secrets/coolify.token"
+token_file = ""                    # "" = <data>/secrets/coolify.token (agentctl secret set coolify)
 project = "agentlab"
 
 # Optional: seed a companion under an agent on the first apply (afterwards it is that agent's to change or remove).

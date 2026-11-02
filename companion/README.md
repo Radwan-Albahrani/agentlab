@@ -86,14 +86,16 @@ The poll loop rewrites `/data/heartbeat.json` every few seconds, so a container 
 
 ## Setting it up
 
-1. **Slack app.** At <https://api.slack.com/apps> → Create New App → From a manifest, paste
-   [`slack-manifest.yml`](slack-manifest.yml) (rename "Companion" first). Install it to the workspace. Copy the bot
-   token, the owner's user token (installing as the owner grants it) and create an app-level token with
-   `connections:write`. Put them in the secrets folder with the owner's Slack id.
-2. **Bridge key.** Any random string, in both `agent-key.txt` and the agent's `~/.config/agent/bridge-key`.
-3. **Deploy** it in the agent's environment (`[[companions]]` in `cluster.toml`, then `agentctl apply`, which also
-   seeds the agent's checkout). Invite it
-   to the channels it should post in (`/invite @Companion`).
+Usually the agent does this itself: ask it for a companion and its `companion` skill walks you through the one part
+only you can do, creating the Slack app. That part is a manifest link: open it, install the app to your workspace, and
+hand over three things: the bot token, an app-level token with `connections:write`, and your Slack member id (plus
+your user token if the companion should act as you). The agent saves them with `companion secret`; an admin can also
+use `agentctl secret set companion/<name>/bot-token.txt` (and `app-token.txt`, `owner.txt`), or the dashboard's
+Secrets screen. The key the companion and its agent share is made by `agentctl apply`, along with the companion's
+code checkout. Then invite it to the channels it should post in (`/invite @Companion`).
+
+The manifest is [`slack-manifest.yml`](slack-manifest.yml) if you'd rather create the app by hand (rename "Companion"
+first).
 
 ### Pull request reviews (optional)
 

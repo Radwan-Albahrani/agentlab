@@ -217,7 +217,7 @@ def _domain_levels(cfg, c):
 
 def access(cfg, c):
     mode, ingress = cfg['auth']['mode'], cfg['auth']['ingress']
-    if mode == 'none':
+    if mode == 'none' and not config.ports_only(cfg):
         c.add(
             'auth',
             False,
@@ -279,14 +279,15 @@ def _cloudflare_token(cfg, c):
     try:
         probes = cloudflare.probe_token(cfg)
     except Exception as e:  # reported as a check, not a crash
-        c.add('cloudflare-token', False, f'Cloudflare API: {e}', 'check [cloudflare] account_id and the token file')
+        c.add('cloudflare-token', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
         return
     if probes is None:
         c.add(
             'cloudflare-token',
             False,
             'Cloudflare API token is valid',
-            'the token was refused (expired, revoked or mistyped): create a new one, My Profile → API Tokens',
+            'the token was refused (expired, revoked or mistyped): create a new one in My Profile → API Tokens, '
+            'then agentctl secret set cloudflare-api',
         )
         return
     c.add('cloudflare-token', True, 'Cloudflare API token is valid')
@@ -302,9 +303,9 @@ def _cloudflare_token(cfg, c):
 def _cloudflare_access(cfg, c):
     c.add(
         'audience',
-        bool(cfg['auth']['cloudflare']['audience']),
-        'auth.cloudflare.audience set',
-        'agentctl cloudflare setup (fills it in); until then the gate refuses everyone',
+        bool(cfg['auth']['cloudflare']['team'] and cfg['auth']['cloudflare']['audience']),
+        'Cloudflare Access application known (team and audience)',
+        'agentctl cloudflare setup (finds the team and creates the application); until then the gate refuses everyone',
     )
     token_file = cfg['cloudflare'].get('api_token_file')
     if not is_root() and token_file and not os.access(token_file, os.R_OK) and _private(token_file) is not False:
@@ -314,15 +315,15 @@ def _cloudflare_access(cfg, c):
         c.add(
             'cloudflare-api',
             False,
-            'Cloudflare API not configured',
-            'set [cloudflare] account_id and zone, save an API token to [cloudflare] api_token_file',
+            'Cloudflare API token saved',
+            'create a token (My Profile → API Tokens) and save it: agentctl secret set cloudflare-api',
             'warning',
         )
         return
     try:
         idps = cloudflare.identity_providers(cfg)
     except Exception as e:  # reported as a check, not a crash
-        c.add('cloudflare-api', False, f'Cloudflare API: {e}', 'check the token and [cloudflare] account_id')
+        c.add('cloudflare-api', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
         return
     wanted = cfg['cloudflare'].get('login_method')
     if wanted:
@@ -419,8 +420,9 @@ def _tinyauth(cfg, c):
             f'tinyauth-{key}',
             os.path.isfile(t[key]),
             f'tinyauth {key.replace("_", " ")}: {t[key]}',
-            'manual: create a Google OAuth client (redirect https://'
-            f'{t["domain"]}/api/oauth/callback/google) and save its id and secret to these files',
+            'create a Google OAuth client (redirect https://'
+            f'{t["domain"]}/api/oauth/callback/google), then agentctl secret set tinyauth-google-id and '
+            'agentctl secret set tinyauth-google-secret',
         )
     m = re.search(r':v?(\d+)\.(\d+)\.(\d+)$', t['image'])
     fixed = m and tuple(int(x) for x in m.groups()) >= (5, 1, 3)
@@ -450,7 +452,13 @@ def coolify_check(cfg, c):
         coolify.Api(cfg).call('GET', '/version')
         c.add('coolify', True, 'Coolify API reachable')
     except Exception as e:  # reported as a check
-        c.add('coolify', False, f'Coolify: {e}', 'agentctl install (installs Coolify and creates the token)')
+        c.add(
+            'coolify',
+            False,
+            f'Coolify: {e}',
+            f'create an API token in Coolify ({cfg["coolify"]["url"]} → Keys & Tokens → API tokens, permission root), '
+            'then agentctl secret set coolify',
+        )
 
 
 def cluster(cfg, c):

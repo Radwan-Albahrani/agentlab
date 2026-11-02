@@ -35,7 +35,7 @@ SCHEMA = {  # section -> {key: default}; None = required
         'pair_domain': '',
         'timezone': 'UTC',
         'data': '/srv/agentlab',
-        'deploy': 'coolify',
+        'deploy': 'compose',
         'isolation': 'sysbox',
         'publish_address': '127.0.0.1',
     },
@@ -301,13 +301,14 @@ def _auth(raw, problems):
             '[auth] allow_domains works with cloudflare-access and tinyauth (Tailscale: use the tailnet ACL)'
         )
     a['allow_domains'] = sorted({d.lower() for d in domains})
-    if mode == 'cloudflare-access' and not re.match(r'^[a-z0-9][a-z0-9-]*$', str(cf['team'])):
-        problems.append('[auth.cloudflare] team is required (the <team> of <team>.cloudflareaccess.com)')
+    # team may stay empty: `agentctl cloudflare setup` reads it from the account and writes it here
+    if cf['team'] and not re.match(r'^[a-z0-9][a-z0-9-]*$', str(cf['team'])):
+        problems.append('[auth.cloudflare] team must be the <team> of <team>.cloudflareaccess.com')
     if mode == 'tinyauth':
         ta['domain'] = _hostname(ta['domain'], '[auth.tinyauth] domain', problems)
         for key in ('google_client_id_file', 'google_client_secret_file'):
-            if not str(ta[key]).startswith('/'):
-                problems.append(f'[auth.tinyauth] {key} is required (an absolute path to the file)')
+            if ta[key] and not str(ta[key]).startswith('/'):
+                problems.append(f'[auth.tinyauth] {key} must be an absolute path')
     port = a['hub_port']
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or port == 443:
         problems.append('[auth] hub_port must be a port number other than 443')
@@ -534,8 +535,15 @@ def resolve(raw, previous=None, state=None):
     psi = limits['throttle_io_psi_max']
     if not isinstance(psi, int | float) or not 0 < psi <= 100:
         problems.append('[limits] throttle_io_psi_max must be a percentage')
-    if c.get('deploy') == 'coolify' and not coolify['token_file']:
-        problems.append('[coolify] token_file is required when deploy = "coolify"')
+    # Secrets live at fixed places under <data>/secrets unless the config points elsewhere (`agentctl secret set`
+    # writes them there).
+    secrets = f'{c["data"]}/secrets'
+    cloudflare['api_token_file'] = str(cloudflare['api_token_file'] or f'{secrets}/cloudflare-api.token')
+    coolify['token_file'] = str(coolify['token_file'] or f'{secrets}/coolify.token')
+    auth_ta['google_client_id_file'] = str(auth_ta['google_client_id_file'] or f'{secrets}/tinyauth-google-id')
+    auth_ta['google_client_secret_file'] = str(
+        auth_ta['google_client_secret_file'] or f'{secrets}/tinyauth-google-secret'
+    )
     if problems:
         raise Failed('cluster.toml has problems:\n  ' + '\n  '.join(problems))
 
