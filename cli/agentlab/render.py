@@ -539,5 +539,23 @@ def all_files(cfg):
             body = agent(cfg, by_id[key])
         else:
             body = companion(cfg, by_name[key])
-        files[f'compose/{stack}/docker-compose.yml'] = yaml.dump(body, f'{stack}. {GENERATED}')
+        files[f'compose/{stack}/docker-compose.yml'] = yaml.dump(stamped(body), f'{stack}. {GENERATED}')
     return files
+
+
+RENDERED_LABEL = 'agentlab.rendered'
+
+
+def stamped(body):
+    """Every service labelled with the digest of the stack as rendered, so a deploy can tell its own containers from
+    ones an earlier run left behind (Coolify and Compose recreate only what changed, so creation times can't)."""
+    digest = hashlib.sha256(yaml.dump(body, '').encode()).hexdigest()[:16]
+    for service in body.get('services', {}).values():
+        service['labels'] = {**service.get('labels', {}), RENDERED_LABEL: digest}
+    return body
+
+
+def rendered_digest(text):
+    """The digest stamped into a rendered compose file, or '' (a file rendered before stamping existed)."""
+    m = re.search(rf'{re.escape(RENDERED_LABEL)}: "?(\w+)', text)
+    return m.group(1) if m else ''

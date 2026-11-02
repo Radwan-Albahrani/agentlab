@@ -65,3 +65,12 @@ its interrupted chats to carry on). `agentctl status` shows the last run.
   and a new T3 goes live at the next idle moment; the agent's `~/logs/updater.log` has the details.
 - In a hurry while someone's mid-turn: `agentctl apply --force` restarts them anyway, after you've warned them.
 - `update` needs the repo on the server to be a git clone; a copied folder can't be pulled.
+- A deploy that doesn't come up stops the run with each container's state. Old containers named `<hash>_<name>`
+  are leftovers from an interrupted deploy: `docker rm` them and run `agentctl apply` again.
+
+## Before installing
+
+`agentctl install` (and so `setup`) first checks that this host has what every step needs: apt with the packages it
+installs, a kernel Sysbox runs on, `/dev/kvm` and a Java 17+ runtime for Android. If anything is missing it stops
+before changing the host and says what to fix; `agentctl doctor` shows the same checks any time. Java is whichever of
+21, 25 or 17 the distro carries (Debian 13 has 21 and 25, Ubuntu 24.04 has 17 and 21).

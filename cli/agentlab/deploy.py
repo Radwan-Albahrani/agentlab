@@ -199,8 +199,89 @@ def deploy(cfg, stack, kind, key, plan, force=False):
             fn=lambda: coolify.deploy(api, cfg, stack, kind, key, stack_folder(cfg, stack), text),
         )
     if not plan.dry:
+        DEPLOYED.add(stack)
         mark_deployed(cfg, stack, text)
+        settle(cfg, stack, kind, text)
     return True
+
+
+# Stacks deployed by this run of agentctl. Coolify deploys in the background, so until it finishes the old
+# containers still look out of date: a second deploy then would race the first (two recreates, a name conflict,
+# containers left in "created").
+DEPLOYED = set()
+SETTLE_S = 15 * 60
+LEFTOVER = re.compile(r'^[0-9a-f]{12}_')
+
+
+def deployed_this_run(stack):
+    return stack in DEPLOYED
+
+
+def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
+    """Wait until every service of the stack runs in a container from this render. Fails with the containers'
+    states, and Coolify's view of the service, when it doesn't happen."""
+    import time  # noqa: PLC0415 - patched in tests through the arguments
+
+    sleep, clock = sleep or time.sleep, clock or time.time
+    want, services = render.rendered_digest(text), compose_services(text)
+    deadline = clock() + timeout_s
+    while True:
+        rows = stack_containers(cfg, stack)
+        ours = [r for r in rows if not LEFTOVER.match(r['name']) and (not want or r['rendered'] == want)]
+        up = {r['service'] for r in ours if _up(r, kind)}
+        if services and services <= up:
+            leftovers = [r['name'] for r in rows if LEFTOVER.match(r['name'])]
+            if leftovers:
+                warn(
+                    f'{stack}: containers left by an earlier, interrupted deploy: {", ".join(leftovers)} (docker rm them)'
+                )
+            return
+        if clock() >= deadline:
+            break
+        sleep(5)
+    states = ', '.join(f'{r["name"]} {r["state"]}' for r in rows) or 'no containers'
+    raise Failed(f'{stack} did not come up within {timeout_s // 60} min: {states}{coolify_status(cfg, stack)}')
+
+
+def _up(row, kind):
+    # a companion without its Slack tokens exits 0 on purpose ("not configured") and waits for them
+    return row['state'] == 'running' or (kind == 'companion' and row['status'].startswith('Exited (0)'))
+
+
+def compose_services(text):
+    """Service names of a rendered compose file (two-space keys under `services:`)."""
+    body = text.split('\nservices:\n', 1)[-1] if '\nservices:\n' in text else ''
+    names = set()
+    for line in body.splitlines():
+        if line and not line.startswith(' '):
+            break
+        m = re.match(r'^  ([\w.-]+):\s*$', line)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
+def stack_containers(cfg, stack):
+    fmt = '{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}\t{{.Label "agentlab.rendered"}}'
+    cmd = ['docker', 'ps', '-a', '--filter', f'label=com.docker.compose.project={project(cfg, stack)}', '--format', fmt]
+    out = []
+    for line in run(cmd, check=False)[1].splitlines():
+        parts = line.split('\t')
+        if len(parts) == 5:
+            out.append(dict(zip(('name', 'state', 'status', 'service', 'rendered'), parts, strict=True)))
+    return out
+
+
+def coolify_status(cfg, stack):
+    """'; Coolify reports …' for a failure message, when Coolify deploys this stack and answers."""
+    uuid = coolify.stack_uuid(stack_folder(cfg, stack)) if cfg['deploy'] == 'coolify' else None
+    if not uuid:
+        return ''
+    try:
+        status = coolify.Api(cfg).call('GET', f'/services/{uuid}').get('status', '')
+    except (Failed, AttributeError):
+        return ''
+    return f'; Coolify reports the service as {status}' if status else ''
 
 
 def connect(cfg, plan):

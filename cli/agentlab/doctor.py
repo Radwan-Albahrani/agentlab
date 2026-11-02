@@ -9,7 +9,7 @@ import shutil
 import socket
 import urllib.request
 
-from . import cloudflare, config, coolify, deploy, disks, render
+from . import cloudflare, config, coolify, deploy, disks, preflight, render
 from .util import is_root, run, size_bytes
 
 
@@ -520,9 +520,19 @@ def cluster(cfg, c):
         c.add(f'stack-{stack}', bool(deploy.containers(cfg, stack)), f'{stack} running', 'agentctl apply')
 
 
+def prerequisites(cfg, c):
+    """The same checks install runs first, so an unsupported host shows up before anything is installed."""
+    blocked = preflight.problems(cfg)
+    for cid, message, fix in blocked:
+        c.add(cid, False, message, fix, 'warning' if cid == 'host-packages' and 'empty' in message else 'error')
+    if not blocked:
+        c.add('host-supported', True, 'this host has what the install steps need')
+
+
 def run_all(cfg):
     c = Checks()
     host(cfg, c)
+    prerequisites(cfg, c)
     if docker(cfg, c):
         cluster(cfg, c)
     android(cfg, c)

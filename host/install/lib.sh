@@ -6,6 +6,19 @@ changed() { echo "changed: $*"; }
 ok() { echo "ok: $*"; }
 manual() { echo "MANUAL: $*"; exit 2; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# The first of the given packages apt can install (refreshing the lists once when they are empty).
+pick_package() {
+  local p
+  ls /var/lib/apt/lists/*Packages >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  for p in "$@"; do
+    if apt-cache policy "${p}" 2>/dev/null | grep -q 'Candidate: [^(]'; then
+      echo "${p}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 apt_install() {
   local missing=() p
   for p in "$@"; do dpkg -s "${p}" >/dev/null 2>&1 || missing+=("${p}"); done

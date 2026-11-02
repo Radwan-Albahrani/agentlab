@@ -4,6 +4,7 @@ fast-forward-only pull, and how it waits for busy agents, defers them, or restar
 import contextlib
 import io
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -13,7 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentlab import config, deploy, render, update, util
+from agentlab import config, coolify, deploy, render, update, util
 
 BASE = """
 [cluster]
@@ -202,6 +203,8 @@ class Waiting(Stack):
             f.write(self.text)
         deploy.mark_deployed(self.cfg, 'agentlab-agent-omar', self.text)
         self.deployed = []
+        deploy.DEPLOYED.clear()
+        self.addCleanup(deploy.DEPLOYED.clear)
         self.enterContext(mock.patch('agentlab.deploy.deploy', lambda cfg, stack, *a, **k: self.deployed.append(stack)))
         self.enterContext(mock.patch('agentlab.deploy.isolate'))
         self.clock = Clock()
@@ -259,6 +262,165 @@ class Waiting(Stack):
         self.assertEqual(deferred, [])
         self.assertEqual(resumed, {'omar': ['t1', 't2']})
         self.assertEqual(told, [('c9', 't1'), ('c9', 't2')])
+
+
+class OncePerRun(Waiting):
+    def test_a_stack_apply_deployed_is_not_deployed_again(self):
+        # the home lab saw two concurrent Coolify deploys per agent: apply's, then the wait loop's while the first was
+        # still recreating (old containers still looked out of date)
+        deploy.DEPLOYED.add('agentlab-agent-sara')
+        runs_db(self.sara, [])
+        runs_db(self.omar, [])
+        updated, _, _ = self.wait('defer', lambda n: None)
+        self.assertEqual(updated, ['omar'])
+        self.assertEqual(self.deployed, ['agentlab-agent-omar'])
+
+
+AGENT_TEXT = """# agentlab-agent-sara.
+services:
+  agent:
+    image: agentlab/agent:latest
+    labels:
+      agentlab.rendered: "abc123"
+  files:
+    image: x
+    labels:
+      agentlab.rendered: "abc123"
+"""
+
+
+class Settle(unittest.TestCase):
+    """After a deploy, every service runs in a container from this render, or the deploy fails loudly."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cfg = resolve(self.tmp.name)
+        self.views = []
+        self.slept = 0
+        self.t = 0.0
+
+    def rows(self, *rows):
+        return [dict(zip(('name', 'state', 'status', 'service', 'rendered'), r, strict=True)) for r in rows]
+
+    def settle(self, kind='agent', timeout_s=60):
+        views = iter(self.views)
+        last = [[]]
+
+        def seen(cfg, stack):
+            last[0] = next(views, last[0])
+            return last[0]
+
+        def sleep(s):
+            self.slept += 1
+            self.t += s
+
+        with mock.patch('agentlab.deploy.stack_containers', seen):
+            deploy.settle(self.cfg, 'agentlab-agent-sara', kind, AGENT_TEXT, timeout_s, sleep, lambda: self.t)
+
+    def test_waits_until_every_service_runs(self):
+        created = self.rows(
+            ('agent-x', 'created', 'Created', 'agent', 'abc123'), ('files-x', 'created', 'Created', 'files', 'abc123')
+        )
+        running = self.rows(
+            ('agent-x', 'running', 'Up 2 seconds', 'agent', 'abc123'), ('files-x', 'running', 'Up', 'files', 'abc123')
+        )
+        self.views = [created, created, running]
+        self.settle()
+        self.assertEqual(self.slept, 2)
+
+    def test_created_but_never_running_fails_with_the_states(self):
+        self.views = [
+            self.rows(
+                ('agent-x', 'created', 'Created', 'agent', 'abc123'), ('files-x', 'running', 'Up', 'files', 'abc123')
+            )
+        ]
+        with self.assertRaises(util.Failed) as e:
+            self.settle()
+        self.assertIn('did not come up', str(e.exception))
+        self.assertIn('agent-x created', str(e.exception))
+
+    def test_old_containers_and_leftovers_do_not_count(self):
+        old = self.rows(
+            ('agent-x', 'running', 'Up 3 days', 'agent', 'old999'), ('files-x', 'running', 'Up', 'files', 'abc123')
+        )
+        leftover = self.rows(
+            ('f7f906c03f57_agent-x', 'running', 'Up', 'agent', 'abc123'),
+            ('files-x', 'running', 'Up', 'files', 'abc123'),
+        )
+        self.views = [old, leftover]
+        with self.assertRaises(util.Failed):
+            self.settle(timeout_s=20)
+
+    def test_leftovers_are_reported_once_the_stack_is_up(self):
+        self.views = [
+            self.rows(
+                ('f7f906c03f57_agent-x', 'exited', 'Exited (0)', 'agent', 'abc123'),
+                ('agent-x', 'running', 'Up', 'agent', 'abc123'),
+                ('files-x', 'running', 'Up', 'files', 'abc123'),
+            )
+        ]
+        with mock.patch('agentlab.deploy.warn') as warn:
+            self.settle()
+        self.assertIn('f7f906c03f57_agent-x', warn.call_args.args[0])
+
+    def test_an_unconfigured_companion_counts_as_up(self):
+        self.views = [
+            self.rows(
+                ('c-x', 'exited', 'Exited (0) 5 seconds ago', 'agent', 'abc123'),
+                ('f', 'running', 'Up', 'files', 'abc123'),
+            )
+        ]
+        self.settle(kind='companion')
+
+    def test_services_are_read_from_the_rendered_file(self):
+        self.assertEqual(deploy.compose_services(AGENT_TEXT), {'agent', 'files'})
+        self.assertEqual(render.rendered_digest(AGENT_TEXT), 'abc123')
+
+    def test_every_rendered_service_is_stamped_with_its_render(self):
+        files = render.all_files(self.cfg)
+        text = files['compose/agentlab-agent-sara/docker-compose.yml']
+        digest = render.rendered_digest(text)
+        self.assertRegex(digest, r'^[0-9a-f]{16}$')
+        stamps = re.findall(r'agentlab\.rendered: "?(\w+)', text)
+        self.assertEqual(stamps, [digest] * len(deploy.compose_services(text)))
+
+
+class CoolifyWait(unittest.TestCase):
+    def api(self, *answers):
+        replies = iter(answers)
+        api = mock.Mock()
+        api.call.side_effect = lambda method, path, body=None: next(replies)
+        return api
+
+    def test_waits_for_the_queued_deployment(self):
+        api = self.api({'status': 'queued'}, {'status': 'in_progress'}, {'status': 'finished'})
+        slept = []
+        coolify.wait(api, 'agentlab-core', 'd1', 600, slept.append, lambda: 0)
+        self.assertEqual(len(slept), 2)
+
+    def test_a_failed_deployment_surfaces_coolify_log(self):
+        logs = (
+            '[{"output": "Pulling"}, {"output": "Error response from daemon: Conflict. The container name is in use"}]'
+        )
+        api = self.api({'status': 'failed', 'logs': logs})
+        with self.assertRaises(util.Failed) as e:
+            coolify.wait(api, 'agentlab-agent-sara', 'd1', 600, lambda s: None, lambda: 0)
+        self.assertIn('Conflict', str(e.exception))
+
+    def test_deploy_waits_only_when_coolify_gives_a_deployment_id(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(coolify.uuid_file(d), 'w') as f:
+                f.write('svc1')
+            api = mock.Mock()
+            api.call.side_effect = [{}, {'deployments': [{'deployment_uuid': 'd1'}]}]
+            with mock.patch('agentlab.coolify.wait') as wait:
+                coolify.deploy(api, {}, 'agentlab-core', 'core', None, d, 'services: {}\n')
+            wait.assert_called_once_with(api, 'agentlab-core', 'd1')
+            api.call.side_effect = [{}, {'message': 'Service deployment started.'}]
+            with mock.patch('agentlab.coolify.wait') as wait:
+                coolify.deploy(api, {}, 'agentlab-core', 'core', None, d, 'services: {}\n')
+            wait.assert_not_called()
 
 
 class Record(unittest.TestCase):

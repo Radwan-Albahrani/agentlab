@@ -106,5 +106,38 @@ def deploy(api, cfg, stack, kind, key, folder, text):
             f.write(uuid)
     else:
         api.call('PATCH', f'/services/{uuid}', {'docker_compose_raw': raw})
-    api.call('POST', f'/deploy?uuid={uuid}')
+    started = api.call('POST', f'/deploy?uuid={uuid}')
+    for d in (started.get('deployments') or []) if isinstance(started, dict) else []:
+        if d.get('deployment_uuid'):
+            wait(api, stack, d['deployment_uuid'])
     return uuid
+
+
+DONE = {'finished', 'failed', 'cancelled', 'cancelled-by-user'}
+
+
+def wait(api, stack, deployment, timeout_s=20 * 60, sleep=None, clock=None):
+    """Until Coolify finishes a queued deployment; its log tail when it fails. (Service deploys usually start
+    without a deployment id: the caller then watches the containers instead.)"""
+    import time  # noqa: PLC0415 - patched in tests through the arguments
+
+    sleep, clock = sleep or time.sleep, clock or time.time
+    deadline = clock() + timeout_s
+    while clock() < deadline:
+        d = api.call('GET', f'/deployments/{deployment}')
+        status = d.get('status', '') if isinstance(d, dict) else ''
+        if status == 'finished':
+            return
+        if status in DONE:
+            raise Failed(f'Coolify could not deploy {stack} ({status}): {_log_tail(d.get("logs"))}')
+        sleep(5)
+    raise Failed(f'Coolify was still deploying {stack} after {timeout_s // 60} min')
+
+
+def _log_tail(logs, lines=6):
+    try:
+        entries = json.loads(logs) if isinstance(logs, str) else logs or []
+    except ValueError:
+        return str(logs)[-600:]
+    text = '\n'.join(str(e.get('output', '')).strip() for e in entries if isinstance(e, dict) and e.get('output'))
+    return '\n'.join(text.splitlines()[-lines:]) or 'no log'

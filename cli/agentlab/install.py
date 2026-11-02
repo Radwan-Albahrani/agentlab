@@ -5,7 +5,7 @@ import glob
 import os
 import subprocess
 
-from . import config, images
+from . import config, images, preflight
 from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes
 
 
@@ -44,6 +44,9 @@ def steps():
 
 def install(cfg, config_path, only=None, skip_images=False):
     need_root('agentctl install')
+    blocked = preflight.problems(cfg, refresh=True)
+    if blocked:
+        raise Needs('; '.join(f'{message} (fix: {fix})' for _, message, fix in blocked))
     env = step_env(cfg, config_path)
     manual = []
     for path in steps():

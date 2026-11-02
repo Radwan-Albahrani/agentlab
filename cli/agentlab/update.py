@@ -145,7 +145,7 @@ def pending_agents(cfg):
     for a in cfg['agents']:
         stack = f'agentlab-agent-{a["id"]}'
         path = deploy.compose_file(cfg, stack)
-        if not os.path.isfile(path):
+        if not os.path.isfile(path) or deploy.deployed_this_run(stack):  # apply already brought it up to date
             continue
         with open(path) as f:
             text = f.read()

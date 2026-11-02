@@ -345,6 +345,11 @@ Two layers, both of which never cut off a running T3 turn by default:
   changed or when a running container's image is older than its local tag; an agent is only redeployed while idle
   (`--force` overrides). `update` then waits for busy agents, checking every 5 min for up to `updates.wait_hours`,
   updating each the moment it is idle; the core and companions never wait.
+- **Each deploy finishes before the next step.** A stack is deployed at most once per run, and agentctl waits until
+  every service of it runs in a container from this render (each service carries an `agentlab.rendered` label with the
+  render's digest) before moving on. Coolify deploys in the background, so without this a second deploy could race
+  the first. When a stack doesn't come up, the run fails with the containers' states and Coolify's view of the service;
+  containers an interrupted run left behind (`<hash>_<name>`) are named so they can be removed.
 
 When an agent is still busy at the end of the wait, `updates.on_busy` decides, for both layers (agents get it as
 `AGENTLAB_ON_BUSY` and `AGENTLAB_UPDATE_WAIT_HOURS`): `defer` leaves it for the next run; `resume` notes the runs in
