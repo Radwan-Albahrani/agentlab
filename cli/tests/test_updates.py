@@ -94,7 +94,8 @@ class Stack(unittest.TestCase):
         with open(deploy.compose_file(self.cfg, self.stack), 'w') as f:
             f.write(self.text)
         deploy.mark_deployed(self.cfg, self.stack, self.text)
-        self.image_now = 'sha256:new'
+        # times as Docker prints them; the container was created at 16:00 UTC, the image rebuilt at 16:47:59 UTC
+        self.image_now = '2026-11-02T19:47:59.480512677+03:00'
         self.enterContext(mock.patch('agentlab.deploy.run', self.docker))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 
@@ -102,7 +103,7 @@ class Stack(unittest.TestCase):
         if cmd[:2] == ['docker', 'ps']:
             return 0, 'c1'
         if cmd[:2] == ['docker', 'inspect']:
-            return 0, 'agentlab/agent:latest sha256:old'
+            return 0, 'agentlab/agent:latest 2026-11-02T16:00:00.5Z'
         if cmd[:3] == ['docker', 'image', 'inspect']:
             return 0, self.image_now
         return 0, ''
@@ -115,7 +116,12 @@ class ImageRedeploy(Stack):
         self.assertEqual((reason, skip), ('newer image: agentlab/agent:latest', ''))
 
     def test_same_image_changes_nothing(self):
-        self.image_now = 'sha256:old'
+        # a cached rebuild keeps the image's old creation time, whatever ids the image store reports
+        self.image_now = '2026-11-02T18:59:00+03:00'
+        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
+
+    def test_unreadable_times_never_count_as_newer(self):
+        self.image_now = 'not a time'
         self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
 
     def test_never_mid_turn_unless_forced(self):

@@ -2,9 +2,11 @@
 agent's network. A stack is redeployed when its compose file changed since its last deploy, or when a newer local
 image exists for a running container (after `images build`); an agent waits for that until no T3 turn is running."""
 
+import datetime
 import hashlib
 import json
 import os
+import re
 
 from . import coolify, render
 from .util import Failed, run, say, warn
@@ -106,17 +108,31 @@ def containers(cfg, stack, service=None, all_states=False):
 
 def stale_images(cfg, stack):
     """Image tags whose local image is newer than what the stack's running containers use (an `images build` or
-    pull since the last deploy). Stopped containers don't count: redeploying would start them."""
+    pull since the last deploy). Stopped containers don't count: redeploying would start them.
+
+    Compared by time, not id: with Docker's containerd image store a container reports its platform manifest's digest
+    while the tag reports the image index's, so ids never match. An image built after the container was created is
+    newer; a rebuild Docker served from cache keeps its old creation time, so it isn't."""
     out = set()
     for cid in containers(cfg, stack):
-        rc, info = run(['docker', 'inspect', '-f', '{{.Config.Image}} {{.Image}}', cid], check=False)
+        rc, info = run(['docker', 'inspect', '-f', '{{.Config.Image}} {{.Created}}', cid], check=False)
         if rc or len(info.split()) != 2:
             continue
-        tag, used = info.split()
-        rc, current = run(['docker', 'image', 'inspect', '-f', '{{.Id}}', tag], check=False)
-        if rc == 0 and current.strip() and current.strip() != used:
+        tag, started = info.split()
+        rc, built = run(['docker', 'image', 'inspect', '-f', '{{.Created}}', tag], check=False)
+        if rc == 0 and built.strip() and _when(built) > _when(started):
             out.add(tag)
     return sorted(out)
+
+
+def _when(stamp):
+    """Docker's RFC 3339 times (nanoseconds, Z or an offset) as a comparable UTC datetime."""
+    m = re.fullmatch(r'([\d-]+T[\d:]+)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)', stamp.strip())
+    if not m:
+        return datetime.datetime.min.replace(tzinfo=datetime.UTC)  # unreadable: never counts as newer
+    head, frac, zone = m.groups()
+    zone = '+00:00' if zone == 'Z' else zone
+    return datetime.datetime.fromisoformat(f'{head}.{(frac or "0")[:6].ljust(6, "0")}{zone}')
 
 
 SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')  # any other T3 run status is a turn in progress
