@@ -50,7 +50,7 @@ def parser():
     rm.add_argument('--yes', action='store_true', help="confirm deleting the agent's data")
     rm.add_argument('--dry-run', action='store_true')
     ag.add_parser('list', help='every agent with its owner and limits')
-    ad = ag.add_parser('adopt', help='mark an agent with existing AI sign-ins as onboarded (migrations)')
+    ad = ag.add_parser('adopt', help='mark an agent that already has AI sign-ins as onboarded')
     ad.add_argument('id')
     cf = sub.add_parser('cloudflare', help='Cloudflare tunnel, DNS and Access').add_subparsers(
         dest='action', required=True

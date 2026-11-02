@@ -55,7 +55,7 @@ system where it can (Cloudflare Access policy, tinyauth whitelist; for Tailscale
 and `doctor` explains it).
 
 **Published ports (one person).** With `auth.mode` `tailscale` or `none` and a single owner, `[agents.publish]` and
-`[hub] publish` put the tools on host ports, reached over the person's own network the way a home setup always was.
+`[hub] publish` put the tools on host ports, reached over the person's own network (tailnet or LAN).
 When the hub and every agent's T3 are published, agentlab doesn't use `tailscale serve` or tailnet HTTPS at all and
 never touches Tailscale's settings; links (pairing, Open T3, Files, the browser view) are built as
 `http://<the host the page was opened on>:<port>`.
@@ -145,7 +145,7 @@ On `cluster.domain`, paths decide the tool:
 
 People use their own Claude / Codex accounts, so a new agent starts at onboarding, not T3:
 
-1. **Onboarding** (the person's hub, `https://<hub_domain>/agents/<id>/onboarding`, backed by the agent's Accounts API): sign in to Claude Code and/or Codex (device-code flows, as today), add connectors /
+1. **Onboarding** (the person's hub, `https://<hub_domain>/agents/<id>/onboarding`, backed by the agent's Accounts API): sign in to Claude Code and/or Codex (device-code flows), add connectors /
    MCP servers, optionally GitHub (`gh auth login` device flow). At least one AI sign-in is required to finish; the
    Accounts app records completion in `~/.config/agent/onboarded` and serves `GET /api/onboarding` → `{done, steps}`.
 2. **The gate enforces it**: in pass 1, a request for T3 (`/` paths) on an agent whose onboarding isn't done gets a

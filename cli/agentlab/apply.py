@@ -259,7 +259,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     if not dry:
         need_root('agentctl apply')
     say(f'{"Dry run: " if dry else ""}{cfg["name"]}: {len(cfg["agents"])} agents, deploy via {cfg["deploy"]}')
-    # Agents whose files were there before agentlab's first apply (a migration) are adopted, not onboarded again.
+    # Agents whose home already existed before the first apply are adopted, not onboarded again.
     first = not os.path.exists(os.path.join(cfg['data'], 'rendered', 'cluster.json'))
     existing = [a for a in cfg['agents'] if os.path.isdir(f'{a["path"]}/home')] if first else []
     folders(cfg, plan)
