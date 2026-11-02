@@ -1,9 +1,4 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-light.png">
-    <img alt="agentlab: AI coding agents that live on your own machine" src="docs/assets/banner-dark.png" width="100%">
-  </picture>
-</p>
+![agentlab: AI coding agents that live on your own machine](docs/assets/banner-dark.png)
 
 <p align="center">
   <b>Always-on AI coding agents on a machine you own: just for you, or shared with friends, family or a team.</b>
