@@ -472,6 +472,43 @@ class Janitor(unittest.TestCase):
             )
 
 
+class PickPackage(unittest.TestCase):
+    """pick_package under the install steps' pipefail, with an apt-cache that keeps writing after the Candidate line
+    (as the real one does): it used to fail when grep -q stopped reading first (#17)."""
+
+    def pick(self, policy):
+        tmp = tempfile.mkdtemp(dir=TMP)
+        fake = os.path.join(tmp, 'apt-cache')
+        with open(fake, 'w') as f:
+            f.write('#!/bin/bash\ncase "$2" in\n')
+            for pkg, candidate in policy.items():
+                f.write(f'  {pkg}) echo "{pkg}:"; echo "  Candidate: {candidate}"; seq 1 200000;;\n')
+            f.write('esac\n')
+        os.chmod(fake, 0o755)
+        lib = os.path.join(HOST, 'install', 'lib.sh')
+        # ls() stubbed: the apt lists count as present, so no apt-get update runs
+        cmd = f'source "{lib}"; ls() {{ :; }}; pick_package openjdk-21-jre-headless openjdk-25-jre-headless openjdk-17-jre-headless'
+        return subprocess.run(
+            ['bash', '-c', cmd],
+            capture_output=True,
+            text=True,
+            env={**os.environ, 'PATH': f'{tmp}:{os.environ["PATH"]}'},
+            check=False,
+        )
+
+    def test_finds_the_first_available_despite_a_long_policy(self):
+        for _ in range(5):  # the old pipe failed by timing, so try it a few times
+            out = self.pick({'openjdk-21-jre-headless': '21.0.13+9-1~deb13u2', 'openjdk-25-jre-headless': '25.0.5'})
+            self.assertEqual((out.returncode, out.stdout.strip()), (0, 'openjdk-21-jre-headless'))
+
+    def test_skips_packages_without_a_candidate(self):
+        out = self.pick({'openjdk-21-jre-headless': '(none)', 'openjdk-25-jre-headless': '25.0.5+8-1~deb13u1'})
+        self.assertEqual(out.stdout.strip(), 'openjdk-25-jre-headless')
+
+    def test_none_available(self):
+        self.assertEqual(self.pick({'openjdk-21-jre-headless': '(none)'}).returncode, 1)
+
+
 class SysboxInstall(unittest.TestCase):
     """The installer never adds sysbox-mgr options and removes the one drop-in an earlier version left (bad flag)."""
 

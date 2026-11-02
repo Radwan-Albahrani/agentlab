@@ -49,7 +49,7 @@ main() {
     systemctl is-active --quiet sysbox || { echo "sysbox is not running: journalctl -u sysbox-mgr -u sysbox-fs"; exit 1; }
     changed "started Sysbox"
   fi
-  if docker info --format '{{json .Runtimes}}' | grep -q sysbox-runc; then
+  if grep -q sysbox-runc <<<"$(docker info --format '{{json .Runtimes}}')"; then
     ok "sysbox-runc registered with Docker"
   else
     echo "sysbox-runc is not registered with Docker"

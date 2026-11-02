@@ -11,7 +11,8 @@ pick_package() {
   local p
   ls /var/lib/apt/lists/*Packages >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get update -qq
   for p in "$@"; do
-    if apt-cache policy "${p}" 2>/dev/null | grep -q 'Candidate: [^(]'; then
+    # captured, not piped: under pipefail `apt-cache … | grep -q` fails whenever grep stops reading first
+    if grep -q 'Candidate: [^(]' <<<"$(apt-cache policy "${p}" 2>/dev/null)"; then
       echo "${p}"
       return 0
     fi
