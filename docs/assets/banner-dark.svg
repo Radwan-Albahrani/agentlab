@@ -18,8 +18,8 @@
 
   <g transform="translate(84 112)">
     <text x="0" y="56" font-size="76" font-weight="700" fill="#f0f6fc" letter-spacing="-2">agentlab</text>
-    <text x="2" y="112" font-size="27" fill="#9fb3a8">Your team's AI coding agents, on your own server.</text>
-    <text x="2" y="150" font-size="27" fill="#9fb3a8">A private one for everyone. Always on.</text>
+    <text x="2" y="112" font-size="27" fill="#9fb3a8">AI coding agents that live on your own machine.</text>
+    <text x="2" y="150" font-size="27" fill="#9fb3a8">Just you, or everyone you share it with. Always on.</text>
   </g>
 
   <!-- the server: one roof, private rooms -->
@@ -28,19 +28,19 @@
     <g font-size="15" font-weight="600">
       <rect x="22" y="24" width="134" height="76" rx="14" fill="#16261d" stroke="#2fbf6c" stroke-width="2"/>
       <circle cx="46" cy="50" r="9" fill="url(#leaf)"/>
-      <text x="62" y="55" fill="#e6f4ea">sara</text>
+      <text x="62" y="55" fill="#e6f4ea">work</text>
       <rect x="40" y="70" width="98" height="8" rx="4" fill="#2a3d31"/>
       <rect x="40" y="70" width="64" height="8" rx="4" fill="#2fbf6c"/>
 
       <rect x="174" y="24" width="134" height="76" rx="14" fill="#16261d" stroke="#2a3d31" stroke-width="2"/>
       <circle cx="198" cy="50" r="9" fill="#5b8cff"/>
-      <text x="214" y="55" fill="#e6f4ea">omar</text>
+      <text x="214" y="55" fill="#e6f4ea">personal</text>
       <rect x="192" y="70" width="98" height="8" rx="4" fill="#2a3d31"/>
       <rect x="192" y="70" width="30" height="8" rx="4" fill="#5b8cff"/>
 
       <rect x="22" y="120" width="134" height="76" rx="14" fill="#16261d" stroke="#2a3d31" stroke-width="2"/>
       <circle cx="46" cy="146" r="9" fill="#f2a83b"/>
-      <text x="62" y="151" fill="#e6f4ea">lina</text>
+      <text x="62" y="151" fill="#e6f4ea">sara</text>
       <rect x="40" y="166" width="98" height="8" rx="4" fill="#2a3d31"/>
       <rect x="40" y="166" width="82" height="8" rx="4" fill="#f2a83b"/>
 
