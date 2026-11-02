@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router';
 import { colors, media, radius, space, text } from '../theme/tokens.stylex';
 import { Count } from '../ui/status';
 import { isActive, type Menu } from './menu';

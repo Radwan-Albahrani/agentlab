@@ -3,8 +3,8 @@
 import json
 import os
 
-from . import deploy, disks, privileges, update
-from .util import Needs, is_root, run, say
+from . import deploy, disks, privileges, template, update
+from .util import Needs, is_root, load_json, run, say
 
 
 def _state(cfg, stack, service):
@@ -101,4 +101,7 @@ def show(cfg):
         later = f'; waiting: {", ".join(last["agents_deferred"])}' if last.get('agents_deferred') else ''
         err = f': {last["error"]}' if last.get('error') else ''
         say(f'  update {last.get("at", "?")} {last.get("result", "?")}{err} ({last.get("commit", "")}){later}')
+    s['companion_templates'] = load_json(template.state_path(cfg), {}) or {}
+    for line in template.summary(cfg):
+        say(f'  companion {line}')
     return s

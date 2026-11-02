@@ -120,8 +120,14 @@ attached.
 ## Changing your companion
 
 This section is for the AI agent whose companion this is. Your checkout is `/workspace/companions/<name>/` (a git
-repo; `upstream` is the agentlab template). The running companion executes exactly this checkout, so every change
-you commit and restart is live.
+repo; its `template` branch holds the agentlab template it came from). The running companion executes exactly this
+checkout, so every change you commit and restart is live.
+
+Template updates are merged in for you: the host adds each new template version to the `template` branch and merges
+it into your branch (`chore: merge agentlab template <from>..<to>`) when your tree is clean and nothing conflicts,
+restarts the companion and undoes that merge if it then fails to start. If the hub or `agentctl status` says the
+update **needs merging**, run `git merge template`, resolve the conflicts keeping your behaviour, test, commit and
+restart.
 
 Where things are:
 

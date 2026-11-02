@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { Card } from '../ui/Card';

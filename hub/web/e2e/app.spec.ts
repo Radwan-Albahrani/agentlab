@@ -427,6 +427,8 @@ test('secrets: search and filters narrow the list and live in the URL', async ({
     .getByRole('button', { name: /^Restarts a service/ })
     .click();
   await expect(page).toHaveURL(/effect=restart/);
+  // the router applies URL changes in a transition: the list re-renders a moment after the URL
+  await expect(rows).not.toHaveCount(total);
   const restarts = await rows.count();
   expect(restarts).toBeGreaterThan(0);
   expect(restarts).toBeLessThan(total);

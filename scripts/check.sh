@@ -25,7 +25,10 @@ part_lint() {  # per part: each folder is its own import root (first-party modul
     done
     echo 'ruff ok'"
 }
-part_cli() { py cli 'cd cli && python -m unittest discover -s tests 2>&1 | tail -3'; }
+part_cli() {  # git for the companion template tests, which work on real repos
+  py cli 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git >/dev/null
+    cd cli && python -m unittest discover -s tests 2>&1 | tail -3'
+}
 part_host() { py host 'cd host && python -m unittest discover -s tests 2>&1 | tail -3'; }
 part_gate() { py gate 'cd gate && pip install -q -r requirements.txt && python -m unittest discover -s tests -t . 2>&1 | tail -3'; }
 part_companion() { py companion 'cd companion && pip install -q -r tests/requirements.txt && python -m pytest -q -p no:cacheprovider tests 2>&1 | tail -3'; }

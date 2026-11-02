@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { colors, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 

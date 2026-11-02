@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useCompanion } from '../../api/queries';
 import type { Companion as Data } from '../../api/types';
 import { NotFound, Screen } from '../../app/Screen';

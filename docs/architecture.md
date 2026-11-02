@@ -170,7 +170,15 @@ customize its companions: add a feature, change the persona, remove a behaviour.
 
 - **The code lives in the agent's workspace.** `agentctl apply` seeds `/workspace/companions/<name>/` (host:
   `<agent path>/workspace/companions/<name>/`) once from the repo's `companion/` as a git repo (initial commit
-  "from agentlab <version>", remote `upstream` = the repo's companion template) and never overwrites it after that.
+  "from agentlab <version>", branch `template` at that commit, remote `upstream` = the repo) and never overwrites it.
+- **Template changes arrive as merge commits** (`agentctl apply`, so also every `agentctl update`): a changed
+  `companion/` becomes a new snapshot commit on the checkout's `template` branch (git plumbing, the working tree is
+  untouched), merged into the checked-out branch only when the tree is clean and the merge has no conflicts (a
+  conflicted file whose template version already contains all of the checkout's changes to it counts as clean). Then
+  the companion restarts and must come up (running, or "not configured"); if not, exactly that merge commit is undone
+  and it restarts again. Conflicts are aborted and reported as "needs merging". Git runs as the checkout's owner, never
+  root, and a checkout or `.git` that is a symlink is skipped. Results: `<data>/state/companions-template.json`,
+  `<data>/companions/<name>/template.json` (the hub's `templateUpdate`), `update.json`, `agentctl status`.
 - **The companion runs that code.** `agentlab/companion` is a base image (Python + the template's dependencies); the
   container mounts the checkout read-only at `/app` and runs it. If the checkout has `requirements.txt` changes, they
   are installed into a venv at `/data/venv` on start. A checkout that fails to start leaves the companion down and the

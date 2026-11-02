@@ -8,7 +8,7 @@ import secrets
 import shutil
 import subprocess
 
-from . import cloudflare, deploy, disks, images, render
+from . import cloudflare, deploy, disks, images, render, template
 from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
 
 FIREWALL_UNIT = 'agentlab-firewall.service'
@@ -105,8 +105,9 @@ def version():
 
 
 def seed_companion(cfg, comp):
-    """Copy the repo's companion/ into the agent's workspace as a git repo, once. After that it is the agent's code:
-    agentctl never touches it again (the agent changes it, commits, and restarts the companion)."""
+    """Copy the repo's companion/ into the agent's workspace as a git repo, once. After that it is the agent's code
+    (it changes it, commits, and restarts the companion); later template changes only arrive as merge commits from the
+    `template` branch, which starts at this seed commit (template.py)."""
     dst = render.companion_checkout(cfg, comp)
     shutil.copytree(
         os.path.join(REPO, 'companion'),
@@ -118,6 +119,7 @@ def seed_companion(cfg, comp):
         ['init', '-q', '-b', 'main'],
         ['add', '-A'],
         ['commit', '-q', '-m', f'from agentlab {version()}'],
+        ['branch', 'template'],
         ['remote', 'add', 'upstream', upstream_ref()],
     ):
         run([*git, *cmd])
@@ -294,9 +296,11 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
         adopt(a, plan)
     deploy.connect(cfg, plan)
     deploy.isolate(cfg, plan)
+    templates = {}
     if only is None:
         cloudflare.sync_people(cfg, plan)
         deploy.orphans(cfg)
+        templates = template.update_all(cfg, plan)
     if not dry and not changed:
         say('  rendered files unchanged')
-    return {'changed_files': changed}
+    return {'changed_files': changed, 'companion_templates': templates}

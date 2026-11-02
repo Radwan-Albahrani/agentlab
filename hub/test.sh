@@ -18,7 +18,7 @@ PY=python:3.13.1-alpine
 RUFF=ruff==0.15.22
 BUN=oven/bun:1.4.4-alpine
 BUN_GLIBC=oven/bun:1.4.4         # the same Bun for the Playwright image (glibc, not musl)
-PLAYWRIGHT=mcr.microsoft.com/playwright:v1.49.1-noble
+PLAYWRIGHT=mcr.microsoft.com/playwright:v1.64.1-noble
 
 die() { echo "error: $*" >&2; exit 1; }
 

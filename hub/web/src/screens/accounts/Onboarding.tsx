@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { api } from '../../api/client';
 import { useAccounts } from '../../api/queries';
 import type { AccountsPage } from '../../api/types';

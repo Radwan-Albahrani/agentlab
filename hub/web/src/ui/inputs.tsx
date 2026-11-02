@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { Button } from './Button';
 import { Icon } from './Icon';
@@ -166,7 +166,7 @@ export const Field = ({ label, children }: { label: string; children: ReactNode 
 
 /** Inputs and a submit button on one line; Enter submits. */
 export function InlineForm({ onSubmit, children }: { onSubmit: () => unknown; children: ReactNode }) {
-  const submit = (e: FormEvent) => {
+  const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     void onSubmit();
   };

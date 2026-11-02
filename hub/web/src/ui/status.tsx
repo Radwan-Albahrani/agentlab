@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
 import { agent, colors, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
