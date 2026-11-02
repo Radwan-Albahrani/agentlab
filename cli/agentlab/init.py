@@ -51,6 +51,12 @@ def group(plan, name, user, get=_group):
 def config_file(plan, path, example, name, get=_group):
     if os.path.exists(path):
         say(f'  kept {path} (init never overwrites it)')
+        # a config put in place before init (e.g. by hand as root:root) must still be readable by the group, or the
+        # read-only commands fail for the people init just added; only ownership and mode change, never the content
+        g = get(name)
+        st = os.stat(path)
+        if g and (st.st_gid != g.gr_gid or st.st_mode & 0o777 != 0o640):
+            plan.do(f'set {path} to root:{name} 0640', fn=lambda: (os.chown(path, 0, g.gr_gid), os.chmod(path, 0o640)))
         return
 
     def make():
