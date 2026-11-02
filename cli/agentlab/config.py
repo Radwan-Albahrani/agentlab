@@ -59,7 +59,15 @@ SCHEMA = {  # section -> {key: default}; None = required
     },
     # network: "private" = reachable only through the Cloudflare One (WARP) client over the tunnel (no public DNS);
     # "public" = public hostnames behind an Access sign-in page; require_warp adds a device check to "public"
-    'auth.cloudflare': {'team': '', 'audience': '', 'login_method': '', 'network': 'private', 'require_warp': False},
+    'auth.cloudflare': {
+        'team': '',
+        'audience': '',
+        'login_method': '',
+        'network': 'private',
+        'require_warp': False,
+        # how long a Cloudflare One Client session signs people in; set on the account only while it has none
+        'client_session': '24h',
+    },
     'auth.tinyauth': {
         'domain': '',
         'google_client_id_file': '',
@@ -308,6 +316,8 @@ def _auth(raw, problems):
         problems.append('[auth.cloudflare] network must be "private" (WARP client only) or "public" (sign-in page)')
     if not isinstance(cf['require_warp'], bool):
         problems.append('[auth.cloudflare] require_warp must be true or false')
+    if not re.fullmatch(r'(\d+h)?(\d+m)?', str(cf['client_session'])) or not str(cf['client_session']):
+        problems.append('[auth.cloudflare] client_session must look like 24h, 30m or 2h45m')
     if mode == 'cloudflare-access' and cf['network'] == 'private' and cf['require_warp'] is True:
         problems.append('[auth.cloudflare] require_warp is for network = "public"; private is WARP-only already')
     if cf['team'] and not re.match(r'^[a-z0-9][a-z0-9-]*$', str(cf['team'])):
@@ -615,7 +625,11 @@ def resolve(raw, previous=None, state=None):
         'companion_policy': policy,
         'updates': updates,
         # Below: only agentctl's (file paths, never secrets themselves); left out of cluster.json.
-        'cloudflare': {**cloudflare, 'login_method': str(auth_cf['login_method'])},
+        'cloudflare': {
+            **cloudflare,
+            'login_method': str(auth_cf['login_method']),
+            'client_session': str(auth_cf['client_session']),
+        },
         'coolify': coolify,
         'images': images,
         'tinyauth': auth_ta,

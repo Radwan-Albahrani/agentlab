@@ -331,7 +331,7 @@ owner = "b@example.com"
         cfg = self.cfg()
         with self.assertRaises(util.Needs) as e:
             cloudflare.discover(cfg, FakeAccount(org_status=403))
-        self.assertIn('Access: Organizations → Read', str(e.exception))
+        self.assertIn('Access: Organizations → Edit', str(e.exception))
         self.assertIn('[auth.cloudflare] team', str(e.exception))
         self.assertEqual(e.exception.code, util.NEEDS)
 

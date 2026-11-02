@@ -94,16 +94,19 @@ front; anyone can reach the page, only your people get past it. Pick this when p
 network = "private"     # or "public"
 ```
 
-What your Zero Trust organization needs for private (your admin can check each in the dashboard):
+For private, `cloudflare setup` also turns on what your Zero Trust organization needs, through the token, only
+where it's off or unset: the Gateway proxy (TCP and UDP), a Cloudflare One Client authentication session duration
+(`[auth.cloudflare] client_session`, 24h by default; one already set is never changed, and "client authentication for
+all applications" is never turned on), and agentlab's people policy added to device enrollment after the policies
+already there, so your people can enroll the client. Two things stay yours: if your client profiles use split tunnels
+in Include mode, include the range Cloudflare resolves private hostnames to (`172.64.128.0/20` by default), and keep
+your domain out of Local Domain Fallback.
 
-- the Gateway proxy turned on (Settings → Network → Firewall → Proxy, TCP), which private hostnames require;
-- devices enrolled in the Cloudflare One client with "WARP authentication identity" allowed (Settings → WARP Client →
-  Device enrollment), so the client session signs people in;
-- if your client profiles use split tunnels in Include mode, the range Cloudflare resolves private hostnames to
-  (`172.64.128.0/20` by default) included; in the default Exclude mode there's nothing to do;
-- your domain must not be in Local Domain Fallback (it isn't, unless someone added it).
-
-`agentctl doctor` reads what the token can see and says which of these to check.
+`cloudflare setup` checks the token and these settings before it changes anything, and builds the new way in (routes
+and the Access app) before it switches the tunnel and removes the old public records, so a stop halfway never locks
+you out by surprise; it tells you when an earlier run already did. `agentctl doctor` checks all of it, and warns when
+another application in your account admits a whole domain you allow in (anyone who can enroll the client could then
+reach it).
 
 You'll need a Cloudflare API token. Create it under My Profile → API Tokens → Create Token → Custom, with:
 
@@ -111,14 +114,12 @@ You'll need a Cloudflare API token. Create it under My Profile → API Tokens �
 - Account · Access: Apps and Policies → Edit (newer dashboards split it into Access: Apps and Access: Policies; give
   both Edit)
 - Account · Access: Identity Providers → Read
-- Account · Access: Organizations → Read (how agentlab learns your team name; not needed if you set
-  `[auth.cloudflare] team` yourself)
+- Account · Access: Organizations → Edit (your team name, and the client session duration while it has none)
 - Zone · DNS → Edit, limited to your domain's zone (the plain "DNS" row, not "Zone DNS Settings"); private uses it to
   remove any public records agentlab made earlier
 - For private: Account · Cloudflare One Networks → Edit (the tunnel's hostname routes; older dashboards: Cloudflare
-  Tunnel → Edit) and Account · Zero Trust → Read (so doctor can check the client settings)
-- For `require_warp`: Account · Zero Trust → Read, or → Edit so agentlab can create the Gateway device check if it
-  doesn't exist yet
+  Tunnel → Edit) and Account · Zero Trust → Edit (turns on the Gateway proxy when it's off)
+- For `require_warp`: Account · Zero Trust → Edit (the Gateway device check, created if missing)
 
 Already made a token without one of these? Edit it in the dashboard and tick the missing row: the token keeps the same
 value, so nothing on the server changes. `agentctl doctor` checks the token and names any permission it lacks.

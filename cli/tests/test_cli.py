@@ -702,24 +702,51 @@ class FakeCloudflare:
     def __init__(self):
         self.tunnels, self.configs, self.dns, self.policies, self.apps = [], {}, [], [], []
         self.routes, self.posture = [], []
-        self.settings = {'gateway_proxy_enabled': True}
+        self.settings = {'gateway_proxy_enabled': True, 'gateway_udp_proxy_enabled': True}
         self.idps = [
             {'id': 'g1', 'type': 'google-apps', 'name': 'Google Workspace'},
             {'id': 'o1', 'type': 'onetimepin', 'name': 'One-time PIN'},
         ]
         self.writes = []
+        # the account's device enrollment application, with the policy that already lets the DB people enroll
+        # (kept apart from self.apps, which holds the self-hosted ones the tests look at)
+        self.enroll = {
+            'id': 'enroll',
+            'type': 'warp',
+            'name': 'Warp Login App',
+            'policies': [{'id': 'db', 'precedence': 1}],
+        }
         self.token = 'user'  # 'user' or 'account' token (they verify at different paths), or 'bad'
         self.denied = set()  # path fragments this token can't reach (the API answers 403)
+        self.denied_writes = set()  # path fragments it may read but not change
+        self.org = {'auth_domain': 'example.cloudflareaccess.com', 'warp_auth_session_duration': '24h'}
+        self.own_groups = None  # the token's permission group names, when it may read itself
+        self.calls = []  # every call, in order
+        self.ip_routes = []  # private IP routes on tunnels (teamnet)
 
     def call(self, method, path, body=None):
+        self.calls.append((method, path))
         if method != 'GET':
             self.writes.append((method, path))
-        if any(d in path for d in self.denied):
-            raise util.Failed(f'Cloudflare {method} {path}: HTTP 403 [{{"code": 10000}}]')
+        if any(d in path for d in self.denied) or (method != 'GET' and any(d in path for d in self.denied_writes)):
+            raise cloudflare.ApiError(f'Cloudflare {method} {path}: HTTP 403 [{{"code": 10000}}]', 403)
         if path.endswith('/tokens/verify'):
             if self.token == 'bad' or (self.token == 'user') != path.startswith('/user/'):
                 raise util.Failed(f'Cloudflare GET {path}: HTTP 401')
-            return {'status': 'active'}
+            return {'status': 'active', 'id': 'tok1'}
+        if path.endswith('/tokens/tok1'):
+            if self.own_groups is None:
+                raise cloudflare.ApiError(f'Cloudflare GET {path}: HTTP 403', 403)
+            return {'policies': [{'permission_groups': [{'name': n} for n in self.own_groups]}]}
+        warp_app = (
+            '/access/apps' in path and method in ('POST', 'PUT') and (body or {}).get('allow_authenticate_via_warp')
+        )
+        if warp_app and not self.org.get('warp_auth_session_duration'):
+            raise cloudflare.ApiError(
+                f'Cloudflare {method} {path}: HTTP 400 [{{"code": 12130, "message": "allow_authenticate_via_warp '
+                'cannot be set until a Cloudflare One Client Authentication session duration is set"}}]',
+                400,
+            )
         path, _, query = path.partition('?')
         params = dict(p.split('=', 1) for p in query.split('&') if '=' in p)
         if path.endswith('/cfd_tunnel') and method == 'GET':
@@ -757,7 +784,11 @@ class FakeCloudflare:
                 self.posture.append({**body, 'id': f'pc{len(self.posture) + 1}'})
                 return self.posture[-1]
             return copy.deepcopy(self.posture)
+        if path.endswith('/teamnet/routes'):
+            return copy.deepcopy(self.ip_routes)
         if path.endswith('/devices/settings'):
+            if method == 'PATCH':
+                self.settings.update(body)
             return self.settings
         if '/access/apps/' in path and method == 'DELETE':
             self.apps = [a for a in self.apps if a['id'] != path.rsplit('/', 1)[1]]
@@ -780,13 +811,18 @@ class FakeCloudflare:
             if method == 'POST':
                 self.apps.append({**body, 'id': f'a{len(self.apps) + 1}', 'aud': f'aud{len(self.apps) + 1}'})
                 return self.apps[-1]
-            return copy.deepcopy(self.apps)
+            return copy.deepcopy([*self.apps, self.enroll])
+        if path.endswith('/access/apps/enroll') and method == 'PUT':
+            self.enroll = {**body, 'id': 'enroll'}
+            return self.enroll
         if '/access/apps/' in path and method == 'PUT':
             app = next(a for a in self.apps if a['id'] == path.rsplit('/', 1)[1])
             app.update(body)
             return app
         if path.endswith('/access/organizations'):
-            return {'auth_domain': 'example.cloudflareaccess.com'}
+            if method == 'PUT':
+                self.org = dict(body)
+            return dict(self.org)
         raise AssertionError(f'unexpected {method} {path}')
 
 
@@ -938,7 +974,7 @@ class Cloudflare(unittest.TestCase):
             self.fake.denied = {'/access/organizations'}
             self.assertIn(('org', False), cloudflare.probe_token(cfg))
         self.assertNotIn('org', dict(self.probe()))  # the test config names its team
-        self.assertIn('Organizations → Read', cloudflare.PERMISSIONS['org'])
+        self.assertIn('Access: Organizations', cloudflare.PERMISSIONS['org'])
 
     def test_refused_token_is_one_clear_problem(self):
         self.fake.token = 'bad'
@@ -1425,7 +1461,9 @@ class PrivateNetwork(unittest.TestCase):
             checks,
             {
                 'gateway-proxy': True,
+                'client-session': True,
                 'client-sign-in': True,
+                'client-enrollment': True,
                 'private-app': True,
                 'hostname-routes': True,
                 'no-public-dns': True,
@@ -1516,3 +1554,228 @@ class HostsFile(unittest.TestCase):
             hostsfile.ensure([], util.Plan(False), path)
         with open(path) as f:
             self.assertEqual(f.read(), '127.0.0.1 localhost\n::1 localhost\n')
+
+
+class SafeSwitch(unittest.TestCase):
+    """#19 and #20: everything checked before the first change, and the new way in made before the old one goes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        os.makedirs(f'{d}/secrets')
+        with open(f'{d}/secrets/cf.token', 'w') as f:
+            f.write('api-token')
+        self.config_path = f'{d}/cluster.toml'
+        self.private = BASE.replace('data = "/srv/agentlab"', f'data = "{d}"') + (
+            f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n'
+        )
+        self.public = self.private.replace('team = "example"', 'team = "example"\nnetwork = "public"')
+        self.fake = FakeCloudflare()
+        self.go(self.public)  # a working public cluster, as netzero had
+        self.fake.writes.clear()
+        self.fake.calls.clear()
+
+    def go(self, text, dry=False):
+        with open(self.config_path, 'w') as f:
+            f.write(text)
+        with (
+            mock.patch.object(cloudflare, 'api_for', return_value=self.fake),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cloudflare.setup(config.load(self.config_path), util.Plan(dry), self.config_path)
+
+    def public_still_works(self):
+        conf = self.fake.configs['t1']['config']
+        self.assertTrue(any(r.get('hostname') for r in conf['ingress']))
+        self.assertTrue(self.fake.dns)
+
+    def test_a_missing_permission_stops_before_any_change(self):
+        self.fake.denied = {'/zerotrust/routes'}
+        with self.assertRaises(util.Needs) as e:
+            self.go(self.private)
+        self.assertIn('Cloudflare One Networks', str(e.exception))
+        self.assertIn('keeps working', str(e.exception))
+        self.assertEqual(self.fake.writes, [])
+        self.public_still_works()
+
+    def test_the_dry_run_shows_the_same_gaps(self):
+        self.fake.denied = {'/devices/settings'}
+        with self.assertRaisesRegex(util.Needs, 'Zero Trust → Edit'):
+            self.go(self.private, dry=True)
+        self.assertEqual(self.fake.writes, [])
+
+    def test_the_tokens_own_permissions_catch_a_read_only_grant(self):
+        self.fake.own_groups = ['DNS Write', 'Access: Apps and Policies Write', 'Cloudflare One Connector Read']
+        with self.assertRaisesRegex(util.Needs, 'can read but not change'):
+            self.go(self.private)
+        self.assertEqual(self.fake.writes, [])
+
+    def test_a_refused_edit_mid_run_is_exit_2_and_leaves_public_working(self):
+        self.fake.denied_writes = {'/zerotrust/routes'}  # reads fine, own permissions unreadable
+        with self.assertRaisesRegex(util.Needs, 'Cloudflare refused to route'):
+            self.go(self.private)
+        self.public_still_works()
+
+    def test_gateway_proxy_off_is_turned_on_and_never_off(self):
+        self.fake.settings = {'gateway_proxy_enabled': False, 'gateway_udp_proxy_enabled': False, 'other': 'kept'}
+        self.go(self.private)
+        self.assertEqual(
+            self.fake.settings, {'gateway_proxy_enabled': True, 'gateway_udp_proxy_enabled': True, 'other': 'kept'}
+        )
+        before = len(self.fake.writes)
+        self.go(self.private)
+        self.assertNotIn(('PATCH', '/accounts/acc/devices/settings'), self.fake.writes[before:])
+
+    def test_client_session_duration_is_set_only_while_it_has_none(self):
+        self.fake.org = {'auth_domain': 'example.cloudflareaccess.com', 'name': 'netzero', 'created_at': 'x'}
+        self.go(self.private)
+        self.assertEqual(self.fake.org['warp_auth_session_duration'], '24h')
+        self.assertEqual(self.fake.org['name'], 'netzero')  # the rest of the organization is sent back unchanged
+        self.assertNotIn('allow_authenticate_via_warp', self.fake.org)  # never "for all applications"
+        self.fake.org['warp_auth_session_duration'] = '8h'
+        before = len(self.fake.writes)
+        self.go(self.private)
+        self.assertEqual(self.fake.org['warp_auth_session_duration'], '8h')
+        self.assertNotIn('PUT', [m for m, p in self.fake.writes[before:] if p.endswith('/access/organizations')])
+
+    def test_no_permission_to_set_it_stops_before_anything_else(self):
+        self.fake.org.pop('warp_auth_session_duration')
+        self.fake.denied_writes = {'/access/organizations'}
+        with self.assertRaises(util.Needs) as e:
+            self.go(self.private)
+        self.assertIn('Access: Organizations → Edit', str(e.exception))
+        self.assertEqual(self.fake.writes, [('PUT', '/accounts/acc/access/organizations')])  # the refused one only
+        self.public_still_works()
+
+    def test_people_may_enroll_the_client_and_other_policies_stay(self):
+        self.go(self.private)
+        ours = next(p['id'] for p in self.fake.policies if p['name'] == 'agentlab-test')
+        self.assertEqual(self.fake.enroll['policies'], [{'id': 'db', 'precedence': 1}, {'id': ours, 'precedence': 2}])
+        self.assertEqual(self.fake.enroll['type'], 'warp')
+        before = len(self.fake.writes)
+        self.go(self.private)
+        self.assertNotIn(('PUT', '/accounts/acc/access/apps/enroll'), self.fake.writes[before:])
+
+    def test_cloudflares_12130_anyway_is_exit_2_not_a_failure(self):
+        self.fake.org.pop('warp_auth_session_duration')
+        with (
+            mock.patch.object(cloudflare.Setup, 'preflight', return_value=[]),
+            mock.patch.object(cloudflare.Setup, 'prerequisites'),
+            self.assertRaises(util.Needs) as e,
+        ):
+            self.go(self.private)
+        self.assertIn('session duration', str(e.exception))
+        self.public_still_works()  # the app is made before the tunnel switches
+
+    def test_order_routes_and_app_before_the_switch_and_dns_last(self):
+        self.go(self.private)
+        writes = self.fake.writes
+        route = next(i for i, (m, p) in enumerate(writes) if m == 'POST' and p.endswith('/routes/hostname'))
+        app = next(i for i, (m, p) in enumerate(writes) if '/access/apps/' in p and m == 'PUT')
+        switch = next(i for i, (m, p) in enumerate(writes) if p.endswith('/configurations'))
+        dns = [i for i, (m, p) in enumerate(writes) if '/dns_records/' in p and m == 'DELETE']
+        self.assertLess(route, switch)
+        self.assertLess(app, switch)
+        self.assertTrue(dns)
+        self.assertGreater(min(dns), switch)
+
+    def test_netzeros_half_switched_state_finishes_on_the_next_run(self):
+        # what an earlier version left: tunnel private, routes made, public DNS gone, app still public
+        self.fake.configs['t1'] = {
+            'config': {'ingress': [{'service': 'http_status:404'}], 'warp-routing': {'enabled': True}}
+        }
+        for host in ('agents.example.com', 'agents-hub.example.com'):
+            self.fake.routes.append({'id': host, 'hostname': host, 'tunnel_id': 't1', 'comment': 'agentlab-test'})
+        self.fake.dns.clear()
+        self.fake.org.pop('warp_auth_session_duration')
+        self.fake.denied_writes = {'/access/organizations'}  # the token can't set it yet
+        with self.assertRaises(util.Needs) as e:
+            self.go(self.private)
+        self.assertIn('not reachable', str(e.exception))
+        self.fake.denied_writes = set()  # the person added Access: Organizations → Edit
+        self.go(self.private)
+        app = next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
+        self.assertEqual({d['type'] for d in app['destinations']}, {'private'})
+        self.assertTrue(app['allow_authenticate_via_warp'])
+        self.assertEqual(self.fake.configs['t1']['config']['ingress'], [{'service': 'http_status:404'}])
+
+    def test_back_to_public_makes_dns_first_and_drops_only_our_routes(self):
+        self.go(self.private)
+        self.fake.routes.append({'id': 'prod', 'hostname': 'db.example.com', 'tunnel_id': 'x', 'comment': 'prod'})
+        self.fake.writes.clear()
+        self.go(self.public)
+        writes = self.fake.writes
+        dns = next(i for i, (m, p) in enumerate(writes) if p.endswith('/dns_records') and m == 'POST')
+        switch = next(i for i, (m, p) in enumerate(writes) if p.endswith('/configurations'))
+        drop = [i for i, (m, p) in enumerate(writes) if '/routes/hostname/' in p and m == 'DELETE']
+        self.assertLess(dns, switch)
+        self.assertGreater(min(drop), switch)
+        self.assertEqual([r['id'] for r in self.fake.routes], ['prod'])
+
+
+class EnrollmentExposure(unittest.TestCase):
+    """Private mode opens client enrollment to agentlab's people: doctor warns about what else that reaches."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        os.makedirs(f'{d}/secrets')
+        with open(f'{d}/secrets/cf.token', 'w') as f:
+            f.write('api-token')
+        self.config_path = f'{d}/cluster.toml'
+        text = (
+            BASE.replace('data = "/srv/agentlab"', f'data = "{d}"').replace(
+                'admins = ["boss@example.com"]', 'admins = ["boss@example.com"]\nallow_domains = ["example.com"]'
+            )
+            + f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n'
+        )
+        with open(self.config_path, 'w') as f:
+            f.write(text)
+        self.fake = FakeCloudflare()
+        with (
+            mock.patch.object(cloudflare, 'api_for', return_value=self.fake),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cloudflare.setup(config.load(self.config_path), util.Plan(False), self.config_path)
+
+    def checks(self):
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            return {c[0]: c for c in cloudflare.client_only_checks(config.load(self.config_path))}
+
+    def test_another_app_admitting_the_whole_domain_is_a_warning_and_untouched(self):
+        self.fake.policies.append(
+            {'id': 'dbp', 'name': 'DB everyone', 'include': [{'email_domain': {'domain': 'Example.com'}}]}
+        )
+        self.fake.apps.append({'id': 'db', 'name': 'company-db', 'policies': [{'id': 'dbp'}], 'destinations': []})
+        self.fake.apps.append(
+            {
+                'id': 'pay',
+                'name': 'payroll',
+                'policies': [{'id': 'x', 'include': [{'email': {'email': 'a@example.com'}}]}],
+            }
+        )
+        before = len(self.fake.writes)
+        check = self.checks()['enrollment-exposure']
+        self.assertEqual(check[4], 'warning')
+        self.assertIn('company-db admits everyone @example.com', check[2])
+        self.assertNotIn('payroll', check[2])
+        self.assertNotIn('agentlab', check[2])
+        self.assertEqual(len(self.fake.writes), before)
+
+    def test_no_warning_when_other_apps_list_people(self):
+        self.assertNotIn('enrollment-exposure', self.checks())
+
+    def test_private_routes_without_an_app_are_an_info_line(self):
+        self.fake.ip_routes = [
+            {'network': '10.0.5.0/24', 'tunnel_name': 'prod'},
+            {'network': '10.0.9.7/32', 'tunnel_name': 'prod'},
+        ]
+        self.fake.apps.append(
+            {'id': 'db', 'name': 'db', 'policies': [], 'destinations': [{'type': 'private', 'cidr': '10.0.9.0/24'}]}
+        )
+        check = self.checks()['uncovered-routes']
+        self.assertEqual(check[4], 'info')
+        self.assertIn('10.0.5.0/24 (prod)', check[2])
+        self.assertNotIn('10.0.9.7', check[2])

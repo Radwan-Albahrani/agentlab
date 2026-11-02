@@ -15,6 +15,7 @@ one-time PIN by email needs no setup); `[auth.cloudflare] login_method` pins the
 account with exactly one method gets that one. Only the API token is required: the account, the zone and the Zero
 Trust team are read from the token and the domain, and written into cluster.toml the first time."""
 
+import ipaddress
 import json
 import os
 import tomllib
@@ -159,14 +160,21 @@ class Setup:
         if self.plan.dry:
             self.plan.do(f'{what}: {method} {path}')
             return None
-        result = self.api.call(method, path, body)
+        try:
+            result = self.api.call(method, path, body)
+        except ApiError as e:
+            raise refused(e, what) or e from None
         self.plan.do(what)
         return result
 
-    def tunnel(self):
+    def find_tunnel(self):
         found = self.api.call('GET', f'/accounts/{self.account}/cfd_tunnel?name={self.name}&is_deleted=false') or []
+        return found[0]['id'] if found else ''
+
+    def tunnel(self):
+        found = self.find_tunnel()
         if found:
-            return found[0]['id']
+            return found
         made = self.write(
             f'create tunnel {self.name}',
             'POST',
@@ -322,6 +330,8 @@ class Setup:
         return f'{self.name} {name}' if name else self.name
 
     def access(self):
+        """The people's application (and, public only, the pair hosts' Bypass app). Removing a Bypass app left from
+        a public setup is left to `cleanup`, after the new way in works."""
         providers = self.api.call('GET', f'/accounts/{self.account}/access/identity_providers') or []
         idps = login_methods(self.cfg, providers)
         private = config.private_network(self.cfg)
@@ -329,8 +339,6 @@ class Setup:
         if pair_hosts(self.cfg):
             bypass = self.policy('apps', 'bypass', [{'everyone': {}}], 'for the T3 apps (bypass)')
             self.app('apps', pair_hosts(self.cfg), bypass, [])
-        elif private or self.cfg['auth']['cloudflare']['require_warp']:
-            self.drop_apps_bypass()  # a Bypass app left from a public setup would be a way around the client
         return aud
 
     def drop_apps_bypass(self):
@@ -413,6 +421,217 @@ class Setup:
         if new != text:
             write_if_changed(config_path, new)
 
+    def drop_hostname_routes(self):
+        """Back to public: agentlab's own private hostname routes (by comment) go; anyone else's stay."""
+        path = f'/accounts/{self.account}/zerotrust/routes/hostname'
+        try:
+            routes = self.api.call('GET', path) or []
+        except ApiError as e:
+            if e.status not in (401, 403):
+                raise
+            return  # never had them: the token can't even list routes
+        for r in routes:
+            if r.get('comment') == self.name:
+                self.write(f'remove the private route for {r["hostname"]}', 'DELETE', f'{path}/{r["id"]}')
+
+    def current_ingress(self, tunnel):
+        """'private' (404-only, warp-routing on), 'public' (hostnames on the tunnel), or '' (no tunnel/config yet)."""
+        if tunnel.startswith('<'):
+            return ''
+        try:
+            conf = (self.api.call('GET', f'/accounts/{self.account}/cfd_tunnel/{tunnel}/configurations') or {}).get(
+                'config'
+            ) or {}
+        except ApiError:
+            return ''
+        if any(r.get('hostname') for r in conf.get('ingress') or []):
+            return 'public'
+        return 'private' if (conf.get('warp-routing') or {}).get('enabled') else ''
+
+    def preflight(self):
+        """Everything this run will need, checked read-only before it changes anything (dry runs too): a gap is
+        exit 2 with the exact fix, never a half-switched tunnel. Reads stand in for edits (they can't be proved
+        without editing) unless the token may read its own permissions; the change steps are ordered so that a
+        refused edit still leaves the old way in working."""
+        gaps, cfg, account = [], self.cfg, self.account
+        private = config.private_network(cfg)
+        warp = private or cfg['auth']['cloudflare']['require_warp']
+        reads = []
+        if cfg['auth']['ingress'] == 'cloudflared':
+            reads += [('tunnels', f'/accounts/{account}/cfd_tunnel?per_page=1')]
+            if cfg['cloudflare']['zone']:
+                reads += [('dns', f'/zones?name={cfg["cloudflare"]["zone"]}')]
+        if cfg['auth']['mode'] == 'cloudflare-access':
+            reads += [
+                ('access', f'/accounts/{account}/access/apps'),
+                ('access', f'/accounts/{account}/access/policies'),
+                ('idps', f'/accounts/{account}/access/identity_providers'),
+            ]
+        if private:
+            reads += [('routes', f'/accounts/{account}/zerotrust/routes/hostname')]
+        if warp:
+            reads += [('devices', f'/accounts/{account}/devices/settings')]
+        answers = {}
+        for key, path in reads:
+            try:
+                answers[path] = self.api.call('GET', path)
+            except ApiError as e:
+                if e.status not in (401, 403):
+                    raise
+                gaps.append(f'add "{PERMISSIONS[key]}" to the token')
+        for key in missing_edit_permissions(self.api, account, needed_permissions(cfg)):
+            gaps.append(f'add "{PERMISSIONS[key]}" to the token (it can read but not change this)')
+        if warp:
+            try:
+                self.api.call('GET', f'/accounts/{account}/access/organizations')
+            except ApiError as e:
+                if e.status not in (401, 403):
+                    raise
+                gaps.append(f'add "{PERMISSIONS["org"]}" to the token (for the client session setting)')
+        return list(dict.fromkeys(gaps))
+
+    # ---------------------------------------------------------------- account settings agentlab turns on itself
+    def prerequisites(self):
+        """What the organization needs before clients can use agentlab, turned on through the token only when it is
+        off or unset: the client session duration (never shortened or changed once set, and never "client
+        authentication for all applications") and, for private, Gateway's TCP and UDP proxy (never turned off)."""
+        private = config.private_network(self.cfg)
+        if not (private or self.cfg['auth']['cloudflare']['require_warp']):
+            return
+        path = f'/accounts/{self.account}/access/organizations'
+        org = self.api.call('GET', path) or {}
+        if not org.get('warp_auth_session_duration'):
+            duration = self.cfg['cloudflare'].get('client_session') or '24h'
+            body = {k: v for k, v in org.items() if k not in ORG_READ_ONLY}
+            body['warp_auth_session_duration'] = duration
+            self.write(
+                f'set the Cloudflare One Client authentication session duration to {duration} (it had none)',
+                'PUT',
+                path,
+                body,
+            )
+        if private:
+            path = f'/accounts/{self.account}/devices/settings'
+            settings = self.api.call('GET', path) or {}
+            off = [k for k in ('gateway_proxy_enabled', 'gateway_udp_proxy_enabled') if not settings.get(k)]
+            if off:
+                names = ' and '.join('TCP' if k == 'gateway_proxy_enabled' else 'UDP' for k in off)
+                self.write(
+                    f'turn on the Gateway proxy for {names} (it was off)', 'PATCH', path, dict.fromkeys(off, True)
+                )
+
+    def enrollment(self, policy):
+        """Everyone agentlab's policy admits may enroll the Cloudflare One client: its policy is appended to the
+        account's device enrollment application, after every policy already there (kept, in their order)."""
+        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        app = next((a for a in apps if a.get('type') == 'warp'), None)
+        if app is None:
+            raise Needs(
+                'this account has no device enrollment settings yet: open Zero Trust → Team & Resources → Devices '
+                'once (it creates them), then run agentctl setup again'
+            )
+        have = app.get('policies') or []
+        if any(p.get('id') == policy for p in have):
+            return
+        top = max((p.get('precedence') or i + 1 for i, p in enumerate(have)), default=0)
+        body = {k: v for k, v in app.items() if k not in APP_READ_ONLY}
+        body['policies'] = [*have, {'id': policy, 'precedence': top + 1}]
+        self.write(
+            f'let {self.named("")} enroll the Cloudflare One client (added after the {len(have)} existing enrollment '
+            'policies)',
+            'PUT',
+            f'/accounts/{self.account}/access/apps/{app["id"]}',
+            body,
+        )
+
+
+ORG_READ_ONLY = ('created_at', 'updated_at')
+APP_READ_ONLY = ('id', 'uid', 'aud', 'created_at', 'updated_at')
+
+
+GATEWAY_PROXY_FIX = (
+    'agentctl cloudflare setup turns the Gateway proxy on (with "Account · Zero Trust → Edit"); or turn on "Allow '
+    'Secure Web Gateway to proxy traffic" yourself under Zero Trust → Traffic policies → Traffic settings'
+)
+CLIENT_SESSION_FIX = (
+    'the account needs a Cloudflare One Client authentication session duration: agentlab sets it when the token has '
+    '"Account · Access: Organizations → Edit"; or set it yourself under Zero Trust → Access → Settings (newer '
+    'dashboards: Access controls → Access settings), e.g. 24h'
+)
+
+
+def refused(e, what):
+    """A change Cloudflare refused that a person must fix, as Needs with the fix; None for anything else."""
+    text = str(e)
+    if '12130' in text or 'allow_authenticate_via_warp cannot be set' in text:
+        return Needs(f'Cloudflare refused to {what}: {CLIENT_SESSION_FIX}. Then run agentctl setup again.')
+    if e.status in (401, 403):
+        key = permission_for(text)
+        add = f'add "{PERMISSIONS[key]}" to the token' if key else 'give the token the permission for it'
+        return Needs(
+            f'Cloudflare refused to {what} (HTTP {e.status}): {add} in the dashboard (its value stays the same), '
+            'then run agentctl setup again'
+        )
+    return None
+
+
+def permission_for(text):
+    """Which PERMISSIONS entry a refused call's path belongs to."""
+    for fragment, key in (
+        ('/zerotrust/routes', 'routes'),
+        ('/cfd_tunnel', 'tunnels'),
+        ('/dns_records', 'dns'),
+        ('/access/organizations', 'org'),
+        ('/identity_providers', 'idps'),
+        ('/access/', 'access'),
+        ('/devices/', 'devices'),
+    ):
+        if fragment in text:
+            return key
+    return ''
+
+
+# The token's own permission groups, when it may read them, prove the edits read probes can't: name fragments that
+# mean "may change" each area (generous on purpose: an unrecognised name never blocks, only a missing area does).
+EDIT_GROUPS = {
+    'tunnels': ('tunnel', 'connector', 'cloudflared'),
+    'dns': ('dns',),
+    'access': ('access: apps', 'access: policies', 'access: apps and policies'),
+    'routes': ('cloudflare one networks', 'networks', 'tunnel', 'zero trust'),
+}
+
+
+def own_permission_groups(api, account):
+    """The names of the token's permission groups, or None when the token may not read itself (the usual case)."""
+    for verify, read in (('/user/tokens/verify', '/user/tokens/{}'), (f'/accounts/{account}/tokens/verify', None)):
+        try:
+            token_id = (api.call('GET', verify) or {}).get('id')
+        except Failed:
+            continue
+        paths = [read.format(token_id)] if read else []
+        paths.append(f'/accounts/{account}/tokens/{token_id}')
+        for path in paths if token_id else []:
+            try:
+                me = api.call('GET', path) or {}
+            except Failed:
+                continue
+            return [
+                str(g.get('name', '')).lower()
+                for p in me.get('policies') or []
+                for g in p.get('permission_groups') or []
+            ]
+    return None
+
+
+def missing_edit_permissions(api, account, keys):
+    """Areas the token may read but provably not change (from its own permission list); [] when that list is
+    unreadable, which the ordering of setup's steps makes safe."""
+    groups = own_permission_groups(api, account)
+    if not groups:
+        return []
+    writes = [g for g in groups if 'write' in g or 'edit' in g]
+    return [k for k in keys if k in EDIT_GROUPS and not any(f in g for g in writes for f in EDIT_GROUPS[k])]
+
 
 def _rules(policy):
     return [sorted(json.dumps(r, sort_keys=True) for r in policy.get(k) or []) for k in ('include', 'require')]
@@ -427,28 +646,73 @@ def setup(cfg, plan, config_path, opener=None):
     if cfg['auth']['ingress'] != 'cloudflared' and cfg['auth']['mode'] != 'cloudflare-access':
         raise Failed(f'nothing to set up: auth.mode is {cfg["auth"]["mode"]} with {cfg["auth"]["ingress"]} ingress')
     s = Setup(cfg, api_for(cfg, opener), plan)
-    if cfg['auth']['ingress'] == 'cloudflared':
-        tunnel = s.tunnel()
-        if config.private_network(cfg):
-            s.private_ingress(tunnel)
-            s.hostname_routes(tunnel)
-            s.drop_public_dns(tunnel)
-        else:
-            s.ingress(tunnel)
-            s.dns(tunnel)
-        s.token(tunnel)
+    private, tunneled, access = (
+        config.private_network(cfg),
+        cfg['auth']['ingress'] == 'cloudflared',
+        cfg['auth']['mode'] == 'cloudflare-access',
+    )
+    gaps = s.preflight()
+    if gaps:
+        raise Needs(stuck_message(s, known_tunnel(s, tunneled), gaps))
+    try:
+        s.prerequisites()
+    except Needs as e:
+        raise Needs(stuck_message(s, known_tunnel(s, tunneled), [str(e)])) from None
+    tunnel = s.tunnel() if tunneled else ''
+    # Make before break: the new way in (routes or DNS, then the Access app) exists before the tunnel switches,
+    # and the old way's leftovers (public DNS, the pair hosts' Bypass app, or private routes) go last.
+    if tunneled:
+        (s.hostname_routes if private else s.dns)(tunnel)
     cf = cfg['cloudflare']
     found = {('cloudflare', 'account_id'): cf['account_id'], ('cloudflare', 'zone'): cf['zone']}
-    if cfg['auth']['mode'] == 'cloudflare-access':
-        access = cfg['auth']['cloudflare']
-        access['audience'] = s.access() or access['audience']
-        found[('auth.cloudflare', 'team')] = access['team']
-        found[('auth.cloudflare', 'audience')] = access['audience']
+    if access:
+        auth = cfg['auth']['cloudflare']
+        auth['audience'] = s.access() or auth['audience']
+        if private:
+            s.enrollment(s.people_policy())
+        found[('auth.cloudflare', 'team')] = auth['team']
+        found[('auth.cloudflare', 'audience')] = auth['audience']
+    if tunneled:
+        (s.private_ingress if private else s.ingress)(tunnel)
+        s.token(tunnel)
     s.remember(config_path, found)
-    private = config.private_network(cfg)
+    if access and (private or cfg['auth']['cloudflare']['require_warp']) and not pair_hosts(cfg):
+        s.drop_apps_bypass()  # a Bypass app left from a public setup would be a way around the client
+    if tunneled:
+        (s.drop_public_dns if private else lambda _t: s.drop_hostname_routes())(tunnel)
     where = 'private: Cloudflare One client only' if private else 'public sign-in page'
     names = signed_in_hosts(cfg) if private else hostnames(cfg)
     say(f'  Cloudflare: {", ".join(names)} -> tunnel {s.name} ({where}); {len(people(cfg))} people may sign in')
+
+
+def known_tunnel(s, tunneled):
+    try:
+        return s.find_tunnel() if tunneled else ''
+    except Failed:
+        return ''
+
+
+def stuck_message(s, tunnel, gaps):
+    """The preflight's gaps, and, when an earlier run left the tunnel switched without its way in finished, that
+    the agents are unreachable right now and what brings them back."""
+    msg = (
+        'before Cloudflare can be set up: '
+        + '; '.join(gaps)
+        + '. Edited tokens keep their value. Then run agentctl setup again.'
+    )
+    if not tunnel:
+        return msg
+    now = s.current_ingress(tunnel)
+    private = config.private_network(s.cfg)
+    if private and now == 'private':
+        return (
+            msg + ' Right now the agents are not reachable: an earlier run already switched the tunnel to private. The '
+            'next run finishes the private setup; to have the public sign-in page back meanwhile, set '
+            '[auth.cloudflare] network = "public" and run agentctl cloudflare setup.'
+        )
+    if now == 'public':
+        return msg + ' Nothing was changed: the current public sign-in page keeps working until then.'
+    return msg
 
 
 def sync_people(cfg, plan, opener=None):
@@ -481,11 +745,11 @@ PERMISSIONS = {
     'tunnels': 'Account · Cloudflare One Connector: cloudflared → Edit',
     'access': 'Account · Access: Apps and Policies → Edit (newer dashboards: Access: Apps → Edit, Access: Policies → Edit)',
     'idps': 'Account · Access: Identity Providers → Read',
-    'org': 'Account · Access: Organizations → Read',
+    'org': 'Account · Access: Organizations → Edit (sets the client session duration only while it has none)',
     'dns': 'Zone · DNS → Edit on the zone',
     # network = "private" (and require_warp): tunnel hostname routes, and the client settings doctor checks
     'routes': 'Account · Cloudflare One Networks → Edit (older dashboards: Cloudflare Tunnel → Edit)',
-    'devices': 'Account · Zero Trust → Read (→ Edit also lets agentlab create the Gateway posture check)',
+    'devices': 'Account · Zero Trust → Edit (turns on the Gateway proxy when it is off)',
 }
 
 
@@ -552,7 +816,7 @@ def client_only_checks(cfg, opener=None):
                 'gateway-proxy',
                 bool(settings.get('gateway_proxy_enabled')),
                 'Gateway proxy is on (the client sends web traffic through Gateway)',
-                'Zero Trust → Settings → Network → Firewall: turn on Proxy (TCP); private hostnames need it',
+                GATEWAY_PROXY_FIX,
                 'error' if private else 'warning',
             )
         )
@@ -561,11 +825,25 @@ def client_only_checks(cfg, opener=None):
             (
                 'gateway-proxy',
                 True,
-                "couldn't read the client settings with this token: check Zero Trust → Settings → Network → Proxy is on",
+                "couldn't read the client settings with this token: check the Gateway proxy is on (Zero Trust → "
+                'Traffic policies → Traffic settings)',
                 '',
                 'info',
             )
         )
+    try:
+        org = api.call('GET', f'/accounts/{account}/access/organizations') or {}
+        out.append(
+            (
+                'client-session',
+                bool(org.get('warp_auth_session_duration')),
+                'a Cloudflare One Client authentication session duration is set (client sessions can sign in)',
+                CLIENT_SESSION_FIX,
+                'error',
+            )
+        )
+    except Failed:
+        out.append(('client-session', True, f"couldn't read it: {CLIENT_SESSION_FIX}", '', 'info'))
     apps = api.call('GET', f'/accounts/{account}/access/apps') or []
     app = next((a for a in apps if a.get('name') == s.name), None)
     out.append(
@@ -628,6 +906,21 @@ def client_only_checks(cfg, opener=None):
                 'warning',
             )
         )
+    if private:
+        warp_app = next((a for a in apps if a.get('type') == 'warp'), None)
+        policies = api.call('GET', f'/accounts/{account}/access/policies') or []
+        ours = next((p.get('id') for p in policies if p.get('name') == s.name), None)
+        enrolled = bool(warp_app and ours and any(p.get('id') == ours for p in warp_app.get('policies') or []))
+        out.append(
+            (
+                'client-enrollment',
+                enrolled,
+                "agentlab's people may enroll the Cloudflare One client",
+                'agentctl cloudflare setup (adds its policy to device enrollment, keeping the others)',
+                'error',
+            )
+        )
+        out += enrollment_exposure(cfg, api, account, apps, s.name)
     if cfg['auth']['cloudflare']['require_warp']:
         policies = api.call('GET', f'/accounts/{account}/access/policies') or []
         people = next((p for p in policies if p.get('name') == s.name), {})
@@ -639,6 +932,73 @@ def client_only_checks(cfg, opener=None):
                 'the sign-in policy requires the Cloudflare One client (Gateway device check)',
                 'agentctl cloudflare setup',
                 'error',
+            )
+        )
+    return out
+
+
+def enrollment_exposure(cfg, api, account, apps, ours):
+    """Private mode lets everyone agentlab's policy admits enroll the Cloudflare One client. Read-only warnings about
+    what that could open elsewhere in the account: other apps that admit a whole allow_domains domain, and private
+    IP routes on other tunnels that no Access application covers. agentlab never changes any of them."""
+    out = []
+    domains = {d.lower() for d in cfg['auth']['allow_domains']}
+    if domains:
+        try:
+            policies = {p.get('id'): p for p in api.call('GET', f'/accounts/{account}/access/policies') or []}
+        except Failed:
+            policies = {}
+        open_apps = []
+        for app in apps:
+            if str(app.get('name', '')).startswith(ours) or app.get('type') == 'warp':
+                continue  # agentlab's own, and device enrollment (which admits them on purpose)
+            rules = [
+                r
+                for ref in app.get('policies') or []
+                for r in (policies.get(ref.get('id')) or ref).get('include') or []
+            ]
+            hit = sorted({r['email_domain']['domain'].lower() for r in rules if 'email_domain' in r} & domains)
+            if hit:
+                open_apps.append(f'{app.get("name")} admits everyone @{", @".join(hit)}')
+        if open_apps:
+            out.append(
+                (
+                    'enrollment-exposure',
+                    False,
+                    '; '.join(open_apps) + ': anyone who can enroll the Cloudflare One client (your allow_domains) '
+                    'could reach these too',
+                    'narrow those applications to the people who need them, or drop allow_domains and list owners; '
+                    'agentlab never changes other applications',
+                    'warning',
+                )
+            )
+    try:
+        routes = api.call('GET', f'/accounts/{account}/teamnet/routes?is_deleted=false') or []
+    except Failed:
+        return out
+    covered = [
+        ipaddress.ip_network(d['cidr'], strict=False)
+        for a in apps
+        for d in a.get('destinations') or []
+        if d.get('type') == 'private' and d.get('cidr')
+    ]
+    bare = []
+    for r in routes:
+        try:
+            net = ipaddress.ip_network(r.get('network', ''), strict=False)
+        except ValueError:
+            continue
+        if not any(net.version == c.version and net.subnet_of(c) for c in covered):
+            bare.append(f'{net} ({r.get("tunnel_name") or r.get("tunnel_id") or "a tunnel"})')
+    if bare:
+        out.append(
+            (
+                'uncovered-routes',
+                True,
+                'private routes with no Access application in front: ' + ', '.join(bare) + ' (enrolled client '
+                'devices reach them unless a Gateway network policy stops them)',
+                '',
+                'info',
             )
         )
     return out
