@@ -195,7 +195,9 @@ class Handler(BaseHTTPRequestHandler):
                 'text/plain',
                 b'',
                 [
-                    ('Location', safe_path(nxt)),
+                    # absolute: Traefik's forwardAuth resolves a relative Location against the gate's own
+                    # address, which sent people to http://gate:8080/
+                    ('Location', f'https://{host}{safe_path(nxt)}'),
                     ('Set-Cookie', signin.session_cookie(email, host)),
                     ('Set-Cookie', oidc.cleared(oidc.PENDING)),
                 ],

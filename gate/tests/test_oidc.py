@@ -125,7 +125,8 @@ class Oidc(Base):
     def test_full_sign_in(self):
         (status, headers), _ = self.sign_in()
         self.assertEqual(status, 302)
-        self.assertEqual(headers['Location'], '/somewhere?x=1')
+        # absolute, never relative: Traefik's forwardAuth made a relative one point at http://gate:8080/
+        self.assertEqual(headers['Location'], f'https://{DOMAIN}/somewhere?x=1')
         cookies = headers.get_all('Set-Cookie')
         session = next(c for c in cookies if c.startswith(SESSION))
         for flag in ('HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/'):
@@ -213,7 +214,8 @@ class Oidc(Base):
         for start in ('//evil.com/x', '/\\evil.com'):
             (status, headers), _ = self.sign_in(start=start)
             self.assertEqual(status, 302)
-            self.assertTrue(headers['Location'].startswith('/') and 'evil' not in headers['Location'], start)
+            to = headers['Location']
+            self.assertTrue(to.startswith(f'https://{DOMAIN}/') and 'evil' not in to, start)
 
     def test_a_provider_on_another_site_is_refused(self):
         self.discovery['token_endpoint'] = 'https://evil.example.com/token'
