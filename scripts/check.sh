@@ -36,7 +36,7 @@ part_image() { py image 'pip install -q pytest==8.3.4 && python -m pytest -q -p 
 part_shell() {
   docker run --rm -v "$REPO:/repo:ro" -w /repo "$SHELLCHECK" sh -c \
     'shellcheck -x -P SCRIPTDIR host/install/*.sh scripts/check.sh hub/test.sh image/build.sh image/entrypoint.sh image/tools.sh image/adb \
-       image/agent-terminal image/android-emulator image/browser-idle-reaper image/chrome-on-demand image/throttle/shim \
+       image/agent-terminal image/agent-dockerd image/agent-dockerd-root image/android-emulator image/browser-idle-reaper image/chrome-on-demand image/throttle/shim \
      && echo "shellcheck ok"' || failed+=(shell)
 }
 part_hub() { "$REPO/hub/test.sh" check || failed+=(hub); }

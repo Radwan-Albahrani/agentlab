@@ -241,6 +241,7 @@ def agent(cfg, a):
             'AGENTLAB_PUBLISHED': ','.join(f'{t}={p}' for t, p in sorted(a['publish'].items())),
             'AGENTLAB_PUBLISHED_HUB': str(cfg['hub']['publish'] or ''),
             'AGENTLAB_AUTH_MODE': cfg['auth']['mode'],
+            'AGENTLAB_ISOLATION': cfg['isolation'],  # which Docker engine the agent runs (image: agent-dockerd)
             'ANDROID_ENABLED': '1' if cfg['android']['enabled'] else '',
             'ANDROID_SYSTEM_IMAGE': cfg['android']['system_image'],
             # agent-updater: how often to refresh T3/Claude/Codex, and what to do when T3 stays busy
@@ -263,8 +264,8 @@ def agent(cfg, a):
         # One-person setups only (config refuses otherwise): these ports skip the edge and the gate.
         svc['ports'] = [f'{cfg["publish_address"]}:{port}:{PORTS[tool]}' for tool, port in published.items()]
     if cfg['isolation'] == 'sysbox':
-        # Sysbox gives the container its own user namespace, so rootless Docker inside works under the default
-        # seccomp/AppArmor profiles; bind mounts are ID-mapped, so host files owned by uid 1000 stay uid 1000 inside.
+        # Sysbox gives the container its own user namespace, so the agent's root dockerd inside works under the
+        # default seccomp/AppArmor profiles; bind mounts are ID-mapped, so host files owned by uid 1000 stay uid 1000.
         svc['runtime'] = 'sysbox-runc'
     else:
         # Rootless Docker inside needs user namespaces: unconfined profiles + fuse/tun, but not privileged. One-person

@@ -29,20 +29,18 @@ RUN apt-get update \
  && curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
  && chmod 755 /usr/local/bin/ttyd
 
-# Each agent runs its own rootless Docker, so the container stays unprivileged and can't see the host's Docker.
-# The same engine works under both isolation modes:
-#  - sysbox: the container is already user-namespaced; rootless Docker nests one more user namespace inside it. Its
-#    sub-ids (agent:100000:65536 below) must fall inside the container's own id range, so the host's sysbox-mgr needs
-#    a range of at least 165536 ids per container (agentctl install sets --subid-range-size). To verify on a real
-#    Sysbox host: dockerd-rootless starts, `docker run hello-world` works, and slirp4netns gets /dev/net/tun.
-#  - unconfined (WSL, where Sysbox can't run): the compose file turns off seccomp/AppArmor and passes /dev/fuse and
-#    /dev/net/tun, which user namespaces need there.
+# Each agent has its own Docker engine, so the container stays unprivileged and can't see the host's Docker:
+#  - sysbox: a normal dockerd as root (agent-dockerd-root, via one sudo rule). Sysbox gives each container a fixed
+#    65536-id user namespace, too small to nest rootless Docker in, and container root is already an unprivileged
+#    host user there. The engine socket is root:docker 0660 and the agent is in group docker.
+#  - unconfined (WSL, where Sysbox can't run): rootless Docker; the compose file turns off seccomp/AppArmor and
+#    passes /dev/fuse and /dev/net/tun, which its user namespaces need.
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
       > /etc/apt/sources.list.d/docker.list \
  && apt-get update && apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras \
-      uidmap slirp4netns iptables iproute2 libcap2-bin \
+      uidmap slirp4netns iptables iproute2 libcap2-bin sudo \
  && rm -rf /var/lib/apt/lists/* \
  # setuid newuidmap drops CAP_SETFCAP, which newer kernels need ("write to uid_map failed"): use file caps.
  && chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap \
@@ -54,13 +52,17 @@ RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/* \
  && sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' /etc/ca-certificates.conf \
  && update-ca-certificates --fresh >/dev/null
 
-# The agent user, its rootless-Docker id ranges and runtime dir; Homebrew is installed into /home/linuxbrew by the
-# entrypoint. Every bash loads the agent env: login shells via profile.d, interactive via bash.bashrc, others BASH_ENV.
+# The agent user, its rootless-Docker id ranges, Docker group and sudo rule (sysbox), and runtime dir; Homebrew is
+# installed into /home/linuxbrew by the entrypoint. Every bash loads the agent env: login shells via profile.d,
+# interactive via bash.bashrc, others BASH_ENV.
 RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
  && install -d -o agent -g agent /workspace /home/linuxbrew /usr/local/lib/agent-shims \
  && install -d -m 755 /etc/agent /opt/android-sdk \
  && install -d -o agent -g agent -m 700 /run/user/1000 \
  && echo 'agent:100000:65536' > /etc/subuid && echo 'agent:100000:65536' > /etc/subgid \
+ && usermod -aG docker agent \
+ && echo 'agent ALL=(root) NOPASSWD: /usr/local/sbin/agent-dockerd-root ""' > /etc/sudoers.d/agent-dockerd \
+ && chmod 440 /etc/sudoers.d/agent-dockerd && visudo -cqf /etc/sudoers.d/agent-dockerd \
  && echo '. /etc/agent/load-env.sh' >> /etc/bash.bashrc \
  # The edge serves noVNC under /_agentlab/browser/ (prefix stripped): its websocket path must say so.
  && printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&resize=scale&path=_agentlab/browser/websockify">' \
@@ -68,7 +70,8 @@ RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
 
 COPY --chmod=755 entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY --chmod=755 agent-config agent-terminal agent-janitor browser-idle-reaper browser-mcp-lazy chrome-on-demand \
-     docker-on-demand android-emulator adb companion agent-updater /usr/local/bin/
+     docker-on-demand agent-dockerd android-emulator adb companion agent-updater /usr/local/bin/
+COPY --chmod=755 agent-dockerd-root /usr/local/sbin/
 COPY --chmod=644 profile.sh /etc/profile.d/zz-agent.sh
 COPY --chmod=644 playwright-mcp.json agent-instructions.md load-env.sh tools.sh /etc/agent/
 COPY --chmod=644 supervisord.conf /etc/agent-supervisord.conf
@@ -90,7 +93,7 @@ ENV HOME=/home/agent \
     DOCKER_HOST=unix:///run/user/1000/docker.sock \
     # docker.sock is the on-demand proxy; Ryuk (Testcontainers' cleaner) mounts the engine's own socket
     TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/dockerd.sock \
-    # rootless Docker publishes container ports on this container's localhost, not on 172.17.0.1
+    # the agent's engine publishes container ports on this container's localhost, rootless or not
     TESTCONTAINERS_HOST_OVERRIDE=localhost \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     ANDROID_SDK_ROOT=/opt/android-sdk \

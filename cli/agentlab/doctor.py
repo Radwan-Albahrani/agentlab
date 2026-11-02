@@ -42,6 +42,9 @@ def _private(path):
     return None
 
 
+OLD_SYSBOX_DROPIN = '/etc/systemd/system/sysbox-mgr.service.d/agentlab.conf'  # host/install/20-sysbox.sh removes it
+
+
 def _kernel():
     m = re.match(r'(\d+)\.(\d+)', platform.release())
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
@@ -88,16 +91,21 @@ def host(cfg, c):
     name, distro, version = _os_name()
     c.add(
         'os',
-        (distro == 'ubuntu' and version in ('22.04', '24.04')) or (distro == 'debian' and version == '12'),
+        (distro == 'ubuntu' and version in ('22.04', '24.04')) or (distro == 'debian' and version in ('12', '13')),
         f'OS: {name}',
-        'agentlab is tested on Ubuntu 24.04 (22.04 and Debian 12 should work)',
+        'agentlab is built on Ubuntu 24.04 and runs on Ubuntu 22.04 and Debian 12 and 13; others may work',
         'warning',
     )
+    # Sysbox needs ID-mapped mounts (Linux 5.12+); 5.19+ also ID-maps overlayfs image layers, which it uses when it can.
+    kernel = _kernel()
     c.add(
         'kernel',
-        _kernel() >= (5, 19) or cfg['isolation'] != 'sysbox',
+        kernel >= (5, 19) or cfg['isolation'] != 'sysbox',
         f'kernel {platform.release()}',
-        'Sysbox needs Linux 5.19+ for ID-mapped mounts: upgrade the kernel (Ubuntu 24.04 ships 6.8)',
+        'Sysbox works on Linux 5.12+ but runs best on 5.19+: upgrade the kernel'
+        if kernel >= (5, 12)
+        else 'Sysbox needs Linux 5.12+ (ID-mapped mounts): upgrade the kernel',
+        'warning' if kernel >= (5, 12) else 'error',
     )
     if cfg['isolation'] == 'sysbox' and _wsl():
         c.add(
@@ -175,14 +183,24 @@ def docker(cfg, c):
         'agentctl install',
     )
     if cfg['isolation'] == 'sysbox':
-        runtimes = run(['docker', 'info', '--format', '{{json .Runtimes}}'], check=False)[1]
-        c.add(
-            'sysbox',
-            'sysbox-runc' in runtimes and _active('sysbox'),
-            'Sysbox runtime',
-            'agentctl install (installs Sysbox CE and registers sysbox-runc)',
-        )
+        sysbox(c)
     return True
+
+
+def sysbox(c):
+    runtimes = run(['docker', 'info', '--format', '{{json .Runtimes}}'], check=False)[1]
+    c.add(
+        'sysbox',
+        'sysbox-runc' in runtimes and _active('sysbox'),
+        'Sysbox runtime',
+        'agentctl install (installs Sysbox CE and registers sysbox-runc)',
+    )
+    c.add(
+        'sysbox-dropin',
+        not os.path.exists(OLD_SYSBOX_DROPIN),
+        'no leftover sysbox-mgr options',
+        'agentctl install --only sysbox (removes an earlier agentlab drop-in that stops sysbox-mgr from starting)',
+    )
 
 
 def android(cfg, c):

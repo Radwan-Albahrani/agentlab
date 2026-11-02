@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""docker.sock on demand: the first client starts the rootless engine and is proxied to it; after
+"""docker.sock on demand: the first client starts the agent's engine and is proxied to it; after
 DOCKER_IDLE_MINUTES (15) with no clients or running containers the engine stops (saves ~200 MB per agent)."""
 
 import asyncio

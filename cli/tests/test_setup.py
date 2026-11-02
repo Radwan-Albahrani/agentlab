@@ -273,12 +273,15 @@ agent = "b"
 class FakeAccount:
     """A token that sees one zone (example.com) in one account, with Zero Trust team 'acme'."""
 
-    def __init__(self, idps=None):
+    def __init__(self, idps=None, org_status=0):
         self.calls = []
         self.idps = idps if idps is not None else [{'id': 'o1', 'name': 'One-time PIN'}]
+        self.org_status = org_status  # an HTTP status the organization read fails with (0 = it works)
 
     def call(self, method, path, body=None):
         self.calls.append((method, path))
+        if path.endswith('/access/organizations') and self.org_status:
+            raise cloudflare.ApiError(f'Cloudflare GET {path}: HTTP {self.org_status}', self.org_status)
         if path == '/zones?name=example.com':
             return [{'id': 'z1', 'name': 'example.com', 'account': {'id': 'acc1'}}]
         if path.startswith('/zones?name='):
@@ -313,6 +316,26 @@ owner = "b@example.com"
         cloudflare.discover(cfg, FakeAccount())
         self.assertEqual((cfg['cloudflare']['zone'], cfg['cloudflare']['account_id']), ('example.com', 'acc1'))
         self.assertEqual(cfg['auth']['cloudflare']['team'], 'acme')
+
+    def test_a_token_that_cant_read_the_organization_asks_for_the_permission_or_the_team(self):
+        cfg = self.cfg()
+        with self.assertRaises(util.Needs) as e:
+            cloudflare.discover(cfg, FakeAccount(org_status=403))
+        self.assertIn('Access: Organizations → Read', str(e.exception))
+        self.assertIn('[auth.cloudflare] team', str(e.exception))
+        self.assertEqual(e.exception.code, util.NEEDS)
+
+    def test_other_organization_errors_stay_errors(self):
+        with self.assertRaises(cloudflare.ApiError) as e:
+            cloudflare.discover(self.cfg(), FakeAccount(org_status=500))
+        self.assertEqual(e.exception.status, 500)
+
+    def test_a_set_team_never_reads_the_organization(self):
+        cfg = self.cfg('[auth.cloudflare]\nteam = "acme"')
+        api = FakeAccount(org_status=403)
+        cloudflare.discover(cfg, api)
+        self.assertFalse(any(p.endswith('/access/organizations') for _, p in api.calls))
+        self.assertEqual(cfg['cloudflare']['zone'], 'example.com')
 
     def test_explicit_keys_win(self):
         cfg = self.cfg('[auth.cloudflare]\nteam = "other"\n[cloudflare]\naccount_id = "acc9"\nzone = "example.com"')

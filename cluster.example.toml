@@ -23,7 +23,8 @@ allow_domains = []                 # optional, e.g. ["example.com"]: anyone with
 hub_port = 8443                    # tailscale mode: the hub's port on the machine's MagicDNS name
 
 [auth.cloudflare]                  # mode = "cloudflare-access"
-team = ""                          # your Zero Trust team (<team>.cloudflareaccess.com); setup finds and fills it in
+team = ""                          # your Zero Trust team (<team>.cloudflareaccess.com); setup finds it if the token
+                                   # may read the Access organization, else set it here
 audience = ""                      # the Access application's id for the gate; filled in by setup too
 login_method = ""                  # "" = every Zero Trust login method is offered (the one-time PIN by email needs no
                                    # setup); or pin one, e.g. "One-time PIN" or "Google Workspace" (one-click)
@@ -99,7 +100,8 @@ agent_tools_hours = 6              # each agent refreshes T3, Claude Code, Codex
 wait_hours = 4                     # a busy agent (a T3 turn running) is waited for this long, checked every 5 min
 on_busy = "defer"                  # still busy then: "defer" (next run) or "resume" (restart it, tell its chats to continue)
 
-[cloudflare]                       # only the API token is needed (agentctl secret set cloudflare-api)
+[cloudflare]                       # only the API token is needed (agentctl secret set cloudflare-api); its five
+                                   # permissions are listed in skills/agentlab/references/access.md
 account_id = ""                    # found from the token and the domain when empty
 zone = ""                          # found the same way
 api_token_file = ""                # "" = <data>/secrets/cloudflare-api.token

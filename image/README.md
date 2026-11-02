@@ -13,7 +13,7 @@ Build: `image/build.sh` (or `TAG=agentlab/agent:test image/build.sh`).
 | `accounts` | 8790 | Accounts page API: sign-ins, connectors, env vars, pairing links, the hub card, the companion bridge |
 | `terminal` | 7681 | ttyd web terminal (herdr, or `?arg=shell` for tmux), base path `/_agentlab/terminal` |
 | `xvfb` `vnc` `novnc` | 6080 | virtual display :99 and its noVNC viewer; on only while a browser or the emulator is open |
-| `docker-proxy` `dockerd` | | the agent's own rootless Docker, started on first use, stopped after 15 idle minutes |
+| `docker-proxy` `dockerd` | | the agent's own Docker engine (root under Sysbox via one sudo rule, rootless otherwise; see `agent-dockerd`), started on first use, stopped after 15 idle minutes |
 | `android` `android-reaper` | | Android emulator on demand (`android-emulator start`), stopped after 30 minutes without adb use |
 | `browser-reaper` | | closes an idle Chrome and turns the display off |
 | `updater` | | refreshes T3, Claude Code, Codex and the other CLIs every `AGENTLAB_UPDATE_HOURS` (`agent-updater`, installers in `tools.sh`); restarts only `t3`, only while idle (`AGENTLAB_UPDATE_WAIT_HOURS`, `AGENTLAB_ON_BUSY`) |
@@ -51,6 +51,7 @@ broker to admit them; the spool lives in `~/.local/state/agent-throttle/`.
 | `AGENT_OWNER` | compose | the owner's email, shown on the Accounts page |
 | `AGENTLAB_DOMAIN` | compose | the cluster domain people reach their agent on (links, pairing) |
 | `AGENTLAB_HUB_DOMAIN` | compose | the hub's domain (the Accounts page's `/` redirects there) |
+| `AGENTLAB_ISOLATION` | compose | `sysbox` or `unconfined`: which Docker engine the agent gets (see `agent-dockerd`) |
 | `AGENTLAB_AUTH_MODE` | compose | `cloudflare-access`, `tailscale`, `tinyauth` or `none` (app pairing depends on it) |
 | `AGENTLAB_PAIR_HOST` | compose | this agent's host for the T3 app (empty: app pairing unavailable, except on a tailnet) |
 | `AGENTLAB_COMPANIONS` | compose | comma list of this agent's companions (the `companion` command, the instructions) |

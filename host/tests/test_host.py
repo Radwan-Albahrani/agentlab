@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -469,6 +470,60 @@ class Janitor(unittest.TestCase):
             self.assertEqual(
                 janitor.idle_worktrees(root, now), ['/workspace/worktrees/app/done', '/workspace/worktrees/app/orphan']
             )
+
+
+class SysboxInstall(unittest.TestCase):
+    """The installer never adds sysbox-mgr options and removes the one drop-in an earlier version left (bad flag)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(dir=TMP)
+        self.calls = os.path.join(self.dir, 'calls')
+        bin_dir = os.path.join(self.dir, 'bin')
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, 'systemctl'), 'w') as f:
+            f.write(f'#!/bin/sh\necho "systemctl $*" >> {self.calls}\n')
+        os.chmod(os.path.join(bin_dir, 'systemctl'), 0o755)
+        self.path = f'{bin_dir}:{os.environ["PATH"]}'
+        self.dropin = os.path.join(self.dir, 'sysbox-mgr.service.d', 'agentlab.conf')
+        os.makedirs(os.path.dirname(self.dropin))
+
+    def remove(self):
+        script = os.path.join(HOST, 'install', '20-sysbox.sh')
+        out = subprocess.run(
+            ['bash', '-c', f'source "{script}" && remove_old_dropin "{self.dropin}"'],
+            capture_output=True,
+            text=True,
+            env={**os.environ, 'PATH': self.path},
+            check=True,
+        )
+        if not os.path.exists(self.calls):
+            return out.stdout, []
+        with open(self.calls) as f:
+            return out.stdout, f.read().splitlines()
+
+    def test_the_old_drop_in_goes_and_sysbox_restarts(self):
+        with open(self.dropin, 'w') as f:
+            f.write('[Service]\nExecStart=\nExecStart=/usr/bin/sysbox-mgr --subid-range-size 262144\n')
+        out, calls = self.remove()
+        self.assertFalse(os.path.exists(self.dropin))
+        self.assertFalse(os.path.exists(os.path.dirname(self.dropin)))
+        self.assertEqual(calls, ['systemctl daemon-reload', 'systemctl restart sysbox'])
+        self.assertIn('removed', out)
+
+    def test_someone_elses_drop_in_stays(self):
+        with open(self.dropin, 'w') as f:
+            f.write('[Service]\nEnvironment=FOO=1\n')
+        out, calls = self.remove()
+        self.assertTrue(os.path.exists(self.dropin))
+        self.assertEqual((out, calls), ('', []))
+
+    def test_nothing_to_do_without_one(self):
+        self.assertEqual(self.remove(), ('', []))
+
+    def test_no_sysbox_mgr_options_are_written(self):
+        with open(os.path.join(HOST, 'install', '20-sysbox.sh')) as f:
+            text = f.read()
+        self.assertNotIn('ExecStart=', text)
 
 
 if __name__ == '__main__':

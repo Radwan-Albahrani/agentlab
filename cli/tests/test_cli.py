@@ -234,6 +234,47 @@ google_client_secret_file = "/s/secret"
         self.assertIn('must be one of green, pink', problems(wrong))
 
 
+class DoctorHost(unittest.TestCase):
+    def host(self, os_name, kernel, isolation='sysbox'):
+        cfg = resolve(cluster__isolation=isolation)
+        checks = doctor.Checks()
+        with (
+            mock.patch.object(doctor, '_os_name', return_value=os_name),
+            mock.patch.object(doctor, '_kernel', return_value=kernel),
+            mock.patch.object(doctor, '_wsl', return_value=False),
+            mock.patch.object(doctor, '_mem_total', return_value=256 * 2**30),
+            mock.patch.object(doctor, 'storage'),
+        ):
+            doctor.host(cfg, checks)
+        return {c['id']: c for c in checks.items}
+
+    def test_debian_13_with_its_6_12_kernel_is_fine(self):
+        got = self.host(('Debian GNU/Linux 13 (trixie)', 'debian', '13'), (6, 12))
+        self.assertEqual((got['os']['ok'], got['kernel']['ok']), (True, True))
+
+    def test_kernel_thresholds_for_sysbox(self):
+        self.assertEqual(self.host(('Ubuntu', 'ubuntu', '24.04'), (5, 15))['kernel']['severity'], 'warning')
+        self.assertEqual(self.host(('Ubuntu', 'ubuntu', '24.04'), (5, 10))['kernel']['severity'], 'error')
+        self.assertTrue(self.host(('Ubuntu', 'ubuntu', '24.04'), (5, 10), 'unconfined')['kernel']['ok'])
+
+    def test_an_old_sysbox_drop_in_is_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            dropin = os.path.join(d, 'agentlab.conf')
+            with open(dropin, 'w') as f:
+                f.write('ExecStart=/usr/bin/sysbox-mgr --subid-range-size 262144\n')
+            checks = doctor.Checks()
+            with (
+                mock.patch.object(doctor, 'OLD_SYSBOX_DROPIN', dropin),
+                mock.patch.object(doctor, 'run', return_value=(0, '{"sysbox-runc":{}}')),
+                mock.patch.object(doctor, '_active', return_value=True),
+            ):
+                doctor.sysbox(checks)
+            got = {c['id']: c for c in checks.items}
+            self.assertTrue(got['sysbox']['ok'])
+            self.assertFalse(got['sysbox-dropin']['ok'])
+            self.assertIn('agentctl install --only sysbox', got['sysbox-dropin']['fix'])
+
+
 class Migration(unittest.TestCase):
     """What moving an existing one-person setup in needs: a published hub, extra stacks, adopting signed-in agents."""
 
@@ -461,6 +502,8 @@ class Rendering(unittest.TestCase):
         self.assertEqual(svc['networks']['agentlab-sara']['ipv4_address'], '10.207.1.2')
         self.assertEqual(svc['runtime'], 'sysbox-runc')
         self.assertNotIn('security_opt', svc)
+        self.assertNotIn('user', svc)  # starts as the agent; its root dockerd goes through one sudo rule
+        self.assertEqual(svc['environment']['AGENTLAB_ISOLATION'], 'sysbox')
         self.assertIn('/dev/net/tun', svc['devices'])
         self.assertEqual(body['networks'], {'agentlab-sara': {'external': True, 'name': 'agentlab-sara'}})
         for key in (
@@ -500,6 +543,7 @@ class Rendering(unittest.TestCase):
             svc = render.agent(cfg, cfg['agents'][0])['services']['agent']
         self.assertNotIn('runtime', svc)
         self.assertIn('seccomp=unconfined', svc['security_opt'])
+        self.assertEqual(svc['environment']['AGENTLAB_ISOLATION'], 'unconfined')
         self.assertIn('/dev/kvm', svc['devices'])
         self.assertEqual(svc['group_add'], ['993'])
         self.assertTrue(any(v.endswith(':/opt/android-sdk:ro') for v in svc['volumes']))
@@ -710,6 +754,8 @@ class FakeCloudflare:
             app = next(a for a in self.apps if a['id'] == path.rsplit('/', 1)[1])
             app.update(body)
             return app
+        if path.endswith('/access/organizations'):
+            return {'auth_domain': 'example.cloudflareaccess.com'}
         raise AssertionError(f'unexpected {method} {path}')
 
 
@@ -852,6 +898,16 @@ class Cloudflare(unittest.TestCase):
         self.fake.denied = {'/zones'}  # the zone isn't in the token's scope at all
         self.assertEqual([n for n, ok in self.probe() if not ok], ['dns'])
         self.assertEqual(self.fake.writes, [])  # every probe is a read
+
+    def test_the_organization_is_probed_only_when_the_team_is_unknown(self):
+        cfg = config.load(self.config_path)
+        cfg['auth']['cloudflare']['team'] = ''
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            self.assertIn(('org', True), cloudflare.probe_token(cfg))
+            self.fake.denied = {'/access/organizations'}
+            self.assertIn(('org', False), cloudflare.probe_token(cfg))
+        self.assertNotIn('org', dict(self.probe()))  # the test config names its team
+        self.assertIn('Organizations → Read', cloudflare.PERMISSIONS['org'])
 
     def test_refused_token_is_one_clear_problem(self):
         self.fake.token = 'bad'

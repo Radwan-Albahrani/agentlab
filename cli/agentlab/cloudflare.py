@@ -17,6 +17,16 @@ from . import render, tomledit
 from .util import Failed, Needs, say, write_if_changed
 
 API = 'https://api.cloudflare.com/client/v4'
+
+
+class ApiError(Failed):
+    """A refused Cloudflare call; `status` is the HTTP status (0 when Cloudflare answered 200 with success: false)."""
+
+    def __init__(self, message, status=0):
+        super().__init__(message)
+        self.status = status
+
+
 EDGE = 'http://127.0.0.1:8088'
 
 
@@ -40,9 +50,9 @@ class Api:
                 errors = json.loads(e.read()).get('errors')
             except ValueError:
                 errors = e.reason
-            raise Failed(f'Cloudflare {method} {path}: HTTP {e.code} {errors}') from None
+            raise ApiError(f'Cloudflare {method} {path}: HTTP {e.code} {errors}', e.code) from None
         if not reply.get('success', True):
-            raise Failed(f'Cloudflare {method} {path}: {reply.get("errors")}')
+            raise ApiError(f'Cloudflare {method} {path}: {reply.get("errors")}')
         return reply.get('result')
 
 
@@ -110,7 +120,16 @@ def discover(cfg, api):
     if cfg['auth']['ingress'] == 'cloudflared' and not cf['zone']:
         raise Failed(f'no zone this token can see serves {cfg["domain"]}: give the token DNS access to it')
     if cfg['auth']['mode'] == 'cloudflare-access' and not cfg['auth']['cloudflare']['team']:
-        org = api.call('GET', f'/accounts/{cf["account_id"]}/access/organizations') or {}
+        try:
+            org = api.call('GET', f'/accounts/{cf["account_id"]}/access/organizations') or {}
+        except ApiError as e:
+            if e.status not in (401, 403):
+                raise
+            raise Needs(
+                'the token may not read the Zero Trust organization, which tells agentlab your team name: add '
+                f'"{PERMISSIONS["org"]}" to the token in the dashboard (its value stays the same), or set '
+                '[auth.cloudflare] team = "<the part before .cloudflareaccess.com>" in cluster.toml'
+            ) from None
         team = str(org.get('auth_domain', '')).removesuffix('.cloudflareaccess.com')
         if not team:
             raise Failed(
@@ -337,10 +356,10 @@ def login_methods(cfg, providers):
 
 # What each part of `cloudflare setup` needs, named as the token page in the dashboard shows it.
 PERMISSIONS = {
-    'tunnels': 'Account · Cloudflare One Connector: cloudflared → Edit (older accounts: Argo Tunnel (Legacy) → Edit; '
-    'docs: Cloudflare Tunnel Write)',
-    'access': 'Account · Access: Apps and Policies → Edit',
-    'idps': 'Account · Access: Identity Providers → Read (older dashboards: Access: Organizations, Identity Providers, and Groups → Read)',
+    'tunnels': 'Account · Cloudflare One Connector: cloudflared → Edit',
+    'access': 'Account · Access: Apps and Policies → Edit (newer dashboards: Access: Apps → Edit, Access: Policies → Edit)',
+    'idps': 'Account · Access: Identity Providers → Read',
+    'org': 'Account · Access: Organizations → Read',
     'dns': 'Zone · DNS → Edit on the zone',
 }
 
@@ -369,6 +388,8 @@ def probe_token(cfg, opener=None):
     if cfg['auth']['mode'] == 'cloudflare-access':
         probes.append(('access', lambda: api.call('GET', f'/accounts/{account}/access/apps')))
         probes.append(('idps', lambda: api.call('GET', f'/accounts/{account}/access/identity_providers')))
+        if not cfg['auth']['cloudflare']['team']:  # only needed to find the team name
+            probes.append(('org', lambda: api.call('GET', f'/accounts/{account}/access/organizations')))
     out = []
     for name, probe in probes:
         try:

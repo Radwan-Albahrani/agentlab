@@ -81,9 +81,15 @@ application; being allowed here grants nothing anywhere else in the account.
 You'll need a Cloudflare API token. Create it under My Profile → API Tokens → Create Token → Custom, with:
 
 - Account · Cloudflare One Connector: cloudflared → Edit (older accounts call it Argo Tunnel (Legacy))
-- Account · Access: Apps and Policies → Edit
+- Account · Access: Apps and Policies → Edit (newer dashboards split it into Access: Apps and Access: Policies; give
+  both Edit)
 - Account · Access: Identity Providers → Read
+- Account · Access: Organizations → Read (how agentlab learns your team name; not needed if you set
+  `[auth.cloudflare] team` yourself)
 - Zone · DNS → Edit, limited to your domain's zone (the plain "DNS" row, not "Zone DNS Settings")
+
+Already made a token without one of these? Edit it in the dashboard and tick the missing row: the token keeps the same
+value, so nothing on the server changes.
 
 Save it on the server with `agentctl secret set cloudflare-api` (setup asks for it). From the token and your address,
 agentlab finds the account, the zone and your Zero Trust team by itself, then creates the tunnel, the DNS records for

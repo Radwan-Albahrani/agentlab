@@ -17,7 +17,7 @@ see theirs.
   (a CAPTCHA, 2FA, a login only they can do), say so and wait.
 
 ### You have your own Docker: run the app and its tests
-- `docker`, `docker compose` and Testcontainers work. This is a private rootless Docker engine
+- `docker`, `docker compose` and Testcontainers work. This is your own private Docker engine
   that starts on first use.
 - Published ports are on `localhost`, e.g. `docker compose up -d --wait`, then connect to
   `localhost:5432`.

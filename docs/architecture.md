@@ -31,7 +31,7 @@ This page is the contract every part of the repo follows. Change it first, then 
 | Part | Folder | What it is |
 |---|---|---|
 | `agentctl` | `cli/` | Python 3.12 stdlib CLI. Reads `cluster.toml`, installs host prerequisites, renders everything into `<data>/rendered/`, deploys (Coolify or plain Compose), manages agents, Cloudflare and backups. |
-| agent image | `image/` | One image for every agent: T3, Claude Code, Codex, gh, Chrome + noVNC, ttyd terminal, rootless Docker on demand, Android emulator on demand, the Accounts page, throttle shims. |
+| agent image | `image/` | One image for every agent: T3, Claude Code, Codex, gh, Chrome + noVNC, ttyd terminal, its own Docker on demand, Android emulator on demand, the Accounts page, throttle shims. |
 | gate | `gate/` | Traefik forwardAuth service: who the person is (per access mode), which agent they get, onboarding redirects. Also serves the `/_agentlab/` menu and picker. |
 | hub | `hub/` | Dashboard (Python backend + React web), scoped per person; admins also get the cluster screens. |
 | companion | `companion/` | Slack companion template + base image; each companion runs its agent's own checkout. |
@@ -99,8 +99,9 @@ naming an agent you may not open is ignored.
    address on `agentlab-<id>`, so an agent container is kept on that network only: Coolify connects every container
    it deploys to a network of its own, and `apply` (then the watcher, whenever Coolify recreates one) takes agents
    off it again.
-4. **Containers are isolated by Sysbox** (`isolation = "sysbox"`): the agent runs rootless Docker inside a
-   user-namespaced container with default seccomp/AppArmor. `isolation = "unconfined"` is the WSL fallback (Sysbox
+4. **Containers are isolated by Sysbox** (`isolation = "sysbox"`): each agent is a user-namespaced container with
+   default seccomp/AppArmor, and runs its own dockerd as container root (an unprivileged host user under Sysbox),
+   started through a single sudo rule; everything else runs as the agent user. `isolation = "unconfined"` is the WSL fallback (Sysbox
    can't run on WSL) and is meant for single-person setups only; `agentctl doctor` warns about it when more than one
    person has an agent.
 5. **Storage is a choice** (`[storage] mode`): `shared` (default) puts every agent under one pool, either a plain
@@ -285,7 +286,7 @@ Agent links are always `https://<domain>/...`; to open a specific agent, `https:
 
 | Container | Image | Networks | Notes |
 |---|---|---|---|
-| `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `AGENTLAB_PUBLISHED` (`t3=7101,...`) and `AGENTLAB_PUBLISHED_HUB`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
+| `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `AGENTLAB_ISOLATION`, `AGENTLAB_PUBLISHED` (`t3=7101,...`) and `AGENTLAB_PUBLISHED_HUB`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
 | `files-<id>` | `gtstef/filebrowser:2.0.2-stable` | `agentlab-<id>` | in the agent's stack; uid 1000; mounts only that agent's `workspace` (and `home` read-only); config in `<data>/files/<id>` (not on the agent's disk); noauth behind the gate; heavy folders excluded from indexing only |
 | `edge` | `traefik:v3.3.4` | `agentlab-edge` + every `agentlab-<id>` | entrypoints `ingress` :8088 (published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
 | `gate` | `agentlab/gate` | `agentlab-edge` + every `agentlab-<id>` | `:8080`, reads `cluster.json`; asks agents for onboarding state |

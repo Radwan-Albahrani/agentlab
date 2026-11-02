@@ -1,0 +1,11 @@
+#!/bin/bash
+# The agent's Docker engine (supervisord program "dockerd"), started on demand by docker-on-demand.
+#  - isolation "sysbox": a normal dockerd as root. Sysbox gives each container one fixed 65536-id user namespace, which
+#    rootless Docker can't nest inside; container root is already an unprivileged host user there, which is how Sysbox
+#    runs Docker inside. It starts through one sudo rule, so nothing else in the container runs as root.
+#  - otherwise (unconfined, e.g. WSL): rootless Docker, since root inside an unconfined container is real root.
+set -eu
+if [ "${AGENTLAB_ISOLATION:-}" = sysbox ]; then
+  exec sudo -n /usr/local/sbin/agent-dockerd-root
+fi
+exec dockerd-rootless.sh -H unix:///run/user/1000/dockerd.sock
