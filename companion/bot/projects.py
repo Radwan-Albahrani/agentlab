@@ -5,7 +5,7 @@ import os
 import re
 
 from . import t3
-from .config import DEFAULT_PROJECT
+from .config import default_project
 
 STOP_WORDS = """this that with from your have will what when where which their there about into fix fixed
 fixing check update updates add adding remove make need please could would should still also just more
@@ -106,7 +106,7 @@ def pick(ask, context='', channel=''):
     try:
         return _pick(ask, context, channel)
     except Exception as e:  # never block a task on the guess
-        return DEFAULT_PROJECT, f'default ({type(e).__name__})'
+        return default_project(), f'default ({type(e).__name__})'
 
 
 def hit(name, text):
@@ -143,5 +143,5 @@ def _pick(ask, context, channel):
             scores.append((score, len(p['root']), p['root'], why))  # ties: the more specific folder
     scores.sort(reverse=True)
     if not scores or scores[0][0] < 2:
-        return DEFAULT_PROJECT, 'default'
+        return default_project(), 'default'
     return scores[0][2], scores[0][3]

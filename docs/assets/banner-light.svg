@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7faf8"/>
+      <stop offset="1" stop-color="#e9f5ed"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3fcf78"/>
+      <stop offset="1" stop-color="#16884a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+
+  <g transform="translate(84 112)">
+    <text x="0" y="56" font-size="76" font-weight="700" fill="#0f1a14" letter-spacing="-2">agentlab</text>
+    <text x="2" y="112" font-size="27" fill="#4d5e55">Your team's AI coding agents, on your own server.</text>
+    <text x="2" y="150" font-size="27" fill="#4d5e55">A private one for everyone. Always on.</text>
+  </g>
+
+  <g transform="translate(780 70)">
+    <rect x="0" y="0" width="330" height="220" rx="22" fill="#ffffff" stroke="#d3e6da" stroke-width="2"/>
+    <g font-size="15" font-weight="600">
+      <rect x="22" y="24" width="134" height="76" rx="14" fill="#f3faf5" stroke="#1f9e57" stroke-width="2"/>
+      <circle cx="46" cy="50" r="9" fill="url(#leaf)"/>
+      <text x="62" y="55" fill="#0f1a14">sara</text>
+      <rect x="40" y="70" width="98" height="8" rx="4" fill="#e1ece5"/>
+      <rect x="40" y="70" width="64" height="8" rx="4" fill="#1f9e57"/>
+
+      <rect x="174" y="24" width="134" height="76" rx="14" fill="#f3faf5" stroke="#d3e6da" stroke-width="2"/>
+      <circle cx="198" cy="50" r="9" fill="#3d6ff0"/>
+      <text x="214" y="55" fill="#0f1a14">omar</text>
+      <rect x="192" y="70" width="98" height="8" rx="4" fill="#e1ece5"/>
+      <rect x="192" y="70" width="30" height="8" rx="4" fill="#3d6ff0"/>
+
+      <rect x="22" y="120" width="134" height="76" rx="14" fill="#f3faf5" stroke="#d3e6da" stroke-width="2"/>
+      <circle cx="46" cy="146" r="9" fill="#d98a14"/>
+      <text x="62" y="151" fill="#0f1a14">lina</text>
+      <rect x="40" y="166" width="98" height="8" rx="4" fill="#e1ece5"/>
+      <rect x="40" y="166" width="82" height="8" rx="4" fill="#d98a14"/>
+
+      <rect x="174" y="120" width="134" height="76" rx="14" fill="#fafdfb" stroke="#c4d8cb" stroke-width="2" stroke-dasharray="6 6"/>
+      <text x="241" y="164" fill="#7f9187" text-anchor="middle" font-weight="500">+ add someone</text>
+    </g>
+  </g>
+</svg>

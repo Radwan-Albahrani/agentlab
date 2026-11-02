@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentlab import apply, cloudflare, config, disks, doctor, main, render, tomledit, util, yaml
+from agentlab import apply, cloudflare, config, disks, doctor, init, main, privileges, render, tomledit, util, yaml
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EXAMPLE = os.path.join(REPO, 'cluster.example.toml')
@@ -204,6 +204,72 @@ class Migration(unittest.TestCase):
         self.assertEqual(hub['environment']['HUB_PUBLISHED_OWNER'], 'sara@example.com')
         self.assertEqual(json.loads(config.to_json(cfg))['hub']['publish'], 7190)
         self.assertIn('bypass the gate', problems(hub__publish=7190))
+
+    def test_phone_pushes_and_hub_state_on_the_host(self):
+        hub = render.core(resolve(self.ONE))['services']['hub']
+        self.assertNotIn('BARK_URL', hub['environment'])
+        self.assertIn('/srv/agentlab/hub/data:/data', hub['volumes'])
+        self.assertNotIn('volumes', render.core(resolve(self.ONE)))  # no named volume: state lives on the host
+        cfg = resolve(self.ONE, hub__bark_url='http://host.docker.internal:7192/', hub__bark_public='http://phone:7192')
+        hub = render.core(cfg)['services']['hub']
+        self.assertEqual(hub['environment']['BARK_URL'], 'http://host.docker.internal:7192')
+        self.assertEqual(hub['environment']['BARK_PUBLIC'], 'http://phone:7192')
+        self.assertIn('host.docker.internal:host-gateway', hub['extra_hosts'])
+        self.assertNotIn('bark', json.loads(config.to_json(cfg)))
+        self.assertIn('bark_url', problems(self.ONE, hub__bark_url='host:7192'))
+
+    def test_tailscale_hub_address_carries_its_port(self):
+        one = self.ONE.replace('hub_domain = "agents-hub.example.com"\n', '')
+        env = render.agent(resolve(one), resolve(one)['agents'][0])['services']['agent']['environment']
+        self.assertEqual(env['AGENTLAB_HUB_DOMAIN'], 'agents.example.com:8443')
+        env = render.agent(self.cfg_cf(), self.cfg_cf()['agents'][0])['services']['agent']['environment']
+        self.assertEqual(env['AGENTLAB_HUB_DOMAIN'], 'agents-hub.example.com')
+
+    @staticmethod
+    def cfg_cf():
+        return resolve()
+
+    def test_coolify_plain_text_answers(self):
+        from agentlab import coolify  # noqa: PLC0415
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with tempfile.NamedTemporaryFile('w', suffix='.token') as tok:
+            tok.write('t')
+            tok.flush()
+            cfg = resolve(coolify__token_file=tok.name)
+            api = coolify.Api(cfg, opener=lambda req, timeout: Reply(b'4.5.3'))
+            self.assertEqual(api.call('GET', '/version'), '4.5.3')
+            api = coolify.Api(cfg, opener=lambda req, timeout: Reply(b'[{"uuid": "u"}]'))
+            self.assertEqual(api.call('GET', '/servers'), [{'uuid': 'u'}])
+
+    def test_backups_keep_the_hub_state(self):
+        import datetime  # noqa: PLC0415
+        import sqlite3  # noqa: PLC0415
+
+        from agentlab import backup  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = resolve(self.ONE, cluster__data=d)
+            os.makedirs(f'{d}/hub/data')
+            with open(f'{d}/hub/data/notify.json', 'w') as f:
+                f.write('{"device": "x"}')
+            t3 = f'{cfg["agents"][0]["path"]}/home/.t3/userdata'
+            os.makedirs(t3)
+            sqlite3.connect(f'{t3}/statev2.sqlite').close()
+            toml = f'{d}/cluster.toml'
+            with open(toml, 'w') as f:
+                f.write(self.ONE)
+            with mock.patch('agentlab.backup.need_root'), mock.patch('agentlab.backup.say'):
+                out = backup.run(cfg, toml, today=datetime.date(2026, 1, 2))
+            self.assertEqual(out['databases'], 1)
+            with open(f'{d}/backups/2026-01-02/hub/notify.json') as f:
+                self.assertEqual(json.load(f), {'device': 'x'})
 
     def test_extra_stacks(self):
         cfg = resolve(hub__extra_stacks=['media-arr', 'media_jellyfin'])
@@ -801,6 +867,7 @@ class AgentNative(unittest.TestCase):
         util.OUT.messages.clear()
         util.OUT.changes.clear()
         util.OUT.warnings.clear()
+        self.enterContext(mock.patch('agentlab.privileges.elevate'))  # Privileges below tests it on its own
 
     def run_cli(self, *argv):
         out = io.StringIO()
@@ -851,6 +918,200 @@ class AgentNative(unittest.TestCase):
         self.assertTrue(any('deploy agentlab-core' in c for c in changes))
         self.assertFalse(all(c['done'] for c in data['changes']))
         self.assertEqual(os.listdir(self.tmp.name), ['cluster.toml'])
+
+
+class Privileges(unittest.TestCase):
+    """Host-changing commands re-run through sudo; agents (no TTY or --json) get exit 2 instead of a password prompt."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = f'{self.tmp.name}/cluster.toml'
+        with open(self.path, 'w') as f:
+            f.write(BASE.replace('data = "/srv/agentlab"', f'data = "{self.tmp.name}"'))
+        self.enterContext(mock.patch('agentlab.privileges.is_root', return_value=False))
+        self.enterContext(mock.patch('agentlab.privileges.docker_ok', return_value=True))
+        self.enterContext(mock.patch('agentlab.privileges.shutil.which', return_value='/usr/bin/sudo'))
+
+    def args(self, *argv):
+        return main.parser().parse_args(main.global_first(['--config', self.path, *argv]))
+
+    def test_which_commands_elevate(self):
+        root = [
+            ['init'],
+            ['install'],
+            ['apply'],
+            ['cloudflare', 'setup'],
+            ['backup', 'run'],
+            ['backup', 'restore', '2026-01-01', 'sara'],
+            ['agent', 'add', 'kim', 'kim@example.com'],
+            ['agent', 'remove', 'omar', '--yes'],
+            ['agent', 'adopt', 'sara'],
+            ['companion', 'create', 'sara', 'helper'],
+            ['companion', 'remove', 'sara', 'helper'],
+        ]
+        plain = [
+            ['doctor'],
+            ['status'],
+            ['config'],
+            ['config', 'edit'],
+            ['agent', 'list'],
+            ['backup', 'list'],
+            ['apply', '--dry-run'],
+            ['agent', 'add', 'kim', 'kim@example.com', '--dry-run'],
+            ['agent', 'remove', 'omar'],  # prints the plan and stops for --yes
+            ['images', 'build'],  # this user reaches Docker
+        ]
+        for argv in root:
+            self.assertTrue(privileges.needs_root(self.args(*argv)), argv)
+        for argv in plain:
+            self.assertFalse(privileges.needs_root(self.args(*argv)), argv)
+
+    def test_dry_run_and_images_elevate_when_they_cannot_read(self):
+        with mock.patch('agentlab.privileges.docker_ok', return_value=False):
+            self.assertTrue(privileges.needs_root(self.args('apply', '--dry-run')))
+            self.assertTrue(privileges.needs_root(self.args('images', 'build')))
+        with mock.patch('agentlab.privileges.readable', return_value=False):
+            self.assertTrue(privileges.needs_root(self.args('apply', '--dry-run')))
+            self.assertTrue(privileges.needs_root(self.args('agent', 'remove', 'omar')))
+
+    def test_root_and_read_only_never_call_sudo(self):
+        execv = mock.Mock()
+        privileges.elevate(self.args('doctor'), ['doctor'], execv=execv)
+        with mock.patch('agentlab.privileges.is_root', return_value=True):
+            privileges.elevate(self.args('apply'), ['apply'], execv=execv)
+        execv.assert_not_called()
+
+    def test_agents_get_exit_2_instead_of_a_password_prompt(self):
+        refused = mock.Mock(return_value=mock.Mock(returncode=1))
+        execv = mock.Mock()
+        with self.assertRaises(util.Needs) as cm:
+            privileges.elevate(self.args('--json', 'apply'), ['--json', 'apply'], execv=execv, probe=refused)
+        execv.assert_not_called()
+        self.assertEqual(cm.exception.result['needs'], 'sudo')
+        self.assertEqual(cm.exception.result['command'], 'sudo agentctl --json apply')
+        refused.assert_called_once_with(['sudo', '-n', 'true'], capture_output=True, check=False)
+
+    def test_needs_sudo_is_exit_2_json_from_main(self):
+        refused = mock.Mock(return_value=mock.Mock(returncode=1))
+        out = io.StringIO()
+        with (
+            mock.patch('agentlab.privileges.subprocess.run', refused),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = main.main(['--config', self.path, '--json', 'install'])
+        data = json.loads(out.getvalue())
+        self.assertEqual(code, util.NEEDS)
+        self.assertEqual(data['result']['needs'], 'sudo')
+        self.assertIn('sudo agentctl', data['error'])
+
+    def test_allowed_sudo_reruns_the_same_command_non_interactively(self):
+        allowed = mock.Mock(return_value=mock.Mock(returncode=0))
+        execv = mock.Mock()
+        privileges.elevate(self.args('--json', 'apply'), ['--json', 'apply'], execv=execv, probe=allowed)
+        sudo, cmd = execv.call_args.args
+        self.assertEqual(sudo, '/usr/bin/sudo')
+        self.assertEqual(cmd[:2], ['sudo', '-n'])
+        self.assertEqual(cmd[2:4], [sys.executable, privileges.SCRIPT])
+        self.assertEqual(cmd[-4:], ['--config', os.path.abspath(self.path), '--json', 'apply'])
+
+    def test_a_person_at_a_terminal_gets_the_password_prompt(self):
+        execv = mock.Mock()
+        with mock.patch('agentlab.privileges.sys.stdin.isatty', return_value=True):
+            privileges.elevate(self.args('apply'), ['apply'], execv=execv)
+        self.assertNotIn('-n', execv.call_args.args[1])
+
+
+class Group:
+    def __init__(self, gid, members):
+        self.gr_gid, self.gr_mem = gid, members
+
+
+class Init(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.etc = f'{self.tmp.name}/etc/agentlab/cluster.toml'
+        self.bin = f'{self.tmp.name}/bin'
+        self.groups = {}
+        self.ran = []
+        self.enterContext(mock.patch('agentlab.util.run', side_effect=self.fake_run))
+        self.enterContext(mock.patch('agentlab.init.os.chown'))
+        util.OUT.changes.clear()
+
+    def fake_run(self, cmd, **_):
+        self.ran.append(cmd)
+        if cmd[0] == 'groupadd':
+            self.groups[cmd[-1]] = Group(1234, [])
+        if cmd[0] == 'usermod':
+            self.groups[cmd[2]].gr_mem.append(cmd[3])
+        return 0, ''
+
+    def init(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return init.init(self.etc, bin_dir=self.bin, user='sam', get=self.groups.get)
+
+    def test_first_run_links_groups_and_starts_the_config(self):
+        result = self.init()
+        self.assertEqual(os.readlink(f'{self.bin}/agentctl'), os.path.join(init.REPO, 'cli', 'agentctl'))
+        self.assertIn(['groupadd', '--system', 'agentlab'], self.ran)
+        self.assertIn(['usermod', '-aG', 'agentlab', 'sam'], self.ran)
+        with open(self.etc) as f, open(EXAMPLE) as ex:
+            self.assertEqual(f.read(), ex.read())
+        self.assertEqual(os.stat(self.etc).st_mode & 0o777, 0o640)
+        self.assertIn('newgrp', result['next'][0])
+
+    def test_rerun_changes_nothing_and_never_overwrites_the_config(self):
+        self.init()
+        with open(self.etc, 'w') as f:
+            f.write('# mine\n')
+        self.ran.clear()
+        util.OUT.changes.clear()
+        result = self.init()
+        self.assertEqual(self.ran, [])
+        self.assertEqual(util.OUT.changes, [])
+        with open(self.etc) as f:
+            self.assertEqual(f.read(), '# mine\n')
+        self.assertNotIn('newgrp', result['next'][0])
+
+    def test_refuses_to_replace_a_real_file_on_path(self):
+        os.makedirs(self.bin)
+        with open(f'{self.bin}/agentctl', 'w') as f:
+            f.write('something else')
+        with self.assertRaises(util.Failed):
+            self.init()
+
+
+class ConfigEdit(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = f'{self.tmp.name}/cluster.toml'
+        self.good = BASE.replace('data = "/srv/agentlab"', f'data = "{self.tmp.name}"')
+        with open(self.path, 'w') as f:
+            f.write(self.good)
+
+    def edit(self, new_text):
+        def editor(cmd, **_):
+            with open(cmd[-1], 'w') as f:
+                f.write(new_text)
+            return 0, ''
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            return init.edit(self.path, editor='nano', runner=editor, isatty=True)
+
+    def test_valid_edit_is_checked(self):
+        self.assertEqual(self.edit(self.good)['agents'], 2)
+
+    def test_invalid_edit_fails_with_the_error(self):
+        with self.assertRaises(util.Failed) as cm:
+            self.edit(self.good + '\n[mystery]\n')
+        self.assertIn('unknown section [mystery]', str(cm.exception))
+
+    def test_needs_a_terminal(self):
+        with self.assertRaises(util.Needs):
+            init.edit(self.path, isatty=False)
 
 
 if __name__ == '__main__':

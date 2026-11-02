@@ -39,11 +39,15 @@ class Api:
         )
         try:
             with self.opener(req, timeout=60) as r:
-                return json.loads(r.read() or b'{}')
+                body = r.read() or b'{}'
         except urllib.error.HTTPError as e:
             raise Failed(f'Coolify {method} {path}: HTTP {e.code} {e.read()[:300]!r}') from None
         except urllib.error.URLError as e:
             raise Failed(f'Coolify unreachable at {self.base}: {e.reason}') from None
+        try:
+            return json.loads(body)
+        except ValueError:
+            return body.decode(errors='replace').strip()  # a few endpoints answer plain text (/version: "4.5.3")
 
     def server(self):
         servers = self.call('GET', '/servers')

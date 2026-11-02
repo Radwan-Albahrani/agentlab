@@ -12,7 +12,7 @@ Nobody but the owner can press any of these buttons. In dry-run mode nothing eve
 from datetime import datetime
 
 from . import jobs, prompts, slack, t3, tasks
-from .config import COMP, DEFAULT_PROJECT, NAME, OWNER, log, mode
+from .config import COMP, NAME, OWNER, default_project, log, mode
 from .state import key, lock, new_task, save, state
 from .text import first_sentence, quote
 
@@ -57,7 +57,7 @@ def start(p, what=''):
     owner = slack.name(OWNER)
     title = f'{who}: {first_sentence(asked, 60)}'
     tid, err = t3.start_thread(
-        DEFAULT_PROJECT, title, prompts.errand(who, how.replace('you', owner), owner, asked, lines, files, folder)
+        default_project(), title, prompts.errand(who, how.replace('you', owner), owner, asked, lines, files, folder)
     )
     if not tid:
         COMP.event('failed', f'Could not start errand for {who}', detail=err, ok=False)

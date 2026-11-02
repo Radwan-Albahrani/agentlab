@@ -10,7 +10,7 @@ import socket
 import urllib.request
 
 from . import cloudflare, config, coolify, deploy, disks, render
-from .util import run, size_bytes
+from .util import is_root, run, size_bytes
 
 
 class Checks:
@@ -27,6 +27,19 @@ class Checks:
                 'fix': '' if ok else fix,
             }
         )
+
+    def sudo(self, cid, what):
+        """A check this user may not see (root-only files, nft, the Docker socket): a warning, not a failure."""
+        self.add(cid, False, f'not checked without root: {what}', 'run `sudo agentctl doctor` to include it', 'warning')
+
+
+def _private(path):
+    """Whether a root-only file exists, or None when this user can't look (a 0700 secrets folder)."""
+    if not path:
+        return False
+    if is_root() or os.access(os.path.dirname(path) or '/', os.X_OK):
+        return os.path.isfile(path)
+    return None
 
 
 def _kernel():
@@ -98,7 +111,7 @@ def host(cfg, c):
         'isolation',
         cfg['isolation'] == 'sysbox' or len(owners) <= 1,
         f'isolation = {cfg["isolation"]} with {len(owners)} people',
-        'unconfined containers are not a boundary between people: sudo agentctl install (Sysbox), then set '
+        'unconfined containers are not a boundary between people: agentctl install (Sysbox), then set '
         'isolation = "sysbox"',
         'warning',
     )
@@ -142,21 +155,24 @@ def storage(cfg, c):
             f'storage-{u["name"]}',
             os.path.ismount(u['mount']),
             f'{u["name"]} disk mounted at {u["mount"]}',
-            'sudo agentctl apply',
+            'agentctl apply',
         )
 
 
 def docker(cfg, c):
     has = shutil.which('docker') is not None
     rc, version = run(['docker', 'version', '--format', '{{.Server.Version}}'], check=False) if has else (1, '')
-    c.add('docker', rc == 0, f'Docker {version}' if rc == 0 else 'Docker not running', 'sudo agentctl install')
+    if rc and has and not is_root() and 'permission denied' in version.lower():
+        c.sudo('docker', 'Docker and everything running in it (this user cannot reach the Docker socket)')
+        return False
+    c.add('docker', rc == 0, f'Docker {version}' if rc == 0 else 'Docker not running', 'agentctl install')
     if rc:
         return False
     c.add(
         'compose',
         run(['docker', 'compose', 'version'], check=False)[0] == 0,
         'docker compose plugin',
-        'sudo agentctl install',
+        'agentctl install',
     )
     if cfg['isolation'] == 'sysbox':
         runtimes = run(['docker', 'info', '--format', '{{json .Runtimes}}'], check=False)[1]
@@ -164,7 +180,7 @@ def docker(cfg, c):
             'sysbox',
             'sysbox-runc' in runtimes and _active('sysbox'),
             'Sysbox runtime',
-            'sudo agentctl install (installs Sysbox CE and registers sysbox-runc)',
+            'agentctl install (installs Sysbox CE and registers sysbox-runc)',
         )
     return True
 
@@ -172,15 +188,16 @@ def docker(cfg, c):
 def android(cfg, c):
     if not cfg['android']['enabled']:
         return
-    kvm = os.path.exists('/dev/kvm') and os.access('/dev/kvm', os.R_OK | os.W_OK)
+    # Root (and the agents, through the udev rule) is what has to use it, not whoever runs doctor.
+    kvm = os.path.exists('/dev/kvm') and (not is_root() or os.access('/dev/kvm', os.R_OK | os.W_OK))
     c.add(
         'kvm',
         kvm,
         '/dev/kvm usable',
-        'enable virtualization (VT-x/AMD-V) in the BIOS, then sudo agentctl install; or set [android] enabled = false',
+        'enable virtualization (VT-x/AMD-V) in the BIOS, then agentctl install; or set [android] enabled = false',
     )
     sdk = f'{cfg["data"]}/shared/android-sdk'
-    c.add('android-sdk', os.path.exists(f'{sdk}/emulator/emulator'), f'Android SDK in {sdk}', 'sudo agentctl install')
+    c.add('android-sdk', os.path.exists(f'{sdk}/emulator/emulator'), f'Android SDK in {sdk}', 'agentctl install')
 
 
 def _domain_levels(cfg, c):
@@ -210,7 +227,11 @@ def access(cfg, c):
         )
     if ingress == 'cloudflared':
         _cloudflared(cfg, c)
-    if (ingress == 'cloudflared' or mode == 'cloudflare-access') and cloudflare.configured(cfg):
+    token_file = cfg['cloudflare'].get('api_token_file')
+    if (ingress == 'cloudflared' or mode == 'cloudflare-access') and token_file and not os.access(token_file, os.R_OK):
+        if not is_root() and _private(token_file) is not False:
+            c.sudo('cloudflare-token', f'the Cloudflare API token in {token_file} and what it can reach')
+    elif (ingress == 'cloudflared' or mode == 'cloudflare-access') and cloudflare.configured(cfg):
         _cloudflare_token(cfg, c)
     if mode == 'cloudflare-access':
         _cloudflare_access(cfg, c)
@@ -224,7 +245,7 @@ def access(cfg, c):
                 f'public-{port}',
                 _listening(port),
                 f'edge listening on :{port}',
-                f"sudo agentctl apply; then open port {port} in the server's and the network's firewall",
+                f"agentctl apply; then open port {port} in the server's and the network's firewall",
             )
     published = [p for a in cfg['agents'] for p in a['publish'].values()] + [cfg['hub']['publish'] or None]
     if any(published):
@@ -240,12 +261,15 @@ def access(cfg, c):
 
 def _cloudflared(cfg, c):
     token = f'{cfg["data"]}/secrets/cloudflare-tunnel.token'
-    c.add('tunnel-token', os.path.isfile(token), f'tunnel token in {token}', 'sudo agentctl cloudflare setup')
+    if _private(token) is None:
+        c.sudo('tunnel-token', f'tunnel token in {token}')
+    else:
+        c.add('tunnel-token', _private(token), f'tunnel token in {token}', 'agentctl cloudflare setup')
     c.add(
         'cloudflared',
         bool(shutil.which('cloudflared')) and _active('cloudflared'),
         'cloudflared running',
-        'sudo agentctl install (after agentctl cloudflare setup wrote the token)',
+        'agentctl install (after agentctl cloudflare setup wrote the token)',
     )
     _domain_levels(cfg, c)
 
@@ -280,8 +304,12 @@ def _cloudflare_access(cfg, c):
         'audience',
         bool(cfg['auth']['cloudflare']['audience']),
         'auth.cloudflare.audience set',
-        'sudo agentctl cloudflare setup (fills it in); until then the gate refuses everyone',
+        'agentctl cloudflare setup (fills it in); until then the gate refuses everyone',
     )
+    token_file = cfg['cloudflare'].get('api_token_file')
+    if not is_root() and token_file and not os.access(token_file, os.R_OK) and _private(token_file) is not False:
+        c.sudo('cloudflare-api', 'the Access login methods (the API token is root-only)')
+        return
     if not cloudflare.configured(cfg):
         c.add(
             'cloudflare-api',
@@ -315,26 +343,47 @@ def _cloudflare_access(cfg, c):
     )
 
 
+WINDOWS_TAILSCALE = '/mnt/c/Program Files/Tailscale/tailscale.exe'
+
+
+def tailscale_cli():
+    """The tailscale command for this host: Linux's own, or on WSL the Windows one (Tailscale usually runs on
+    Windows there; with mirrored networking its `tailscale serve` reaches the edge on WSL's loopback)."""
+    if shutil.which('tailscale'):
+        return 'tailscale'
+    if _wsl() and os.access(WINDOWS_TAILSCALE, os.X_OK):
+        return WINDOWS_TAILSCALE
+    return None
+
+
 def _tailscale(cfg, c):
-    has = shutil.which('tailscale') is not None
-    rc, out = run(['tailscale', 'status', '--json'], check=False) if has else (1, '')
+    cli = tailscale_cli()
+    rc, out = run([cli, 'status', '--json'], check=False) if cli else (1, '')
     try:
-        state = json.loads(out).get('BackendState') if rc == 0 else ''
+        status = json.loads(out) if rc == 0 else {}
     except ValueError:
-        state = ''
+        status = {}
+    state = status.get('BackendState', '')
     c.add(
         'tailscale',
         state == 'Running',
-        f'Tailscale {state or "not running"}',
-        'install Tailscale and run: sudo tailscale up',
+        f'Tailscale {state or "not running"}' + (' (Windows)' if cli == WINDOWS_TAILSCALE else ''),
+        'install Tailscale and run: sudo tailscale up (on WSL: Tailscale for Windows, signed in)',
     )
-    serve = run(['tailscale', 'serve', 'status', '--json'], check=False)[1] if has else ''
+    if state == 'Running':
+        c.add(
+            'tailscale-https',
+            bool(status.get('CertDomains')),
+            'tailnet HTTPS certificates (tailscale serve needs them)',
+            'manual: Tailscale admin console → DNS → enable MagicDNS and HTTPS Certificates',
+        )
+    serve = run([cli, 'serve', 'status', '--json'], check=False)[1] if cli else ''
     want = [f'127.0.0.1:{render.INGRESS_PORT}', f'127.0.0.1:{render.HUB_INGRESS_PORT}']
     c.add(
         'tailscale-serve',
         all(w in serve for w in want),
         'tailscale serve maps 443 and the hub port to the edge',
-        'sudo agentctl install (step tailscale)',
+        'agentctl install (step tailscale)',
     )
     c.add(
         'tailscale-acl',
@@ -349,6 +398,9 @@ def _tailscale(cfg, c):
 def _tinyauth(cfg, c):
     t = cfg['tinyauth']
     for key in ('google_client_id_file', 'google_client_secret_file'):
+        if _private(t[key]) is None:
+            c.sudo(f'tinyauth-{key}', f'tinyauth {key.replace("_", " ")}: {t[key]}')
+            continue
         c.add(
             f'tinyauth-{key}',
             os.path.isfile(t[key]),
@@ -371,17 +423,20 @@ def _tinyauth(cfg, c):
             ok = True
     except Exception:  # any failure means not reachable
         ok = False
-    c.add('tinyauth', ok, f'tinyauth answers on {t["domain"]}', 'sudo agentctl apply; then agentctl status')
+    c.add('tinyauth', ok, f'tinyauth answers on {t["domain"]}', 'agentctl apply; then agentctl status')
 
 
 def coolify_check(cfg, c):
     if cfg['deploy'] != 'coolify':
         return
+    if _private(cfg['coolify']['token_file']) is None:
+        c.sudo('coolify', 'the Coolify API (its token is root-only)')
+        return
     try:
         coolify.Api(cfg).call('GET', '/version')
         c.add('coolify', True, 'Coolify API reachable')
     except Exception as e:  # reported as a check
-        c.add('coolify', False, f'Coolify: {e}', 'sudo agentctl install (installs Coolify and creates the token)')
+        c.add('coolify', False, f'Coolify: {e}', 'agentctl install (installs Coolify and creates the token)')
 
 
 def cluster(cfg, c):
@@ -390,7 +445,7 @@ def cluster(cfg, c):
             f'agent-dir-{a["id"]}',
             os.path.isdir(f'{a["path"]}/home'),
             f'{a["id"]} files at {a["path"]}',
-            'sudo agentctl apply',
+            'agentctl apply',
         )
     for unit in (
         'agentlab-disks.service',
@@ -400,25 +455,30 @@ def cluster(cfg, c):
         'agentlab-backup.timer',
         'agentlab-firewall.service',
     ):
-        c.add(f'unit-{unit}', _active(unit), f'{unit} active', 'sudo agentctl install')
-    c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'sudo agentctl install')
-    rules = run(['nft', 'list', 'set', 'inet', 'agentlab', 'agents'], check=False)[1]
-    missing = [a['id'] for a in cfg['agents'] if config.agent_ip(a) not in rules]
-    c.add(
-        'firewall',
-        not missing,
-        'firewall covers every agent' if not missing else f'firewall misses {", ".join(missing)}',
-        'sudo agentctl install && sudo agentctl apply',
-    )
+        c.add(f'unit-{unit}', _active(unit), f'{unit} active', 'agentctl install')
+    c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'agentctl install')
+    if not is_root():
+        c.sudo('firewall', 'the agentlab firewall table (nft needs root)')
+        rules = None
+    else:
+        rules = run(['nft', 'list', 'set', 'inet', 'agentlab', 'agents'], check=False)[1]
+    missing = [a['id'] for a in cfg['agents'] if rules is not None and config.agent_ip(a) not in rules]
+    if rules is not None:
+        c.add(
+            'firewall',
+            not missing,
+            'firewall covers every agent' if not missing else f'firewall misses {", ".join(missing)}',
+            'agentctl install && agentctl apply',
+        )
     for name, _, _ in deploy.networks(cfg):
         c.add(
             f'network-{name}',
             run(['docker', 'network', 'inspect', name], check=False)[0] == 0,
             f'network {name}',
-            'sudo agentctl apply',
+            'agentctl apply',
         )
     for stack in render.stacks(cfg):
-        c.add(f'stack-{stack}', bool(deploy.containers(cfg, stack)), f'{stack} running', 'sudo agentctl apply')
+        c.add(f'stack-{stack}', bool(deploy.containers(cfg, stack)), f'{stack} running', 'agentctl apply')
 
 
 def run_all(cfg):

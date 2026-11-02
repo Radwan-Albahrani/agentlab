@@ -38,7 +38,7 @@ SCHEMA = {  # section -> {key: default}; None = required
         'isolation': 'sysbox',
         'publish_address': '127.0.0.1',
     },
-    'hub': {'publish': 0, 'extra_stacks': []},
+    'hub': {'publish': 0, 'extra_stacks': [], 'bark_url': '', 'bark_public': ''},
     'auth': {
         'mode': 'cloudflare-access',
         'ingress': '',
@@ -71,7 +71,7 @@ COMPANION_KEYS = {'name', 'agent', 'kind', 'display_name'}
 COMPANION_KINDS = {'slack'}
 AGENT_COMPANION = re.compile(r'^[a-z0-9][a-z0-9-]{0,28}[a-z0-9]$')  # names agents pick: 2-30 characters
 PROJECT = re.compile(r'^[a-z0-9][a-z0-9_-]*$')  # what Docker Compose accepts as a project name
-PRIVATE = ('cloudflare', 'coolify', 'images', 'tinyauth', 'person_sizes', 'seed')
+PRIVATE = ('cloudflare', 'coolify', 'images', 'tinyauth', 'person_sizes', 'seed', 'bark')
 
 
 def load(path=DEFAULT_PATH):
@@ -306,6 +306,9 @@ def resolve(raw, previous=None, state=None):
     if not isinstance(extra, list) or not all(isinstance(x, str) and PROJECT.match(x) for x in extra):
         problems.append('[hub] extra_stacks must be a list of Compose project names (lowercase, digits, - and _)')
         hub['extra_stacks'] = []
+    for key in ('bark_url', 'bark_public'):
+        if hub[key] and not re.match(r'^https?://[^\s/]+', str(hub[key])):
+            problems.append(f'[hub] {key} must be an http(s) address, e.g. "http://host.docker.internal:7192"')
     limits = _section(raw.get('limits', {}), 'limits', problems)
     android = _section(raw.get('android', {}), 'android', problems)
     backups = _section(raw.get('backups', {}), 'backups', problems)
@@ -491,6 +494,7 @@ def resolve(raw, previous=None, state=None):
         'hub_domain': c['hub_domain'],
         'publish_address': str(c['publish_address']),
         'hub': {'publish': hub['publish'], 'extra_stacks': hub['extra_stacks']},
+        'bark': {'url': str(hub['bark_url']).rstrip('/'), 'public': str(hub['bark_public']).rstrip('/')},
         'coolify_domain': c['coolify_domain'],
         'pair_domain': c['pair_domain'],
         'agents': agents,

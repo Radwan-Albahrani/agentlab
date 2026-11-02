@@ -12,6 +12,7 @@ from . import host, store
 from .settings import COMPOSE_DIR
 
 PROJECT, SERVICE = 'com.docker.compose.project', 'com.docker.compose.service'
+COOLIFY_PROJECT = 'coolify.projectName'  # Coolify names each service's Compose project by its uuid; this is the name
 
 
 def stacks(root=COMPOSE_DIR):
@@ -36,8 +37,9 @@ def labels(text):
 
 
 def tag(ps_lines, stack_list, extra=()):
-    """Rows for containers.json from `docker ps --format '{{json .}}'` lines. `extra`: other Compose projects the
-    admin wants on the hub ([hub] extra_stacks), shown under their project name (restart and logs only)."""
+    """Rows for containers.json from `docker ps --format '{{json .}}'` lines. `extra`: other projects the admin wants
+    on the hub ([hub] extra_stacks), shown under that name (restart and logs only): a Compose project name, or a
+    Coolify project name (which groups several Coolify services, e.g. "media")."""
     by_project = {s['id']: s['id'] for s in stack_list} | {s['uuid']: s['id'] for s in stack_list if s['uuid']}
     by_project |= {p: p for p in extra}
     rows = []
@@ -48,6 +50,8 @@ def tag(ps_lines, stack_list, extra=()):
             continue
         name, lab = c.get('Names', ''), labels(c.get('Labels'))
         stack = by_project.get(lab.get(PROJECT, ''), '')
+        if not stack and lab.get(COOLIFY_PROJECT) in extra:
+            stack = lab[COOLIFY_PROJECT]
         if not stack and name.startswith('coolify'):
             stack = 'coolify'
         rows.append(

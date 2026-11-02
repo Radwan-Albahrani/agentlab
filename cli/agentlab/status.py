@@ -3,8 +3,8 @@
 import json
 import os
 
-from . import deploy, disks
-from .util import run, say
+from . import deploy, disks, privileges
+from .util import Needs, is_root, run, say
 
 
 def _state(cfg, stack, service):
@@ -80,6 +80,12 @@ def _state_of(cfg, service):
 
 
 def show(cfg):
+    if not is_root() and not privileges.docker_ok():
+        e = Needs(
+            'status reads Docker, which this user cannot reach: run `sudo agentctl status` (or join the docker group)'
+        )
+        e.result = {'needs': 'sudo', 'command': 'sudo agentctl status'}
+        raise e
     s = collect(cfg)
     say(f'{cfg["name"]}  https://{cfg["domain"]}  hub https://{cfg["hub_domain"]}')
     say('  core: ' + '  '.join(f'{k} {v}' for k, v in s['core'].items()))

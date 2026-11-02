@@ -17,7 +17,7 @@ import threading
 import time
 from datetime import UTC, datetime
 
-from .config import COMP, DEFAULT_PROJECT
+from .config import COMP, default_project
 
 lock = threading.RLock()
 _written = {}  # store key -> JSON last written
@@ -79,13 +79,13 @@ def parse_iso(iso):
     return datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp() if iso else 0.0
 
 
-def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, project=DEFAULT_PROJECT, **extra):
+def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, project=None, **extra):
     """Register a task that starts now and is followed by the poller."""
     now = now_iso()
     t = {
         'thread': thread,
         'title': title,
-        'project': project,
+        'project': project or default_project(),
         'channel': channel,
         'thread_ts': thread_ts,
         'outbox': outbox,
@@ -117,4 +117,4 @@ def prepare_for_start():
     for t in state['tasks'].values():
         if not t.get('active'):
             t['status_ts'] = None
-        t.setdefault('project', DEFAULT_PROJECT)
+        t.setdefault('project', default_project())
