@@ -56,9 +56,7 @@ Ways to reach it from anywhere: [access guide](skills/agentlab/references/access
 - 💾 About 12 GB RAM and 30–60 GB disk per busy agent
 - 🌐 Tailscale, Cloudflare, or a domain pointing at the machine
 
-> 🧪 **Beta:** running daily on a one-person Tailscale setup (WSL) and a team server on Cloudflare One (Debian, Sysbox,
-> Android, HTTPS sign-in). Google login has not had real-world use yet. `agentctl doctor` checks it all; please
-> report what breaks.
+> 🧪 **Beta:** in daily use with Tailscale and Cloudflare. Please report what breaks.
 
 ## 📚 More
 
