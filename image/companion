@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""companion: create, change and look after the companion bots that belong to this agent (their code is
+/workspace/companions/<name>, a git repo you may change).
+  companion list                                  your companions and how each is doing
+  companion status <name>                         its heartbeat and last error
+  companion logs <name> [-f]                      its log (-f follows it)
+  companion test <name>                           run the checkout's tests here, in a venv (before every restart)
+  companion restart|stop|start <name>             restart also picks up code and dependency changes
+  companion create <name> [--display-name X] [--kind slack]
+                                                  a new companion; prints its checkout and the Slack app link
+  companion remove <name>                         stop it and remove it from the cluster (its checkout stays)
+  companion secret <name> <key>                   set a secret; the value is read from stdin, never the command line
+  companion settings <name> <json | @file>        merge into its settings
+The agent has no network path to the host, so every change goes through files the host's watcher acts on:
+~/.agentlab/requests/<action>~companion~<name> (JSON payload), answered in ~/.agentlab/results/<...>.json."""
+
+import contextlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.parse
+
+HOME = os.path.expanduser('~')
+REQUESTS = os.path.join(HOME, '.agentlab', 'requests')
+RESULTS = os.path.join(HOME, '.agentlab', 'results')
+LIVE = os.path.join(HOME, '.agentlab', 'companions.json')  # written by the host's watcher: the current list
+CODE = '/workspace/companions'
+STATE = '/workspace/.companion'
+TEST_VENVS = os.path.join(HOME, '.cache', 'companion-test')
+WAIT_S = 60
+CREATE_WAIT_S = 300  # seeding the checkout and deploying a new stack takes longer
+NAME_RE = re.compile(r'^[a-z][a-z0-9-]{0,40}$')
+ACTIONS = ('restart', 'stop', 'start')
+KINDS = ('slack',)
+SECRETS = (
+    'owner.txt',
+    'bot-token.txt',
+    'app-token.txt',
+    'user-token.txt',
+    'github-app-id.txt',
+    'github-app-key.pem',
+    'work-tools.md',
+)
+SLACK_NEW_APP = 'https://api.slack.com/apps?new_app=1&manifest_yaml='
+
+
+def names():
+    """The live list from the watcher; before it has written one, the list the container started with."""
+    try:
+        with open(LIVE) as f:
+            live = json.load(f)
+    except (OSError, ValueError):
+        live = os.environ.get('AGENTLAB_COMPANIONS', '').split(',')
+    if isinstance(live, dict):
+        live = live.get('companions', live)
+    items = [x.get('name', '') if isinstance(x, dict) else str(x) for x in live]
+    return [n for n in (x.strip() for x in items) if NAME_RE.match(n)]
+
+
+def known(name):
+    if name not in names():
+        listed = ', '.join(names()) or 'none'
+        sys.exit(f'companion: no companion "{name}" here (yours: {listed}; `companion create` makes one)')
+    return name
+
+
+def read_status(name):
+    try:
+        with open(os.path.join(STATE, name, 'status.json')) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def ago(stamp):
+    """'42 s ago' for an epoch or ISO time; '' if unreadable."""
+    try:
+        at = float(stamp)
+    except (TypeError, ValueError):
+        try:
+            at = time.mktime(time.strptime(str(stamp)[:19], '%Y-%m-%dT%H:%M:%S')) - time.timezone
+        except ValueError:
+            return ''
+    s = int(time.time() - at)
+    return f'{s} s ago' if s < 120 else f'{s // 60} min ago' if s < 7200 else f'{s // 3600} h ago'
+
+
+def one_line(name):
+    st = read_status(name)
+    if not st:
+        return f'{name}: no status yet (not started, or it never got far enough to write one)'
+    beat = st.get('heartbeat') or st.get('at')
+    state = st.get('state') or ('running' if beat else 'unknown')
+    err = f' · last error: {st["error"]}' if st.get('error') else ''
+    return f'{name}: {state}' + (f' · heartbeat {ago(beat)}' if beat and ago(beat) else '') + err
+
+
+def cmd_list():
+    if not names():
+        print('No companions belong to this agent yet (`companion create <name>` makes one).')
+    for name in names():
+        print(one_line(name))
+
+
+def cmd_status(name):
+    print(one_line(name))
+    st = read_status(name)
+    if st:
+        print(json.dumps(st, indent=2))
+
+
+def cmd_logs(name, follow):
+    log = os.path.join(STATE, name, 'logs', 'companion.log')
+    if not os.path.exists(log) and not follow:
+        sys.exit(f'companion: no log yet at {log}')
+    os.execvp('tail', ['tail', '-n', '200', *(['-F'] if follow else []), log])
+
+
+def request(action, name, payload=None, wait_s=None):
+    """Hand one request to the host and wait for its answer -> the result dict (exits if none or not ok). The file is
+    0600 from the start: a secret's value sits in it until the watcher reads and deletes it."""
+    wait_s = wait_s or WAIT_S
+    base = f'{action}~companion~{name}'
+    result = os.path.join(RESULTS, base + '.json')
+    os.makedirs(REQUESTS, exist_ok=True)
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(result)
+    path = os.path.join(REQUESTS, base)
+    with open(os.open(path + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
+        json.dump(payload if payload is not None else {'at': time.time()}, f)
+    os.replace(path + '.tmp', path)  # the watcher never sees a half-written request
+    print(f'asked the host to {action} {name}; waiting up to {wait_s} s...', file=sys.stderr, flush=True)
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        try:
+            with open(result) as f:
+                out = json.load(f)
+        except (OSError, ValueError):
+            time.sleep(1)
+            continue
+        print(json.dumps(out, indent=2))
+        if out.get('ok') is False:
+            sys.exit(1)
+        return out
+    if action == 'secret':  # don't leave a value lying around for a watcher that isn't coming
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(path)
+        sys.exit(f'companion: no answer from the host after {wait_s} s; the secret was not set')
+    sys.exit(f'companion: no answer from the host after {wait_s} s (the request stays queued: {path})')
+
+
+def cmd_action(action, name):
+    request(action, name)
+    if action != 'stop':
+        print(f'check it came up: companion status {name}; companion logs {name}')
+
+
+def slack_link(name, display_name):
+    """'Create app from manifest' link with the checkout's manifest, renamed to the display name ('' if none)."""
+    try:
+        with open(os.path.join(CODE, name, 'slack-manifest.yml')) as f:
+            manifest = f.read()
+    except OSError:
+        return ''
+    manifest = '\n'.join(line for line in manifest.splitlines() if not line.lstrip().startswith('#'))
+    quoted = json.dumps(display_name)  # a JSON string is a valid YAML scalar
+    for key in ('name', 'display_name'):  # the first of each: display_information.name, bot_user.display_name
+        manifest = re.sub(rf'^(\s*{key}:).*$', lambda m: f'{m.group(1)} {quoted}', manifest, count=1, flags=re.M)
+    return SLACK_NEW_APP + urllib.parse.quote(manifest + '\n', safe='')
+
+
+def cmd_create(name, display_name, kind):
+    if not NAME_RE.match(name):
+        sys.exit('companion: names are lowercase letters, digits and dashes, starting with a letter (max 41)')
+    if name in names():
+        sys.exit(f'companion: "{name}" already exists here')
+    if kind not in KINDS:
+        sys.exit(f'companion: kind must be one of {", ".join(KINDS)}')
+    display_name = display_name or name.replace('-', ' ').title()
+    request('create', name, {'display_name': display_name, 'kind': kind}, wait_s=CREATE_WAIT_S)
+    print(f'\ncheckout: {CODE}/{name} (a git repo; read its README, "Changing your companion")')
+    if kind == 'slack' and (link := slack_link(name, display_name)):
+        print('\nSlack app: the person opens this link, picks their workspace and creates the app:')
+        print(link)
+    print(f'\nNext: set its secrets with `companion secret {name} <key>` (see the companion skill), then restart it.')
+
+
+def cmd_remove(name):
+    request('remove', name)
+    print(f'removed; its code stays in {CODE}/{name}')
+
+
+def cmd_secret(name, key):
+    if key not in SECRETS:
+        sys.exit(f'companion: unknown secret "{key}" (known: {", ".join(SECRETS)})')
+    if sys.stdin.isatty():
+        print(f'paste the value for {key}, then press Ctrl-D:', file=sys.stderr)
+    value = sys.stdin.read()
+    value = value if key.endswith('.pem') else value.strip()
+    if not value.strip():
+        sys.exit('companion: empty value; nothing was set')
+    request('secret', name, {'key': key, 'value': value})
+
+
+def cmd_settings(name, spec):
+    try:
+        if spec.startswith('@'):
+            with open(spec[1:]) as f:
+                settings = json.load(f)
+        else:
+            settings = json.loads(spec)
+    except (OSError, ValueError) as e:
+        sys.exit(f'companion: settings must be a JSON object or @file with one ({e})')
+    if not isinstance(settings, dict):
+        sys.exit('companion: settings must be a JSON object')
+    request('settings', name, settings)  # the watcher merges the object as it is
+
+
+def cmd_test(name):
+    """The checkout's tests, in a venv of its own (kept between runs) so they never touch the agent's Python."""
+    src = os.path.join(CODE, name)
+    if not os.path.isdir(src):
+        sys.exit(f'companion: no checkout at {src}')
+    venv = os.path.join(TEST_VENVS, name)
+    py = os.path.join(venv, 'bin', 'python')
+    if not os.path.exists(py):
+        subprocess.run([sys.executable, '-m', 'venv', venv], check=True)
+    # tests/requirements.txt pulls in ../requirements.txt; a checkout without it gets its runtime requirements.
+    reqs = next(
+        (r for r in ('tests/requirements.txt', 'requirements.txt') if os.path.exists(os.path.join(src, r))), None
+    )
+    install = [py, '-m', 'pip', 'install', '-q', '--disable-pip-version-check', 'pytest']
+    if reqs:
+        install += ['-r', os.path.join(src, reqs)]
+    if subprocess.run(install, check=False).returncode:
+        sys.exit('companion: installing the test dependencies failed')
+    env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
+    code = subprocess.run(
+        [py, '-m', 'pytest', '-q', '-p', 'no:cacheprovider'], cwd=src, env=env, check=False
+    ).returncode
+    sys.exit(code)
+
+
+def create_args(rest):
+    """[--display-name X] [--kind K] -> (display name, kind)."""
+    opts = {'--display-name': '', '--kind': 'slack'}
+    while rest:
+        flag, *rest = rest
+        if flag not in opts or not rest:
+            sys.exit(__doc__)
+        opts[flag], *rest = rest
+    return opts['--display-name'], opts['--kind']
+
+
+def main(argv):
+    match argv:
+        case ['list'] | []:
+            cmd_list()
+        case ['status', name]:
+            cmd_status(known(name))
+        case ['logs', name, *rest] if set(rest) <= {'-f'}:
+            cmd_logs(known(name), '-f' in rest)
+        case ['test', name]:
+            cmd_test(known(name))
+        case [action, name] if action in ACTIONS:
+            cmd_action(action, known(name))
+        case ['create', name, *rest]:
+            cmd_create(name, *create_args(rest))
+        case ['remove', name]:
+            cmd_remove(known(name))
+        case ['secret', name, key]:
+            cmd_secret(known(name), key)
+        case ['settings', name, spec]:
+            cmd_settings(known(name), spec)
+        case _:
+            print(__doc__, file=sys.stderr)
+            sys.exit(2)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -1,0 +1,397 @@
+"""Host services: the throttle's scheduling and spool, the watcher (storage, inventory, hub and agent requests) and
+the janitor's choice of worktrees. Agent-controlled folders get the symlink and secret-handling cases."""
+
+import json
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+HOST = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TMP = tempfile.mkdtemp(prefix='agentlab-host-test-')
+CLUSTER = os.path.join(TMP, 'rendered', 'cluster.json')
+os.environ['AGENTLAB_CLUSTER'] = CLUSTER
+sys.path.insert(0, HOST)
+os.makedirs(os.path.dirname(CLUSTER), exist_ok=True)
+
+
+def tearDownModule():  # the folder exists before the imports (they read AGENTLAB_CLUSTER), so no TemporaryDirectory
+    shutil.rmtree(TMP, ignore_errors=True)
+
+
+def write_cluster(**extra):
+    cfg = {
+        'data': TMP,
+        'agents': [
+            {'id': 'sara', 'owner': 'sara@example.com', 'path': f'{TMP}/agents/sara', 'storage_unit': ''},
+            {'id': 'omar', 'owner': 'omar@example.com', 'path': f'{TMP}/agents/omar', 'storage_unit': ''},
+        ],
+        'companions': [
+            {'name': 'helper', 'agent': 'sara'},
+            {'name': 'boss-bot', 'agent': 'omar'},
+        ],
+        'limits': {'throttle': {'io_psi_max': 25}},
+        **extra,
+    }
+    with open(CLUSTER, 'w') as f:
+        json.dump(cfg, f)
+    for a in cfg['agents']:
+        os.makedirs(f'{a["path"]}/home', exist_ok=True)
+    return cfg
+
+
+write_cluster()
+
+import janitor.__main__ as janitor  # noqa: E402
+import safe  # noqa: E402
+from throttle import scheduler, spool  # noqa: E402
+from throttle.peaks import Peaks  # noqa: E402
+from throttle.settings import ADMIT_GAP_S, DEFAULT_MB, IO_PRESSURE_MAX, PEAK_MARGIN, SWAP_CAP_MB  # noqa: E402
+from throttle.spool import Job  # noqa: E402
+from watch import agent_requests, inventory, page_requests, secrets, storage, store  # noqa: E402
+
+GB = 1024
+POOL = (2 * GB, 15 * GB)
+AGENTS = {'sara': (1 * GB, 12 * GB), 'omar': (1 * GB, 12 * GB)}
+ME = os.getuid()
+
+
+def job(agent, n, mb=2 * GB, *, admitted=False, known=True, signature=None, rss=0):
+    return Job(
+        agent,
+        f'{agent}-{n}',
+        signature or f'npm build {agent}-{n}',
+        'npm',
+        f'job {n}',
+        created=n,
+        seen=n,
+        admitted=admitted,
+        rss_mb=rss,
+        estimate_mb=mb,
+        known=known,
+    )
+
+
+def admit(jobs, pool=POOL, agents=AGENTS, swap=0, io=0, gap=ADMIT_GAP_S):
+    return [j.id for j in scheduler.to_admit(jobs, pool, agents, swap, io, gap)]
+
+
+class Throttle(unittest.TestCase):
+    def test_oldest_job_starts_when_idle(self):
+        self.assertEqual(admit([job('sara', 2), job('sara', 1)]), ['sara-1'])
+
+    def test_one_start_at_a_time_and_spaced(self):
+        running = job('omar', 0, admitted=True)
+        self.assertEqual(admit([running, job('sara', 1)], gap=ADMIT_GAP_S - 1), [])
+        self.assertEqual(admit([running, job('sara', 1)]), ['sara-1'])
+
+    def test_disk_pressure_and_swap_hold_new_jobs(self):
+        running = job('omar', 0, admitted=True)
+        self.assertEqual(admit([running, job('sara', 1)], io=IO_PRESSURE_MAX + 1), [])
+        self.assertEqual(admit([job('sara', 1)], io=IO_PRESSURE_MAX + 1), ['sara-1'])
+        self.assertEqual(admit([running, job('sara', 1)], swap=SWAP_CAP_MB + 1), [])
+
+    def test_pool_and_agent_room(self):
+        running = job('omar', 0, 6 * GB, admitted=True)
+        self.assertEqual(admit([running, job('sara', 1, 7 * GB)]), [])
+        self.assertEqual(admit([running, job('sara', 1, 4 * GB)]), ['sara-1'])
+        pool = (1 * GB, 30 * GB)
+        self.assertEqual(admit([running, job('omar', 1, 6 * GB), job('sara', 2, 6 * GB)], pool=pool), ['sara-2'])
+
+    def test_fair_and_learning_first(self):
+        running = [job('sara', 0, 1 * GB, admitted=True), job('sara', 1, 1 * GB, admitted=True)]
+        self.assertEqual(admit([*running, job('sara', 2, 1 * GB), job('omar', 3, 1 * GB)]), ['omar-3'])
+        first = job('sara', 0, 1 * GB, admitted=True, known=False, signature='npm build x')
+        self.assertEqual(admit([first, job('omar', 1, 1 * GB, known=False, signature='npm build x')]), [])
+
+    def test_peaks(self):
+        with (
+            tempfile.TemporaryDirectory() as d,
+            mock.patch('throttle.peaks.FILE', f'{d}/peaks.json'),
+            mock.patch('throttle.peaks.STATE_DIR', d),
+        ):
+            peaks = Peaks()
+            self.assertEqual(peaks.estimate_mb('x', 'npm'), DEFAULT_MB['npm'])
+            peaks.record('x', 1000)
+            peaks.record('x', 2000)
+            self.assertEqual(Peaks().estimate_mb('x', 'npm'), round(2000 * PEAK_MARGIN))
+
+    def test_spool_round_trip_from_cluster_json(self):
+        homes = spool.agents()
+        self.assertEqual(set(homes), {'sara', 'omar'})
+        home = homes['sara']
+        with mock.patch.object(safe, 'AGENT_UID', ME), mock.patch('safe.os.fchown'):
+            spool.prepare(home)
+            folder = os.path.join(home, spool.SPOOL)
+            with open(f'{folder}/j1.job', 'w') as f:
+                json.dump({'signature': 's', 'tool': 'npm', 'label': 'npm i', 'created': 1}, f)
+            (found,) = spool.jobs('sara', home)
+            self.assertFalse(found.admitted)
+            spool.admit(home, found)
+            self.assertTrue(spool.jobs('sara', home)[0].admitted)
+            with open(f'{folder}/j1.done', 'w') as f:
+                json.dump({'signature': 's', 'peak_mb': 900}, f)
+            self.assertEqual(spool.finished(home), [('s', 900)])
+
+    def test_spool_never_follows_an_agents_symlink(self):
+        home = f'{TMP}/agents/omar/home'
+        target = f'{TMP}/outside'
+        os.makedirs(target, exist_ok=True)
+        os.makedirs(f'{home}/.local/state', exist_ok=True)
+        link = f'{home}/{spool.SPOOL}'
+        if not os.path.islink(link):
+            os.symlink(target, link)
+        with self.assertRaises(OSError):
+            spool.prepare(home)
+        self.assertEqual(os.listdir(target), [])
+
+
+class SafeFolder(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = self.tmp.name
+        p = mock.patch('safe.os.fchown')
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_write_replaces_a_planted_symlink_instead_of_following_it(self):
+        secret = os.path.join(self.home, 'host-file')
+        with open(secret, 'w') as f:
+            f.write('keep')
+        with safe.Folder(self.home, 'box', create=True) as f:
+            os.symlink(secret, os.path.join(self.home, 'box', 'status.json'))
+            f.write('status.json', 'new')
+        with open(secret) as f:
+            self.assertEqual(f.read(), 'keep')
+        self.assertFalse(os.path.islink(os.path.join(self.home, 'box', 'status.json')))
+
+    def test_read_refuses_symlinks_and_fifos(self):
+        with safe.Folder(self.home, 'box', create=True) as f:
+            os.symlink('/etc/hostname', os.path.join(self.home, 'box', 'link'))
+            os.mkfifo(os.path.join(self.home, 'box', 'pipe'))
+            self.assertIsNone(f.read('link'))
+            self.assertIsNone(f.read('pipe'))
+
+    def test_dot_dot_is_refused(self):
+        with self.assertRaises(ValueError):
+            safe.Folder(self.home, '../x', create=True)
+
+
+class Watch(unittest.TestCase):
+    def test_alerts_fire_once_per_level_and_rearm(self):
+        self.assertIsNone(storage.alert_change(79, 0))
+        self.assertEqual(storage.alert_change(81, 0), ('up', 80))
+        self.assertIsNone(storage.alert_change(85, 80))
+        self.assertEqual(storage.alert_change(96, 80), ('up', 95))
+        self.assertEqual(storage.alert_change(74, 80), ('down', 0))
+
+    def test_breakdown(self):
+        du = '300000000\t/p/sara/workspace\n5000\t/p/sara/tmp\n900000000\t/p/sara'
+        rows = storage.breakdown(du, 'sara', '/p/sara')
+        self.assertEqual([(r['path'], r['bytes']) for r in rows], [('workspace', 300000000), ('', 900000000)])
+        self.assertEqual(rows[0]['agent'], 'sara')
+
+    def test_storage_check_reports_every_agent(self):
+        state = {}
+        storage.check(state)
+        usage = store.load('usage.json', {})
+        self.assertEqual(set(usage['disks']), {'sara', 'omar'})
+        self.assertIn('pool', usage)
+
+    def test_secret_fingerprints_cover_subfolders(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f'{d}/companions/helper')
+            os.makedirs(f'{d}/.versions')
+            for p in ('a.txt', 'companions/helper/bot-token.txt', '.versions/old'):
+                with open(f'{d}/{p}', 'w') as f:
+                    f.write(p)
+            self.assertEqual(sorted(secrets.fingerprints(d)), ['a.txt', 'companions/helper/bot-token.txt'])
+
+    def test_secret_rules_match_templates(self):
+        rules = {'companions/{companion}/bot-token.txt': {'apply': [{'restart': 'companion-{companion}'}]}}
+        _, names = secrets.match(rules, 'companions/helper/bot-token.txt')
+        self.assertEqual(names, {'companion': 'helper'})
+        self.assertEqual(secrets.match(rules, 'companions/helper/other.txt'), (None, {}))
+        self.assertEqual(secrets.changes({}, {'a': '1'}), ([], []))
+
+    def test_hub_requests(self):
+        self.assertEqual(page_requests.parse('deploy~agentlab-agent-sara'), ('deploy', 'agentlab-agent-sara'))
+        self.assertIsNone(page_requests.parse('format~disk'))
+        known = {'hub-1': {'stack': 'agentlab-core'}, 'coolify-db': {'stack': 'coolify'}}
+        self.assertTrue(page_requests.allowed('restart', 'hub-1', known))
+        self.assertFalse(page_requests.allowed('restart', 'coolify-db', known))
+        self.assertFalse(page_requests.allowed('deploy', '../../etc', known))
+        self.assertTrue(page_requests.allowed('deploy', 'agentlab-core', known))
+
+    def test_extra_stacks_are_shown_and_only_known_stacks_are_touched(self):
+        lines = [
+            json.dumps(
+                {
+                    'Names': 'jellyfin',
+                    'Labels': 'com.docker.compose.project=media-jellyfin,com.docker.compose.service=jellyfin',
+                    'State': 'running',
+                }
+            ),
+            json.dumps({'Names': 'stray', 'Labels': '', 'State': 'running'}),
+        ]
+        rows = {r['name']: r for r in inventory.tag(lines, [], ['media-jellyfin'])}
+        self.assertEqual(rows['jellyfin']['stack'], 'media-jellyfin')
+        self.assertTrue(page_requests.allowed('restart', 'jellyfin', rows))
+        self.assertFalse(page_requests.allowed('restart', 'stray', rows))
+        self.assertFalse(page_requests.allowed('deploy', 'media-jellyfin', rows))
+
+    def test_inventory_tags_by_compose_project(self):
+        stacks = [{'id': 'agentlab-core', 'uuid': ''}, {'id': 'agentlab-agent-sara', 'uuid': 'u1'}]
+        lines = [
+            json.dumps(
+                {
+                    'Names': 'edge-1',
+                    'Labels': 'com.docker.compose.project=agentlab-core,com.docker.compose.service=edge',
+                    'State': 'running',
+                }
+            ),
+            json.dumps(
+                {
+                    'Names': 'agent-u1',
+                    'Labels': 'com.docker.compose.project=u1,com.docker.compose.service=agent',
+                    'State': 'running',
+                }
+            ),
+            json.dumps({'Names': 'coolify-db', 'Labels': '', 'State': 'running'}),
+            'not json',
+        ]
+        rows = inventory.tag(lines, stacks)
+        self.assertEqual(
+            [(r['service'], r['stack']) for r in rows],
+            [('edge', 'agentlab-core'), ('agent', 'agentlab-agent-sara'), ('coolify-db', 'coolify')],
+        )
+
+
+class AgentRequests(unittest.TestCase):
+    """The agent's companion requests: scoped by path, payloads checked, secrets never echoed."""
+
+    def setUp(self):
+        self.cfg = write_cluster()
+        self.calls = []
+        for p in (
+            mock.patch('safe.os.fchown'),
+            mock.patch.object(agent_requests, 'DATA', TMP),
+            mock.patch.object(agent_requests.host, 'run', side_effect=self.fake_run),
+            mock.patch.object(agent_requests, 'companion_containers', return_value=['companion-x']),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        self.events = []
+        p = mock.patch.object(store, 'event', side_effect=lambda *a, **k: self.events.append(a))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def fake_run(self, cmd, timeout=120):
+        self.calls.append(cmd)
+        if 'agentctl' in ' '.join(cmd):
+            return 0, json.dumps({'ok': True, 'error': '', 'messages': ['done']})
+        return 0, ''
+
+    def request(self, agent, filename, payload=None):
+        folder = f'{TMP}/agents/{agent}/home/.agentlab/requests'
+        os.makedirs(folder, exist_ok=True)
+        with open(f'{folder}/{filename}', 'w') as f:
+            f.write(json.dumps(payload) if payload is not None else '')
+        agent_requests.handle_all()
+        self.assertFalse(os.path.exists(f'{folder}/{filename}'), 'request files are deleted')
+        with open(f'{TMP}/agents/{agent}/home/.agentlab/results/{filename}.json') as f:
+            return json.load(f)
+
+    def test_restart_own_companion(self):
+        result = self.request('sara', 'restart~companion~helper')
+        self.assertTrue(result['ok'], result)
+        self.assertIn(['docker', 'restart', 'companion-x'], self.calls)
+
+    def test_another_agents_companion_is_refused(self):
+        result = self.request('sara', 'restart~companion~boss-bot')
+        self.assertFalse(result['ok'])
+        self.assertEqual(self.calls, [])
+
+    def test_create_goes_through_agentctl_as_this_agent(self):
+        result = self.request('sara', 'create~companion~new-bot', {'display_name': 'New', 'kind': 'slack'})
+        self.assertTrue(result['ok'], result)
+        cmd = self.calls[-1]
+        self.assertEqual(cmd[cmd.index('create') : cmd.index('create') + 3], ['create', 'sara', 'new-bot'])
+
+    def test_create_needs_a_json_object(self):
+        folder = f'{TMP}/agents/sara/home/.agentlab/requests'
+        os.makedirs(folder, exist_ok=True)
+        with open(f'{folder}/create~companion~new-bot', 'w') as f:
+            f.write('not json')
+        agent_requests.handle_all()
+        with open(f'{TMP}/agents/sara/home/.agentlab/results/create~companion~new-bot.json') as f:
+            self.assertFalse(json.load(f)['ok'])
+
+    def test_secret_is_written_and_never_echoed(self):
+        value = 'xoxb-very-secret-value'
+        result = self.request('sara', 'secret~companion~helper', {'key': 'bot-token.txt', 'value': value})
+        self.assertTrue(result['ok'], result)
+        path = f'{TMP}/secrets/companions/helper/bot-token.txt'
+        with open(path) as f:
+            self.assertEqual(f.read().strip(), value)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertNotIn(value, json.dumps(result))
+        self.assertNotIn(value, json.dumps(self.events))
+
+    def test_unknown_secret_key_and_oversized_payload(self):
+        self.assertFalse(self.request('sara', 'secret~companion~helper', {'key': '../x', 'value': 'v'})['ok'])
+        big = {'key': 'owner.txt', 'value': 'x' * (agent_requests.MAX_PAYLOAD + 10)}
+        self.assertIn('larger than', self.request('sara', 'secret~companion~helper', big)['message'])
+
+    def test_settings_merge(self):
+        os.makedirs(f'{TMP}/companions/helper', exist_ok=True)
+        with open(f'{TMP}/companions/helper/settings.json', 'w') as f:
+            json.dump({'tone': 'calm', 'keep': 1}, f)
+        self.assertTrue(self.request('sara', 'settings~companion~helper', {'tone': 'brief'})['ok'])
+        with open(f'{TMP}/companions/helper/settings.json') as f:
+            self.assertEqual(json.load(f), {'tone': 'brief', 'keep': 1})
+
+    def test_bad_names_and_symlinks_are_ignored(self):
+        folder = f'{TMP}/agents/omar/home/.agentlab/requests'
+        os.makedirs(folder, exist_ok=True)
+        os.symlink('/etc/hostname', f'{folder}/restart~companion~boss-bot')
+        open(f'{folder}/rm~-rf~slash', 'w').close()
+        agent_requests.handle_all()
+        self.assertEqual(os.listdir(folder), [])
+        self.assertEqual(self.calls, [])
+
+
+class Janitor(unittest.TestCase):
+    def test_idle_worktrees(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(f'{root}/home/.t3/userdata')
+            db = sqlite3.connect(f'{root}/home/.t3/userdata/statev2.sqlite')
+            db.execute('create table orchestration_v2_projection_runs (thread_id, completed_at)')
+            db.execute('create table orchestration_v2_projection_threads (thread_id, payload_json, deleted_at)')
+            now = time.time()
+            old = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 20 * 3600))
+            fresh = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))
+            for tid, wt, settled in (('t1', 'done', old), ('t2', 'recent', fresh), ('t3', 'live', None)):
+                payload = {'worktreePath': f'/workspace/worktrees/app/{wt}', 'settledAt': settled}
+                db.execute(
+                    'insert into orchestration_v2_projection_threads values (?, ?, null)', (tid, json.dumps(payload))
+                )
+            db.execute("insert into orchestration_v2_projection_runs values ('t3', null)")
+            db.commit()
+            db.close()
+            for wt in ('done', 'recent', 'live', 'orphan'):
+                os.makedirs(f'{root}/workspace/worktrees/app/{wt}')
+                open(f'{root}/workspace/worktrees/app/{wt}/.git', 'w').close()
+            os.utime(f'{root}/workspace/worktrees/app/orphan', (now - 5 * 86400, now - 5 * 86400))
+            self.assertEqual(
+                janitor.idle_worktrees(root, now), ['/workspace/worktrees/app/done', '/workspace/worktrees/app/orphan']
+            )
+
+
+if __name__ == '__main__':
+    unittest.main()

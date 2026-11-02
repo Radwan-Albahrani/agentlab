@@ -1,0 +1,16 @@
+# Agents may answer the edge, gate, hub and their companions but never open connections to them, to each other or
+# to the host (rules: <data>/rendered/firewall/agentlab.nft, written by agentctl apply; see render.firewall).
+[Unit]
+Description=agentlab: agent firewall (nftables table agentlab)
+After=network-pre.target docker.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f @DATA@/rendered/firewall/agentlab.nft
+ExecReload=/usr/sbin/nft -f @DATA@/rendered/firewall/agentlab.nft
+ExecStop=/usr/sbin/nft delete table inet agentlab
+
+[Install]
+WantedBy=multi-user.target

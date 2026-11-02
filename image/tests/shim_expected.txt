@@ -1,0 +1,76 @@
+heavy npm install
+heavy npm i
+heavy npm ci
+heavy npm run build
+heavy npm run build:prod
+heavy npm run test
+heavy npm run test:unit
+heavy npm run lint
+heavy npm run check
+heavy npm run qa
+heavy npm run ci:check
+heavy npm run typecheck
+heavy npm run format
+light npm run dev
+light npm run start
+light npm run serve
+light npm run storybook
+light npm run test:watch
+heavy npm test
+light npm --version
+light npm view react
+heavy npm exec vitest
+light npm
+heavy pnpm
+heavy pnpm install
+heavy pnpm build
+light pnpm dev
+heavy pnpm lint
+heavy yarn
+heavy yarn build
+light yarn start
+heavy bun
+heavy bun install
+heavy bun run qa
+heavy bun run check
+heavy bun test
+heavy bun lint
+heavy bun scripts/build.ts
+light bun --version
+heavy npx tsc
+heavy npx vitest run
+light npx prettier --check .
+heavy npx eslint .
+heavy bunx turbo run build
+heavy pnpx next build
+heavy tsc --noEmit
+light tsc --watch
+heavy vitest
+heavy jest
+heavy playwright test
+heavy mocha
+heavy turbo run lint
+heavy nx run-many -t build
+heavy webpack
+heavy next build
+light next dev
+heavy vite build
+light vite
+heavy cargo build
+heavy cargo test
+light cargo run
+light cargo fmt
+heavy go build ./...
+heavy go test ./...
+light go run main.go
+heavy make
+heavy gradle build
+heavy mvn package
+heavy pip install requests
+light pip list
+heavy pip3 install -r requirements.txt
+heavy pytest
+heavy docker build .
+heavy docker compose build
+light docker compose up
+light docker ps

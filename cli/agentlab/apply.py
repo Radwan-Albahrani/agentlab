@@ -1,0 +1,295 @@
+"""`agentctl apply`: make the server match cluster.toml. Every step reads the current state first and changes only
+what differs, so running it again is always safe; --dry-run prints the same steps without touching anything."""
+
+import datetime
+import json
+import os
+import secrets
+import shutil
+import subprocess
+
+from . import cloudflare, deploy, disks, images, render
+from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
+
+FIREWALL_UNIT = 'agentlab-firewall.service'
+
+
+def folders(cfg, plan):
+    data = cfg['data']
+    private = [f'{data}/secrets', f'{data}/secrets/agents', f'{data}/secrets/companions', f'{data}/backups']
+    shared = [
+        f'{data}/disks',
+        f'{data}/shared',
+        f'{data}/rendered',
+        f'{data}/hub',
+        f'{data}/hub/watch',
+        f'{data}/hub/watch/requests',
+        f'{data}/companions',
+    ]
+    if cfg['storage']['mode'] == 'per-person':
+        shared.append(f'{data}/people')
+    elif not cfg['storage']['pool_size']:
+        shared.append(f'{data}/agents')
+    if cfg['auth']['ingress'] == 'public':
+        private.append(f'{data}/edge-acme')
+    for path in private + shared:
+        if not os.path.isdir(path):
+            mode = 0o700 if path in private else 0o755
+            plan.do(f'create {path}', fn=lambda p=path, m=mode: os.makedirs(p, mode=m, exist_ok=True))
+
+
+def _owned(path, mode=0o755):
+    """Create path and any missing parents owned by the agent user (Docker would otherwise create them as root)."""
+    missing = []
+    while not os.path.exists(path):
+        missing.append(path)
+        path = os.path.dirname(path)
+    for p in reversed(missing):
+        os.mkdir(p, mode)
+        os.chown(p, AGENT_UID, AGENT_UID)
+
+
+def _secret_file(path, text, owner=None):
+    with open(path + '.tmp', 'w') as f:
+        f.write(text)
+    os.chmod(path + '.tmp', 0o600)
+    if owner is not None:
+        os.chown(path + '.tmp', owner, owner)
+    os.replace(path + '.tmp', path)
+
+
+def _read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def agent_files(cfg, a, plan):
+    env = f'{cfg["data"]}/secrets/agents/{a["id"]}.env'
+    if not os.path.exists(env):
+        plan.do(f"create {env} (the agent's extra environment, empty)", fn=lambda: _secret_file(env, ''))
+    userdata = f'{a["path"]}/home/.t3/userdata'  # the hub mounts it: it must not be created by Docker as root
+    if not os.path.isdir(userdata):
+        plan.do(f'create {userdata}', fn=lambda: _owned(userdata))
+    folder, text = render.files_data(cfg, a), render.files_config(cfg)
+    if differs(f'{folder}/config.yaml', text):
+        plan.do(f'write the file manager config for {a["id"]}', fn=lambda: _files_config(folder, text))
+
+
+def _files_config(folder, text):
+    """File Browser runs as the agent user and keeps its database next to its config."""
+    _owned(folder)
+    _secret_file(f'{folder}/config.yaml', text, AGENT_UID)
+
+
+def core_files(cfg, plan):
+    if cfg['auth']['mode'] == 'tinyauth':
+        path = f'{cfg["data"]}/secrets/tinyauth-secret.txt'
+        if not os.path.exists(path):
+            plan.do('create the tinyauth session secret', fn=lambda: _secret_file(path, secrets.token_hex(16)))
+
+
+def upstream_ref():
+    """Where a seeded companion checkout points `upstream`: the repo's own remote if it has one, else this checkout."""
+    rc, out = run(['git', '-C', REPO, 'remote', 'get-url', 'origin'], check=False)
+    return out.strip() if rc == 0 and out.strip() else REPO
+
+
+def version():
+    rc, out = run(['git', '-C', REPO, 'describe', '--tags', '--always', '--dirty'], check=False)
+    return out.strip() if rc == 0 and out.strip() else 'dev'
+
+
+def seed_companion(cfg, comp):
+    """Copy the repo's companion/ into the agent's workspace as a git repo, once. After that it is the agent's code:
+    agentctl never touches it again (the agent changes it, commits, and restarts the companion)."""
+    dst = render.companion_checkout(cfg, comp)
+    shutil.copytree(
+        os.path.join(REPO, 'companion'),
+        dst,
+        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache', 'node_modules'),
+    )
+    git = ['git', '-C', dst, '-c', 'user.name=agentlab', '-c', 'user.email=agentlab@localhost']
+    for cmd in (
+        ['init', '-q', '-b', 'main'],
+        ['add', '-A'],
+        ['commit', '-q', '-m', f'from agentlab {version()}'],
+        ['remote', 'add', 'upstream', upstream_ref()],
+    ):
+        run([*git, *cmd])
+    subprocess.run(['chown', '-R', f'{AGENT_UID}:{AGENT_UID}', dst], check=True)
+
+
+def companion_files(cfg, comp, plan):
+    """Its data and secrets folders, the folders it mounts from its agent, its code checkout and the bridge key."""
+    data, name = cfg['data'], comp['name']
+    a = next(x for x in cfg['agents'] if x['id'] == comp['agent'])
+    home = a['path']
+    for path in (
+        f'{data}/companions/{name}',
+        f'{home}/home/.t3/userdata',
+        f'{home}/workspace/.companion',
+        f'{home}/home/.config/agent',
+        f'{home}/workspace/companions',
+        f'{data}/secrets/companions/{name}',
+    ):
+        if not os.path.isdir(path):
+            mode = 0o700 if '/secrets/' in path else 0o755
+            plan.do(f'create {path}', fn=lambda p=path, m=mode: _owned(p, m))
+    checkout = render.companion_checkout(cfg, comp)
+    if not os.path.exists(checkout):
+        plan.do(
+            f'seed {checkout} from companion/ (once; the agent owns it after)', fn=lambda: seed_companion(cfg, comp)
+        )
+    mine = f'{data}/secrets/companions/{name}/agent-key.txt'
+    theirs = f'{home}/home/.config/agent/bridge-key'
+    if not os.path.exists(mine) or not os.path.exists(theirs):
+
+        def make():
+            key = _read(mine) or _read(theirs) or secrets.token_hex(32)
+            _secret_file(mine, key, AGENT_UID)
+            _secret_file(theirs, key, AGENT_UID)
+
+        plan.do(f'create the bridge key shared by {name} and agent {a["id"]}', fn=make)
+
+
+def companion_list(cfg, a):
+    return [{k: c[k] for k in ('name', 'display_name', 'kind')} for c in cfg['companions'] if c['agent'] == a['id']]
+
+
+def companion_lists(cfg, plan):
+    """~/.agentlab/companions.json in each agent: the live list the in-container `companion` command reads."""
+    for a in cfg['agents']:
+        home = f'{a["path"]}/home'
+        text = json.dumps(companion_list(cfg, a), indent=1) + '\n'
+        if not os.path.isdir(home):
+            continue
+        try:
+            with agent_folder(home, '.agentlab', create=False) as f:
+                if f.read('companions.json') == text:
+                    continue
+        except FileNotFoundError:
+            pass
+        plan.do(f'update the companion list of {a["id"]}', fn=lambda h=home, t=text: _write_list(h, t))
+
+
+def _write_list(home, text):
+    with agent_folder(home, '.agentlab') as f:
+        f.write('companions.json', text)
+
+
+SIGN_INS = (('.claude', '.credentials.json'), ('.codex', 'auth.json'))  # Claude Code / Codex login files
+
+
+def signed_in(home):
+    """A Claude Code or Codex login in this home. ~/.claude.json alone isn't one: Claude Code writes it on install;
+    it counts only once it names the signed-in account (oauthAccount)."""
+    for folder, name in SIGN_INS:
+        try:
+            with agent_folder(home, folder, create=False) as f:
+                if f.read(name) is not None:
+                    return True
+        except FileNotFoundError:
+            pass
+    with agent_folder(home, '', create=False) as f:
+        text = f.read('.claude.json', limit=16 * 2**20)
+    try:
+        return bool(text and json.loads(text).get('oauthAccount'))
+    except (ValueError, AttributeError):
+        return False
+
+
+def adopt(a, plan):
+    """Mark an agent that already has AI sign-ins (data from before agentlab) as onboarded, so the gate doesn't
+    send its person through onboarding again. False when there is nothing to adopt."""
+    home = f'{a["path"]}/home'
+    if not os.path.isdir(home) or not signed_in(home):
+        return False
+    try:
+        with agent_folder(home, '.config/agent', create=False) as f:
+            if f.exists('onboarded'):
+                return False
+    except FileNotFoundError:
+        pass
+
+    def write():
+        with agent_folder(home, '.config/agent') as f:
+            f.write(
+                'onboarded',
+                json.dumps(
+                    {'at': datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds'), 'by': 'agentctl adopt'}
+                )
+                + '\n',
+            )
+
+    plan.do(f'mark {a["id"]} onboarded (it already has AI sign-ins)', fn=write)
+    return True
+
+
+def write_rendered(cfg, plan):
+    changed = []
+    for rel, text in render.all_files(cfg).items():
+        path = os.path.join(cfg['data'], 'rendered', rel)
+        if differs(path, text):
+            changed.append(rel)
+            plan.do(f'write rendered/{rel}', fn=lambda p=path, t=text: write_if_changed(p, t))
+    return changed
+
+
+def firewall(cfg, changed, plan):
+    """Load the rendered rules when they changed; the unit loads them at boot."""
+    if 'firewall/agentlab.nft' not in changed:
+        return
+    if run(['systemctl', 'is-enabled', FIREWALL_UNIT], check=False)[0] == 0:
+        plan.do('load the firewall rules', ['systemctl', 'restart', FIREWALL_UNIT])
+    else:
+        warn(f'{FIREWALL_UNIT} is not installed: agents are not firewalled until `agentctl install` runs')
+
+
+def apply(cfg, config_path, dry=False, stack=None, build=False, only=None):
+    """`only`: deploy just these stacks (a companion an agent created or removed), everything else is still
+    rendered but left running as it is."""
+    plan = Plan(dry)
+    if not dry:
+        need_root('agentctl apply')
+    say(f'{"Dry run: " if dry else ""}{cfg["name"]}: {len(cfg["agents"])} agents, deploy via {cfg["deploy"]}')
+    # Agents whose files were there before agentlab's first apply (a migration) are adopted, not onboarded again.
+    first = not os.path.exists(os.path.join(cfg['data'], 'rendered', 'cluster.json'))
+    existing = [a for a in cfg['agents'] if os.path.isdir(f'{a["path"]}/home')] if first else []
+    folders(cfg, plan)
+    if not dry and cfg.get('seed'):
+        from .companions import persist_seeds  # noqa: PLC0415 - companions imports this module
+
+        persist_seeds(cfg)
+    disks.ensure(cfg, plan)
+    for a in cfg['agents']:
+        agent_files(cfg, a, plan)
+    core_files(cfg, plan)
+    for comp in cfg['companions']:
+        companion_files(cfg, comp, plan)
+    deploy.ensure_networks(cfg, plan)
+    files = render.all_files(cfg)
+    changed = write_rendered(cfg, plan)
+    firewall(cfg, changed, plan)
+    images.ensure(cfg, plan, force=build)
+    for name, (kind, key) in render.stacks(cfg).items():
+        if only is not None and name not in only:
+            continue
+        if dry:
+            text = files[f'compose/{name}/docker-compose.yml']
+            if name == stack or deploy.changed_since_deploy(cfg, name, text) or not deploy.containers(cfg, name):
+                plan.do(f'deploy {name}')
+            continue
+        deploy.deploy(cfg, name, kind, key, plan, force=name == stack)
+    companion_lists(cfg, plan)
+    for a in existing:
+        adopt(a, plan)
+    deploy.connect(cfg, plan)
+    if only is None:
+        cloudflare.sync_people(cfg, plan)
+        deploy.orphans(cfg)
+    if not dry and not changed:
+        say('  rendered files unchanged')
+    return {'changed_files': changed}

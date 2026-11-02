@@ -1,0 +1,432 @@
+"""`agentctl doctor`: every check the cluster depends on, each with the exact fix (a command, or the manual step).
+Errors exit 1; warnings are things that work but shouldn't stay that way."""
+
+import json
+import os
+import platform
+import re
+import shutil
+import socket
+import urllib.request
+
+from . import cloudflare, config, coolify, deploy, disks, render
+from .util import run, size_bytes
+
+
+class Checks:
+    def __init__(self):
+        self.items = []
+
+    def add(self, cid, ok, message, fix='', severity='error'):
+        self.items.append(
+            {
+                'id': cid,
+                'ok': bool(ok),
+                'severity': 'ok' if ok else severity,
+                'message': message,
+                'fix': '' if ok else fix,
+            }
+        )
+
+
+def _kernel():
+    m = re.match(r'(\d+)\.(\d+)', platform.release())
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+def _wsl():
+    try:
+        with open('/proc/version') as f:
+            return 'microsoft' in f.read().lower()
+    except OSError:
+        return False
+
+
+def _os_name():
+    try:
+        with open('/etc/os-release') as f:
+            info = dict(line.rstrip().split('=', 1) for line in f if '=' in line)
+        return info.get('PRETTY_NAME', '').strip('"'), info.get('ID', ''), info.get('VERSION_ID', '').strip('"')
+    except OSError:
+        return 'unknown', '', ''
+
+
+def _mem_total():
+    try:
+        with open('/proc/meminfo') as f:
+            return int(next(line for line in f if line.startswith('MemTotal')).split()[1]) * 1024
+    except (OSError, StopIteration):
+        return 0
+
+
+def _active(unit):
+    return run(['systemctl', 'is-active', unit], check=False)[1] == 'active'
+
+
+def _listening(port, host='127.0.0.1'):
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def host(cfg, c):
+    name, distro, version = _os_name()
+    c.add(
+        'os',
+        (distro == 'ubuntu' and version in ('22.04', '24.04')) or (distro == 'debian' and version == '12'),
+        f'OS: {name}',
+        'agentlab is tested on Ubuntu 24.04 (22.04 and Debian 12 should work)',
+        'warning',
+    )
+    c.add(
+        'kernel',
+        _kernel() >= (5, 19) or cfg['isolation'] != 'sysbox',
+        f'kernel {platform.release()}',
+        'Sysbox needs Linux 5.19+ for ID-mapped mounts: upgrade the kernel (Ubuntu 24.04 ships 6.8)',
+    )
+    if cfg['isolation'] == 'sysbox' and _wsl():
+        c.add(
+            'wsl-sysbox',
+            False,
+            'isolation = "sysbox" on WSL',
+            'Sysbox cannot run on WSL: set isolation = "unconfined" (one person only) or use a Linux server',
+        )
+    owners = {a['owner'] for a in cfg['agents']}
+    c.add(
+        'isolation',
+        cfg['isolation'] == 'sysbox' or len(owners) <= 1,
+        f'isolation = {cfg["isolation"]} with {len(owners)} people',
+        'unconfined containers are not a boundary between people: sudo agentctl install (Sysbox), then set '
+        'isolation = "sysbox"',
+        'warning',
+    )
+    total = _mem_total()
+    want = size_bytes(cfg['limits']['total_memory'])
+    c.add(
+        'memory',
+        total and want <= total * 0.85,
+        f'limits.total_memory {cfg["limits"]["total_memory"]} of {total / 2**30:.0f} GiB RAM',
+        'leave at least 15% of RAM to the host: lower [limits] total_memory',
+        'error' if want > total else 'warning',
+    )
+    storage(cfg, c)
+
+
+def storage(cfg, c):
+    root = cfg['data'] if os.path.isdir(cfg['data']) else '/'
+    fs = disks.usage(root)
+    units = disks.units(cfg)
+    if not units:
+        c.add(
+            'storage',
+            True,
+            f'shared folder {cfg["data"]}/agents on the host disk: '
+            f'{fs["used"] / 2**30:.0f} of {fs["size"] / 2**30:.0f} GiB used',
+        )
+        return
+    # Images are sparse: what they may still grow by must fit in what the host has free.
+    allocated = sum(os.stat(u['image']).st_blocks * 512 for u in units if os.path.exists(u['image']))
+    promised = sum(size_bytes(u['size']) for u in units)
+    c.add(
+        'storage-budget',
+        promised - allocated <= fs['avail'],
+        f'storage images may grow by {(promised - allocated) / 2**30:.0f} GiB; '
+        f'{fs["avail"] / 2**30:.0f} GiB free on the host disk',
+        'lower [storage] pool_size / person_size, or free space on the host',
+        'warning',
+    )
+    for u in units:
+        c.add(
+            f'storage-{u["name"]}',
+            os.path.ismount(u['mount']),
+            f'{u["name"]} disk mounted at {u["mount"]}',
+            'sudo agentctl apply',
+        )
+
+
+def docker(cfg, c):
+    has = shutil.which('docker') is not None
+    rc, version = run(['docker', 'version', '--format', '{{.Server.Version}}'], check=False) if has else (1, '')
+    c.add('docker', rc == 0, f'Docker {version}' if rc == 0 else 'Docker not running', 'sudo agentctl install')
+    if rc:
+        return False
+    c.add(
+        'compose',
+        run(['docker', 'compose', 'version'], check=False)[0] == 0,
+        'docker compose plugin',
+        'sudo agentctl install',
+    )
+    if cfg['isolation'] == 'sysbox':
+        runtimes = run(['docker', 'info', '--format', '{{json .Runtimes}}'], check=False)[1]
+        c.add(
+            'sysbox',
+            'sysbox-runc' in runtimes and _active('sysbox'),
+            'Sysbox runtime',
+            'sudo agentctl install (installs Sysbox CE and registers sysbox-runc)',
+        )
+    return True
+
+
+def android(cfg, c):
+    if not cfg['android']['enabled']:
+        return
+    kvm = os.path.exists('/dev/kvm') and os.access('/dev/kvm', os.R_OK | os.W_OK)
+    c.add(
+        'kvm',
+        kvm,
+        '/dev/kvm usable',
+        'enable virtualization (VT-x/AMD-V) in the BIOS, then sudo agentctl install; or set [android] enabled = false',
+    )
+    sdk = f'{cfg["data"]}/shared/android-sdk'
+    c.add('android-sdk', os.path.exists(f'{sdk}/emulator/emulator'), f'Android SDK in {sdk}', 'sudo agentctl install')
+
+
+def _domain_levels(cfg, c):
+    zone = cfg['cloudflare']['zone']
+    if not zone:
+        return
+    for host_name in render.public_hosts(cfg):
+        one_below = host_name.endswith('.' + zone) and '.' not in host_name[: -len(zone) - 1]
+        c.add(
+            f'level-{host_name}',
+            one_below,
+            f'{host_name} is one label below {zone}',
+            f"Cloudflare's free certificate covers only <name>.{zone}: use a name like agents.{zone}",
+            'warning',
+        )
+
+
+def access(cfg, c):
+    mode, ingress = cfg['auth']['mode'], cfg['auth']['ingress']
+    if mode == 'none':
+        c.add(
+            'auth',
+            False,
+            'auth.mode = "none": only this machine can reach the agents, and everyone is admin',
+            'for real use set [auth] mode to cloudflare-access, tailscale or tinyauth',
+            'warning',
+        )
+    if ingress == 'cloudflared':
+        _cloudflared(cfg, c)
+    if (ingress == 'cloudflared' or mode == 'cloudflare-access') and cloudflare.configured(cfg):
+        _cloudflare_token(cfg, c)
+    if mode == 'cloudflare-access':
+        _cloudflare_access(cfg, c)
+    if mode == 'tailscale':
+        _tailscale(cfg, c)
+    if mode == 'tinyauth':
+        _tinyauth(cfg, c)
+    if ingress == 'public':
+        for port in (80, 443):
+            c.add(
+                f'public-{port}',
+                _listening(port),
+                f'edge listening on :{port}',
+                f"sudo agentctl apply; then open port {port} in the server's and the network's firewall",
+            )
+    published = [p for a in cfg['agents'] for p in a['publish'].values()] + [cfg['hub']['publish'] or None]
+    if any(published):
+        c.add(
+            'published',
+            False,
+            f'ports published on {cfg["publish_address"]}: '
+            f'{", ".join(str(p) for p in published if p)} (they skip the edge and the gate)',
+            'fine for a one-person setup behind your own firewall; remove [agents.publish] / [hub] publish otherwise',
+            'warning',
+        )
+
+
+def _cloudflared(cfg, c):
+    token = f'{cfg["data"]}/secrets/cloudflare-tunnel.token'
+    c.add('tunnel-token', os.path.isfile(token), f'tunnel token in {token}', 'sudo agentctl cloudflare setup')
+    c.add(
+        'cloudflared',
+        bool(shutil.which('cloudflared')) and _active('cloudflared'),
+        'cloudflared running',
+        'sudo agentctl install (after agentctl cloudflare setup wrote the token)',
+    )
+    _domain_levels(cfg, c)
+
+
+def _cloudflare_token(cfg, c):
+    """The API token is valid and reaches every area `cloudflare setup` touches (read-only probes)."""
+    try:
+        probes = cloudflare.probe_token(cfg)
+    except Exception as e:  # reported as a check, not a crash
+        c.add('cloudflare-token', False, f'Cloudflare API: {e}', 'check [cloudflare] account_id and the token file')
+        return
+    if probes is None:
+        c.add(
+            'cloudflare-token',
+            False,
+            'Cloudflare API token is valid',
+            'the token was refused (expired, revoked or mistyped): create a new one, My Profile → API Tokens',
+        )
+        return
+    c.add('cloudflare-token', True, 'Cloudflare API token is valid')
+    for name, ok in probes:
+        c.add(
+            f'cloudflare-token-{name}',
+            ok,
+            f'token reaches {name}' if ok else f'token lacks {cloudflare.PERMISSIONS[name]}',
+            f'edit the token (My Profile → API Tokens) and add: {cloudflare.PERMISSIONS[name]}',
+        )
+
+
+def _cloudflare_access(cfg, c):
+    c.add(
+        'audience',
+        bool(cfg['auth']['cloudflare']['audience']),
+        'auth.cloudflare.audience set',
+        'sudo agentctl cloudflare setup (fills it in); until then the gate refuses everyone',
+    )
+    if not cloudflare.configured(cfg):
+        c.add(
+            'cloudflare-api',
+            False,
+            'Cloudflare API not configured',
+            'set [cloudflare] account_id and zone, save an API token to [cloudflare] api_token_file',
+            'warning',
+        )
+        return
+    try:
+        idps = cloudflare.identity_providers(cfg)
+    except Exception as e:  # reported as a check, not a crash
+        c.add('cloudflare-api', False, f'Cloudflare API: {e}', 'check the token and [cloudflare] account_id')
+        return
+    wanted = cfg['cloudflare'].get('login_method')
+    if wanted:
+        names = [str(i.get('name', '')) for i in idps]
+        c.add(
+            'login-method',
+            wanted.strip().lower() in {n.strip().lower() for n in names},
+            f'login method {wanted!r} exists in Cloudflare Zero Trust',
+            f'set [auth.cloudflare] login_method to one of: {", ".join(names) or "(none yet: add one in Zero Trust)"}',
+        )
+        return
+    names = ', '.join(str(i.get('name', '')) for i in idps)
+    c.add(
+        'login-methods',
+        True,  # information only: any method works, the one-time PIN by email needs no setup
+        f'Zero Trust login methods offered: {names or "none listed (the one-time PIN by email still works)"}'
+        + ('; [auth.cloudflare] login_method can pin people to one' if names else ''),
+    )
+
+
+def _tailscale(cfg, c):
+    has = shutil.which('tailscale') is not None
+    rc, out = run(['tailscale', 'status', '--json'], check=False) if has else (1, '')
+    try:
+        state = json.loads(out).get('BackendState') if rc == 0 else ''
+    except ValueError:
+        state = ''
+    c.add(
+        'tailscale',
+        state == 'Running',
+        f'Tailscale {state or "not running"}',
+        'install Tailscale and run: sudo tailscale up',
+    )
+    serve = run(['tailscale', 'serve', 'status', '--json'], check=False)[1] if has else ''
+    want = [f'127.0.0.1:{render.INGRESS_PORT}', f'127.0.0.1:{render.HUB_INGRESS_PORT}']
+    c.add(
+        'tailscale-serve',
+        all(w in serve for w in want),
+        'tailscale serve maps 443 and the hub port to the edge',
+        'sudo agentctl install (step tailscale)',
+    )
+    c.add(
+        'tailscale-acl',
+        False,
+        'who may reach this machine is decided by your tailnet ACL',
+        'manual: in the Tailscale admin console, allow exactly the agent owners and admins to reach this node on '
+        f'443 and {cfg["auth"]["hub_port"]}',
+        'warning',
+    )
+
+
+def _tinyauth(cfg, c):
+    t = cfg['tinyauth']
+    for key in ('google_client_id_file', 'google_client_secret_file'):
+        c.add(
+            f'tinyauth-{key}',
+            os.path.isfile(t[key]),
+            f'tinyauth {key.replace("_", " ")}: {t[key]}',
+            'manual: create a Google OAuth client (redirect https://'
+            f'{t["domain"]}/api/oauth/callback/google) and save its id and secret to these files',
+        )
+    m = re.search(r':v?(\d+)\.(\d+)\.(\d+)$', t['image'])
+    fixed = m and tuple(int(x) for x in m.groups()) >= (5, 1, 3)
+    c.add(
+        'tinyauth-version',
+        fixed,
+        f'tinyauth image {t["image"]}',
+        f'use {config.TINYAUTH_IMAGE} or newer (fixes CVE-2026-77560 and GHSA-r27r-rr9v-vv37)',
+        'warning',
+    )
+    try:
+        req = urllib.request.Request(f'http://127.0.0.1:{render.INGRESS_PORT}/', headers={'Host': t['domain']})
+        with urllib.request.urlopen(req, timeout=5):
+            ok = True
+    except Exception:  # any failure means not reachable
+        ok = False
+    c.add('tinyauth', ok, f'tinyauth answers on {t["domain"]}', 'sudo agentctl apply; then agentctl status')
+
+
+def coolify_check(cfg, c):
+    if cfg['deploy'] != 'coolify':
+        return
+    try:
+        coolify.Api(cfg).call('GET', '/version')
+        c.add('coolify', True, 'Coolify API reachable')
+    except Exception as e:  # reported as a check
+        c.add('coolify', False, f'Coolify: {e}', 'sudo agentctl install (installs Coolify and creates the token)')
+
+
+def cluster(cfg, c):
+    for a in cfg['agents']:
+        c.add(
+            f'agent-dir-{a["id"]}',
+            os.path.isdir(f'{a["path"]}/home'),
+            f'{a["id"]} files at {a["path"]}',
+            'sudo agentctl apply',
+        )
+    for unit in (
+        'agentlab-disks.service',
+        'agentlab-throttle.service',
+        'agentlab-watch.service',
+        'agentlab-janitor.timer',
+        'agentlab-backup.timer',
+        'agentlab-firewall.service',
+    ):
+        c.add(f'unit-{unit}', _active(unit), f'{unit} active', 'sudo agentctl install')
+    c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'sudo agentctl install')
+    rules = run(['nft', 'list', 'set', 'inet', 'agentlab', 'agents'], check=False)[1]
+    missing = [a['id'] for a in cfg['agents'] if config.agent_ip(a) not in rules]
+    c.add(
+        'firewall',
+        not missing,
+        'firewall covers every agent' if not missing else f'firewall misses {", ".join(missing)}',
+        'sudo agentctl install && sudo agentctl apply',
+    )
+    for name, _, _ in deploy.networks(cfg):
+        c.add(
+            f'network-{name}',
+            run(['docker', 'network', 'inspect', name], check=False)[0] == 0,
+            f'network {name}',
+            'sudo agentctl apply',
+        )
+    for stack in render.stacks(cfg):
+        c.add(f'stack-{stack}', bool(deploy.containers(cfg, stack)), f'{stack} running', 'sudo agentctl apply')
+
+
+def run_all(cfg):
+    c = Checks()
+    host(cfg, c)
+    if docker(cfg, c):
+        cluster(cfg, c)
+    android(cfg, c)
+    access(cfg, c)
+    coolify_check(cfg, c)
+    return c.items

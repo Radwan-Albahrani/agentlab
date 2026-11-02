@@ -1,0 +1,15 @@
+# Mounts the storage images (the shared pool, or one per person) before Docker starts, so no agent ever starts on
+# an empty folder and writes to the host's disk instead of its image.
+[Unit]
+Description=agentlab: mount agent storage images
+Before=docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=AGENTLAB_CLUSTER=@CLUSTER@
+ExecStart=/usr/bin/python3 @REPO@/host/bin/agentlab-mount-storage
+
+[Install]
+WantedBy=multi-user.target

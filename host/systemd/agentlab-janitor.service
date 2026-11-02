@@ -1,0 +1,11 @@
+[Unit]
+Description=agentlab: tidy agents (Docker leftovers, settled worktrees, caches when full)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@/host
+Environment=PYTHONDONTWRITEBYTECODE=1 AGENTLAB_CLUSTER=@CLUSTER@ AGENTLAB_CONFIG=@CONFIG@
+ExecStart=/usr/bin/python3 -m janitor
+Nice=10
+IOSchedulingClass=idle
