@@ -257,6 +257,28 @@ class Watch(unittest.TestCase):
         self.assertTrue(page_requests.allowed('restart', 'sonarr-x', rows))
         self.assertFalse(page_requests.allowed('restart', 'secret-x', rows))
 
+    def test_agents_are_kept_off_networks_coolify_adds(self):
+        joined = {'agentlab-sara': {}, 'u1': {}, 'agentlab-omar': {}}
+        self.assertEqual(inventory.extra_networks(joined, 'sara'), ['agentlab-omar', 'u1'])
+        self.assertEqual(inventory.extra_networks({'agentlab-sara': {}}, 'sara'), [])
+        calls = []
+
+        def fake_run(cmd):
+            calls.append(cmd)
+            if cmd[1] == 'inspect':
+                return 0, json.dumps({'agentlab-sara': {}, 'u1': {}})
+            return 0, ''
+
+        rows = [
+            {'name': 'agent-u1', 'stack': 'agentlab-agent-sara', 'service': 'agent', 'state': 'running'},
+            {'name': 'files-u1', 'stack': 'agentlab-agent-sara', 'service': 'files', 'state': 'running'},
+        ]
+        with mock.patch.object(inventory.host, 'run', fake_run), mock.patch.object(inventory.store, 'event'):
+            inventory.keep_isolated(rows)
+        self.assertEqual(
+            [c for c in calls if c[1] == 'network'], [['docker', 'network', 'disconnect', 'u1', 'agent-u1']]
+        )
+
     def test_inventory_tags_by_compose_project(self):
         stacks = [{'id': 'agentlab-core', 'uuid': ''}, {'id': 'agentlab-agent-sara', 'uuid': 'u1'}]
         lines = [

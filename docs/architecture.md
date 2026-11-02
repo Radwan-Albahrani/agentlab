@@ -89,7 +89,10 @@ naming an agent you may not open is ignored.
    network `agentlab-<id>` with a fixed subnet; the edge, gate, hub and its companions join it. `agentctl install`
    writes nftables rules (table `agentlab`): an agent container may not open NEW connections to anything on its
    network (the edge, gate, hub and companions connect to it, never the reverse) or to the host (Docker's DNS answers inside the container, so names still resolve). Replies
-   are allowed. This is what makes trusting `tailscale serve` / tinyauth headers safe.
+   are allowed. This is what makes trusting `tailscale serve` / tinyauth headers safe. The rules know an agent by its
+   address on `agentlab-<id>`, so an agent container is kept on that network only: Coolify connects every container
+   it deploys to a network of its own, and `apply` (then the watcher, whenever Coolify recreates one) takes agents
+   off it again.
 4. **Containers are isolated by Sysbox** (`isolation = "sysbox"`): the agent runs rootless Docker inside a
    user-namespaced container with default seccomp/AppArmor. `isolation = "unconfined"` is the WSL fallback (Sysbox
    can't run on WSL) and is meant for single-person setups only; `agentctl doctor` warns about it when more than one
