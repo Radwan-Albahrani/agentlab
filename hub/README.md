@@ -40,8 +40,11 @@ hub/test.sh e2e [url] [args] Playwright click-through (SHOTS=<dir> saves screens
 hub/test.sh all              build, start the throwaway hub, e2e, stop it
 ```
 
-The web app has two TypeScripts on purpose: `typescript7` (the native compiler) type-checks, while `typescript` stays
-on 6.0 because typescript-eslint's typed rules don't support 7 yet. Drop the alias once they do.
+The web app's tooling is native: `bun check` type-checks (TypeScript 7 semantics, every core), `oxlint --type-aware`
+lints (`.oxlintrc.json`: the typescript-eslint strict and stylistic type-checked rules, React and the React Compiler
+rules, jsx-a11y, StyleX through its plugin; type information from TypeScript 7 via `oxlint-tsgolint`), and `bun fmt`
+formats (`bunfig.toml`). `bun run verify` runs all three. The npm scripts avoid the names `check` and `fmt`: a script
+named like a Bun command would shadow Bun's own.
 
 For the web app alone: `hub/test.sh instance start`, then `cd web && bun install && bun run dev` (it proxies `/api` to
 the throwaway hub, or to `HUB_URL`).

@@ -1,9 +1,11 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin';
+import type { PluginOption } from 'vite';
 
 // Under Vitest use StyleX's Rollup variant: the Vite one starts a dev-server CSS timer that keeps Vitest from exiting.
-const stylexPlugin = process.env.VITEST ? stylex.rollup() : stylex.vite();
+// @stylexjs/unplugin types its plugin factories as returning `any`; this is the one place that gives them a type.
+const stylexPlugin = (process.env.VITEST ? stylex.rollup() : stylex.vite()) as PluginOption;
 const TARGETS = ['chrome123', 'edge123', 'firefox120', 'safari17.5', 'ios17.5'];
 
 export default defineConfig({

@@ -33,8 +33,8 @@ cmd_check() {
   docker run --rm -e FIX="${FIX:-}" -v "${HUB}/web:/web" -v agentlab-hub-web-modules:/web/node_modules -w /web "${BUN}" sh -c '
     set -eo pipefail
     bun install --frozen-lockfile --silent
-    if [ -n "$FIX" ]; then bun --bun eslint . --fix >/dev/null || true; bun --bun prettier --write . >/dev/null; fi
-    bun --bun run check
+    if [ -n "$FIX" ]; then ./node_modules/.bin/oxlint --type-aware --fix >/dev/null || true; bun fmt --no-script >/dev/null; fi
+    bun run verify
     bun --bun vitest run --reporter=dot
     bun --bun vite build --logLevel warn
     rm -rf dist
