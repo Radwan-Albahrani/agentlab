@@ -1,6 +1,7 @@
 """cluster.toml -> the resolved cluster (the dict written to <data>/rendered/cluster.json). Validation is strict and
 names the exact key: a typo that silently fell back to a default could expose an agent or size a disk wrong."""
 
+import ipaddress
 import json
 import os
 import re
@@ -174,11 +175,27 @@ def _cpus(value, where, problems):
     return value
 
 
-def _hostname(value, where, problems, required=True):
+LABEL = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+
+
+def _hostname(value, where, problems, required=True, local=False):
+    """A DNS name. `local`: also a single-label name (a LAN or MagicDNS short name) or an IP address, which is how
+    tailscale and none setups reached on plain ports are usually addressed; Cloudflare and tinyauth need real DNS."""
     value = str(value or '').lower()
-    if (value or required) and not DOMAIN.match(value):
-        problems.append(f'{where} {value!r} is not a hostname')
+    if not value and not required:
+        return value
+    if DOMAIN.match(value) or (local and (LABEL.match(value) or _is_ip(value))):
+        return value
+    problems.append(f'{where} {value!r} is not a hostname' + (', a machine name or an IP address' if local else ''))
     return value
+
+
+def _is_ip(value):
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def person(email):
@@ -367,14 +384,15 @@ def resolve(raw, previous=None, state=None):
     images['registry'] = str(images['registry']).rstrip('/')
     mode = auth['mode']
 
-    c['domain'] = _hostname(c.get('domain'), '[cluster] domain', problems)
+    local = mode in ('tailscale', 'none')  # reached inside a tailnet or LAN, often by a bare name or an IP
+    c['domain'] = _hostname(c.get('domain'), '[cluster] domain', problems, local=local)
     if mode == 'tailscale':
-        c['hub_domain'] = _hostname(c['hub_domain'] or c['domain'], '[cluster] hub_domain', problems)
+        c['hub_domain'] = _hostname(c['hub_domain'] or c['domain'], '[cluster] hub_domain', problems, local=True)
     else:
-        c['hub_domain'] = _hostname(c['hub_domain'], '[cluster] hub_domain', problems)
+        c['hub_domain'] = _hostname(c['hub_domain'], '[cluster] hub_domain', problems, local=local)
     c['coolify_domain'] = _hostname(c['coolify_domain'], '[cluster] coolify_domain', problems, required=False)
     hosts = [c['domain'], c['coolify_domain'], auth_ta['domain'] if mode == 'tinyauth' else '']
-    if mode != 'tailscale':
+    if mode != 'tailscale':  # tailscale serves the hub on the same name, on its own port
         hosts.append(c['hub_domain'])
     hosts = [h for h in hosts if h]
     if len(set(hosts)) != len(hosts):

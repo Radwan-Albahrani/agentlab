@@ -4,7 +4,8 @@ Every mode ends the same way: people open `https://<domain>`, prove who they are
 picker if they have several). Only the agent owners and `auth.admins` get in, plus, with `[auth] allow_domains =
 ["example.com"]` (Cloudflare Access and tinyauth), anyone with an email in those domains: they can sign in, but only
 owners get an agent (the rest see "no agent yet" until an admin adds one), and admins still come only from
-`auth.admins`. Pick one mode per cluster.
+`auth.admins`. Pick one mode per cluster. Just you? The plainest option is
+[plain ports on your tailnet or LAN](#just-you-plain-ports-on-your-tailnet-or-lan): no certificates, no sign-in page.
 
 Steps marked **human** need someone with the account; give them the exact text below and wait.
 
@@ -102,6 +103,58 @@ person's tailnet identity picks their agent. No `pair_domain`.
 
 Logins are tailnet login names (often emails, sometimes `name@github`): use exactly what `tailscale status` shows as
 owners and admins.
+
+### Just you: plain ports on your tailnet (or LAN)
+
+The simplest setup of all, for one person: no HTTPS certificates, no `tailscale serve`, no sign-in page. Each agent's
+tools listen on fixed ports of the machine (e.g. T3 on `http://my-server:7101`), and your network decides who can
+reach them: your tailnet's ACL, or only your home LAN. T3 still only answers devices you paired, and pairing links
+use the same ports, so the desktop and phone apps work as usual.
+
+Only for a single owner: published ports skip the gate, so with several people anyone who can reach a port could open
+that agent. `agentctl` refuses `publish` with more than one owner.
+
+```toml
+[cluster]
+domain = "my-server"                    # the name you reach the machine by (MagicDNS name, LAN name or IP)
+deploy = "compose"                      # or "coolify" if you run Coolify
+publish_address = "0.0.0.0"             # listen on the network; keep "127.0.0.1" if you only tunnel in
+
+[auth]
+mode = "tailscale"                      # on a trusted LAN without Tailscale: "none", plus hub_domain = another name
+admins = ["you@example.com"]
+
+[hub]
+publish = 7190                          # the hub at http://my-server:7190
+
+[[agents]]
+id = "work"
+owner = "you@example.com"
+[agents.publish]                        # this agent's tools, one port each
+t3 = 7101
+accounts = 7102
+browser = 7103
+terminal = 7104
+files = 7105
+
+[[agents]]
+id = "personal"
+owner = "you@example.com"
+[agents.publish]
+t3 = 7111
+accounts = 7112
+browser = 7113
+terminal = 7114
+files = 7115
+```
+
+1. Make sure only you can reach those ports: a tailnet ACL that allows just your devices, or a host firewall that
+   allows only your LAN. `doctor` warns about every published port as a reminder.
+2. `agentctl apply --json`. Nothing touches Tailscale's settings in this setup.
+3. Open the hub at `http://my-server:7190`; "Open T3" and "Pair a device" make links on the address you opened the
+   hub with plus the agent's port.
+
+Moving to a shared setup later is a config change: drop the `publish` tables, pick a sign-in mode above, `apply`.
 
 ## tinyauth
 

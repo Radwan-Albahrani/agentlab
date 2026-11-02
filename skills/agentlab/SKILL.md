@@ -33,6 +33,7 @@ Ask the human these first (they decide the whole shape; don't guess):
 1. **How do people reach it?** → `auth.mode` (see [access.md](references/access.md)):
    `cloudflare-access` (company already on Cloudflare; Google sign-in at Cloudflare's edge),
    `tailscale` (everyone is on one tailnet), or `tinyauth` (no Cloudflare Access; Google sign-in on the server).
+   Just one person? Offer plain ports on their tailnet or LAN (access.md, "Just you"): no certificates, no sign-in.
 2. **Domain names** (first-level, e.g. `agents.example.com`, `agents-hub.example.com`) or, for tailscale, the
    machine's MagicDNS name.
 3. **Who:** admin emails, and each person's email with how many agents they want. Admins are people too: ask how

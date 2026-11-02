@@ -86,6 +86,28 @@ class Config(unittest.TestCase):
         self.assertEqual([a['id'] for a in cfg['agents']], ['admin', 'sara', 'sara-mobile'])
         self.assertEqual(cfg['auth']['ingress'], 'cloudflared')
 
+    def test_machine_names_and_ips_only_where_people_reach_it_inside_their_network(self):
+        tailnet = BASE.replace('mode = "cloudflare-access"', 'mode = "tailscale"').replace(
+            'domain = "agents.example.com"', 'domain = "my-server"'
+        )
+        tailnet = tailnet.replace('hub_domain = "agents-hub.example.com"\n', '')
+        self.assertEqual(problems(tailnet), '')
+        self.assertEqual(problems(tailnet.replace('"my-server"', '"100.64.0.7"')), '')
+        self.assertIn(
+            'is not a hostname', problems(BASE.replace('domain = "agents.example.com"', 'domain = "my-server"'))
+        )
+        self.assertIn('is not a hostname', problems(tailnet.replace('"my-server"', '"my_server"')))
+
+    def test_access_guide_examples_resolve(self):
+        with open(os.path.join(os.path.dirname(EXAMPLE), 'skills', 'agentlab', 'references', 'access.md')) as f:
+            guide = f.read()
+        just_you = guide[guide.index('### Just you') :]
+        text = (
+            just_you.split('```toml\n', 1)[1].split('```', 1)[0].replace('[cluster]\n', '[cluster]\nname = "home"\n', 1)
+        )
+        cfg = config.resolve(tomllib.loads(text))
+        self.assertEqual([a['publish'].get('t3') for a in cfg['agents']], [7101, 7111])
+
     def test_public_json_has_the_contract_shape_and_no_private_keys(self):
         out = json.loads(config.to_json(resolve()))
         for key in (
