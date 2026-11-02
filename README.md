@@ -6,7 +6,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2fbf6c">
-  <img alt="Status: early" src="https://img.shields.io/badge/status-early-f2a83b">
+  <img alt="Status: beta" src="https://img.shields.io/badge/status-beta-5b8cff">
   <img alt="Claude Code and Codex" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex-5b8cff">
 </p>
 
@@ -56,8 +56,9 @@ Ways to reach it from anywhere: [access guide](skills/agentlab/references/access
 - 💾 About 12 GB RAM and 30–60 GB disk per busy agent
 - 🌐 Tailscale, Cloudflare, or a domain pointing at the machine
 
-> 🧪 **Early days:** everything is tested and runs end to end, but Sysbox isolation, the Android emulator and live
-> Cloudflare sign-in still need real-world mileage. `agentctl doctor` checks each; please report what breaks.
+> 🧪 **Beta:** running daily on a one-person Tailscale setup (WSL) and a team server on Cloudflare One (Debian, Sysbox,
+> Android, HTTPS sign-in). Google login has not had real-world use yet. `agentctl doctor` checks it all; please
+> report what breaks.
 
 ## 📚 More
 
