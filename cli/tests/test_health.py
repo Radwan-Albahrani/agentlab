@@ -42,6 +42,13 @@ class State(unittest.TestCase):
         s, detail = self.state(['c1'], state_json(health_status='unhealthy', output='curl: (7) Failed to connect\n'))
         self.assertEqual((s, detail), ('unhealthy', 'curl: (7) Failed to connect'))
 
+    def test_created_during_a_rollout_is_starting(self):
+        # #24: Coolify creates the new container a moment before starting it
+        self.assertEqual(self.state(['c1'], state_json('created', health_status=None))[0], 'starting')
+        self.assertEqual(self.state(['c1'], state_json('restarting', health_status=None))[0], 'starting')
+        failed = '{"Status": "created", "ExitCode": 0, "Error": "port is already allocated"}'
+        self.assertEqual(self.state(['c1'], failed), ('exited', 'port is already allocated'))
+
     def test_exited_and_missing(self):
         self.assertEqual(self.state(['c1'], state_json('exited', exit_code=137)), ('exited', 'exited (exit 137)'))
         self.assertEqual(self.state([]), ('missing', 'no container'))
@@ -85,6 +92,17 @@ class WaitReady(unittest.TestCase):
             self.wait([stuck], timeout_s=60)
         self.assertIn('sara: starting (still installing)', str(e.exception))
         self.assertNotIn('omar', str(e.exception))
+
+    def test_a_container_missing_mid_rollout_gets_time_to_appear(self):
+        gone = {'sara': ('missing', 'no container'), 'omar': ('healthy', '')}
+        back = {'sara': ('starting', 'created'), 'omar': ('healthy', '')}
+        self.wait([gone, gone, back, {'sara': ('healthy', ''), 'omar': ('healthy', '')}])
+
+    def test_a_container_that_never_appears_fails_after_the_grace(self):
+        with self.assertRaises(util.Failed) as e:
+            self.wait([{'sara': ('missing', 'no container'), 'omar': ('healthy', '')}])
+        self.assertGreaterEqual(self.now[0], health.MISSING_GRACE_S)
+        self.assertNotIn('restart', str(e.exception))
 
     def test_a_gone_container_fails_at_once(self):
         with self.assertRaises(util.Failed) as e:

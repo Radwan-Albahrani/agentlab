@@ -9,6 +9,7 @@ from . import deploy
 from .util import Failed, run, say
 
 READY_S = 20 * 60  # a first start installs Claude Code, Codex and T3 into the agent's home
+MISSING_GRACE_S = 120  # a Coolify rollout removes the old container before it creates the new one
 
 
 def state(cfg, agent):
@@ -21,8 +22,11 @@ def state(cfg, agent):
         st = json.loads(out) if rc == 0 else {}
     except ValueError:
         st = {}
-    if st.get('Status') != 'running':
-        return 'exited', f'{st.get("Status", "unknown")} (exit {st.get("ExitCode", "?")})'
+    status, error = st.get('Status'), ' '.join(str(st.get('Error') or '').split())[-300:]
+    if status in ('created', 'restarting') and not error:
+        return 'starting', f'{status} (Coolify or Docker is still bringing it up)'  # #24: a rollout passes through
+    if status != 'running':
+        return 'exited', error or f'{status or "unknown"} (exit {st.get("ExitCode", "?")})'
     health = st.get('Health') or {}
     log = health.get('Log') or []
     detail = ' '.join(str(log[-1].get('Output', '')).split())[-300:] if log else ''
@@ -31,14 +35,17 @@ def state(cfg, agent):
 
 def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
     """Until every agent is healthy. Progress once a minute; fails naming each agent that isn't, and why."""
-    deadline, said = clock() + timeout_s, None
+    start = clock()
+    deadline, said = start + timeout_s, None
     while True:
         states = {a['id']: state(cfg, a) for a in cfg['agents']}
         waiting = {aid: s for aid, s in states.items() if s[0] != 'healthy'}
         if not waiting:
             return
-        # unhealthy can still recover (a slow first start outlasts the health check's grace period); gone can't
-        stuck = {aid: s for aid, s in waiting.items() if s[0] in ('exited', 'missing')}
+        # unhealthy can still recover (a slow first start outlasts the health check's grace period); an exited one
+        # can't, and a missing one only after a rollout has had time to create it
+        rolled = clock() - start >= MISSING_GRACE_S
+        stuck = {aid: s for aid, s in waiting.items() if s[0] == 'exited' or (s[0] == 'missing' and rolled)}
         if stuck or clock() >= deadline:
             break
         if said is None or clock() - said >= 60:
@@ -46,11 +53,12 @@ def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
             said = clock()
         sleep(10)
     lines = [f'{aid}: {s}' + (f' ({detail})' if detail else '') for aid, (s, detail) in sorted(waiting.items())]
-    raise Failed(
-        'not every agent is ready: '
-        + '; '.join(lines)
-        + '. Its log: docker logs <agent container>; a first start stuck on a download recovers with a restart'
+    hint = (
+        'a first start stuck on a download recovers with a restart'
+        if all(s == 'unhealthy' for s, _ in waiting.values())
+        else 'see docker logs <agent container> and the error above'
     )
+    raise Failed('not every agent is ready: ' + '; '.join(lines) + f'. {hint}')
 
 
 def core_state(cfg, service):
