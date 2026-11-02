@@ -74,9 +74,36 @@ their agent.
 
 ## Cloudflare
 
-People sign in at Cloudflare (a code by email, Google, Microsoft, or anything set up in Zero Trust), and a Cloudflare
-tunnel brings the traffic in, so the server opens no ports. The cluster gets its own tunnel and its own Access
-application; being allowed here grants nothing anywhere else in the account.
+A Cloudflare tunnel brings the traffic in, so the server opens no ports, and Cloudflare Access decides who gets in.
+The cluster gets its own tunnel and its own Access application; being allowed here grants nothing anywhere else in the
+account. There are two ways to set it up.
+
+**Private (the default): only devices on your Cloudflare One client.** The addresses don't exist on the internet at
+all: there are no public DNS records, and a browser that isn't on the Cloudflare One (WARP) client can't even find
+them. It works like a company database reached over the client. Gateway sends the client's traffic for your addresses
+over the tunnel by private hostname routes, and an Access application for those private hostnames lets in exactly
+your people, signed in by their client session, so the T3 desktop and phone apps work too. Pick this when everyone
+who gets an agent already runs the company's Cloudflare One client.
+
+**Public: a sign-in page anyone can find.** Each address is a normal public hostname with Cloudflare's sign-in page in
+front; anyone can reach the page, only your people get past it. Pick this when people don't all run the client. Set
+`require_warp = true` too and only devices on the client get past the sign-in (the page itself stays public).
+
+```toml
+[auth.cloudflare]
+network = "private"     # or "public"
+```
+
+What your Zero Trust organization needs for private (your admin can check each in the dashboard):
+
+- the Gateway proxy turned on (Settings → Network → Firewall → Proxy, TCP), which private hostnames require;
+- devices enrolled in the Cloudflare One client with "WARP authentication identity" allowed (Settings → WARP Client →
+  Device enrollment), so the client session signs people in;
+- if your client profiles use split tunnels in Include mode, the range Cloudflare resolves private hostnames to
+  (`172.64.128.0/20` by default) included; in the default Exclude mode there's nothing to do;
+- your domain must not be in Local Domain Fallback (it isn't, unless someone added it).
+
+`agentctl doctor` reads what the token can see and says which of these to check.
 
 You'll need a Cloudflare API token. Create it under My Profile → API Tokens → Create Token → Custom, with:
 
@@ -86,25 +113,33 @@ You'll need a Cloudflare API token. Create it under My Profile → API Tokens �
 - Account · Access: Identity Providers → Read
 - Account · Access: Organizations → Read (how agentlab learns your team name; not needed if you set
   `[auth.cloudflare] team` yourself)
-- Zone · DNS → Edit, limited to your domain's zone (the plain "DNS" row, not "Zone DNS Settings")
+- Zone · DNS → Edit, limited to your domain's zone (the plain "DNS" row, not "Zone DNS Settings"); private uses it to
+  remove any public records agentlab made earlier
+- For private: Account · Cloudflare One Networks → Edit (the tunnel's hostname routes; older dashboards: Cloudflare
+  Tunnel → Edit) and Account · Zero Trust → Read (so doctor can check the client settings)
+- For `require_warp`: Account · Zero Trust → Read, or → Edit so agentlab can create the Gateway device check if it
+  doesn't exist yet
 
 Already made a token without one of these? Edit it in the dashboard and tick the missing row: the token keeps the same
-value, so nothing on the server changes.
+value, so nothing on the server changes. `agentctl doctor` checks the token and names any permission it lacks.
 
 Save it on the server with `agentctl secret set cloudflare-api` (setup asks for it). From the token and your address,
-agentlab finds the account, the zone and your Zero Trust team by itself, then creates the tunnel, the DNS records for
-exactly your addresses, and the Access application allowing exactly your people. Adding a person later updates that
-list on the next `apply`; no dashboard visit needed. `agentctl doctor` checks the token and names any permission it
-lacks.
+agentlab finds the account, the zone and your Zero Trust team by itself, then creates the tunnel, its routes (private)
+or DNS records (public) for exactly your addresses, and the Access application allowing exactly your people. Adding a
+person later updates that list on the next `apply`; no dashboard visit needed. agentlab only ever touches what it
+named `agentlab-<cluster name>`; switching from public to private removes its own public records and apps, nothing
+else.
 
 Sign-in methods are up to you. The code by email needs no setup at all. For one-click sign-in add Google Workspace or
 Microsoft Entra ID in Zero Trust → Settings → Authentication (the redirect address is
 `https://<your-team>.cloudflareaccess.com/cdn-cgi/access/callback`). If the account has a single method, agentlab uses
 it straight away; with several, everyone is offered all of them unless you set `login_method` to one.
 
-Keep every address one level under your domain (`agents.example.com`, `agents-hub.example.com`): Cloudflare's free
-certificate covers only that level. For the T3 desktop and phone apps, set `pair_domain = "{id}-t3.example.com"`: each
-agent then gets an address that skips the browser sign-in and only accepts devices its owner paired.
+Keep every address one level under your domain (`agents.example.com`, `agents-hub.example.com`). Private addresses
+are plain `http://` inside the client's encrypted tunnel: that's what lets Access hand the server a signed identity
+without Gateway TLS decryption. With public, the T3 desktop and phone apps need `pair_domain = "{id}-t3.example.com"`:
+each agent then gets an address that skips the browser sign-in and only accepts devices its owner paired (private
+doesn't need it, and refuses it).
 
 ## Google sign-in on the server (tinyauth)
 

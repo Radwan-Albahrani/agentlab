@@ -57,7 +57,9 @@ SCHEMA = {  # section -> {key: default}; None = required
         'cloudflare': {},
         'tinyauth': {},
     },
-    'auth.cloudflare': {'team': '', 'audience': '', 'login_method': ''},
+    # network: "private" = reachable only through the Cloudflare One (WARP) client over the tunnel (no public DNS);
+    # "public" = public hostnames behind an Access sign-in page; require_warp adds a device check to "public"
+    'auth.cloudflare': {'team': '', 'audience': '', 'login_method': '', 'network': 'private', 'require_warp': False},
     'auth.tinyauth': {
         'domain': '',
         'google_client_id_file': '',
@@ -302,6 +304,12 @@ def _auth(raw, problems):
         )
     a['allow_domains'] = sorted({d.lower() for d in domains})
     # team may stay empty: `agentctl cloudflare setup` reads it from the account and writes it here
+    if cf['network'] not in ('private', 'public'):
+        problems.append('[auth.cloudflare] network must be "private" (WARP client only) or "public" (sign-in page)')
+    if not isinstance(cf['require_warp'], bool):
+        problems.append('[auth.cloudflare] require_warp must be true or false')
+    if mode == 'cloudflare-access' and cf['network'] == 'private' and cf['require_warp'] is True:
+        problems.append('[auth.cloudflare] require_warp is for network = "public"; private is WARP-only already')
     if cf['team'] and not re.match(r'^[a-z0-9][a-z0-9-]*$', str(cf['team'])):
         problems.append('[auth.cloudflare] team must be the <team> of <team>.cloudflareaccess.com')
     if mode == 'tinyauth':
@@ -402,6 +410,13 @@ def resolve(raw, previous=None, state=None):
     if pair and ('{id}' not in pair or not DOMAIN.match(pair.replace('{id}', 'x'))):
         problems.append('[cluster] pair_domain must be a hostname pattern with {id}, e.g. "{id}-t3.example.com"')
     c['pair_domain'] = pair if mode in ('cloudflare-access', 'tinyauth') else ''
+    if pair and mode == 'cloudflare-access' and auth_cf['network'] == 'private':
+        problems.append(
+            '[cluster] pair_domain bypasses the sign-in for the T3 apps on public hostnames; with network = "private" '
+            'the apps connect over the WARP client to the main domain: remove pair_domain'
+        )
+    if mode == 'cloudflare-access' and auth_cf['require_warp'] is True and pair:
+        problems.append('[cluster] pair_domain would bypass require_warp: remove it')
     if c.get('deploy') not in ('coolify', 'compose'):
         problems.append('[cluster] deploy must be "coolify" or "compose"')
     if c.get('isolation') not in ('sysbox', 'unconfined'):
@@ -559,7 +574,12 @@ def resolve(raw, previous=None, state=None):
             'ingress': auth['ingress'],
             'admins': auth['admins'],
             'allow_domains': auth['allow_domains'],
-            'cloudflare': {'team': auth_cf['team'], 'audience': auth_cf['audience']},
+            'cloudflare': {
+                'team': auth_cf['team'],
+                'audience': auth_cf['audience'],
+                'network': auth_cf['network'] if mode == 'cloudflare-access' else '',
+                'require_warp': auth_cf['require_warp'] is True and mode == 'cloudflare-access',
+            },
             'tinyauth': {'domain': auth_ta['domain'] if mode == 'tinyauth' else ''},
             'hub_port': auth['hub_port'],
         },
@@ -610,6 +630,12 @@ def public(cfg):
 
 def to_json(cfg):
     return json.dumps(public(cfg), indent=2) + '\n'
+
+
+def private_network(cfg):
+    """Cloudflare with network = "private": the names exist only for devices on the Cloudflare One (WARP) client,
+    which Gateway sends over the tunnel; there are no public DNS records or public hostnames."""
+    return cfg['auth']['mode'] == 'cloudflare-access' and cfg['auth']['cloudflare']['network'] == 'private'
 
 
 def ports_only(cfg):

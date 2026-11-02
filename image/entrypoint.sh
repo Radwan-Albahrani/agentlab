@@ -26,6 +26,7 @@ clear_stale_state() {
 }
 
 mkdir -p "${HOME}"/{.local/bin,.npm-global,logs,.codex,.chrome-profile,.agentlab/requests,.agentlab/results} /workspace
+wait_for_final_network                                # Coolify: only once agentlab took it off Coolify's network
 install_missing_tools
 register_browser_tool
 android=()

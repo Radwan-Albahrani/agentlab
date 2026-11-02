@@ -44,8 +44,10 @@ git clone https://github.com/Radwan-Albahrani/agentlab.git /opt/agentlab
 Ask the person first; these choices shape everything and aren't yours to guess:
 
 - **How people will reach it.** For one person, `--reach me`: plain ports on their own tailnet or LAN, nothing to
-  set up. For a group on one tailnet, `tailnet`. For a company on Cloudflare, `cloudflare` (sign-in through
-  Cloudflare Access). Without either, `tinyauth` (a Google sign-in page on the server). [access.md](references/access.md)
+  set up. For a group on one tailnet, `tailnet`. For a company on Cloudflare, `cloudflare`, and ask which network:
+  `--network private` (the default: only devices on the company's Cloudflare One client reach it, no public address)
+  or `--network public` (a public Cloudflare sign-in page). Without either, `tinyauth` (a Google sign-in page on the
+  server). [access.md](references/access.md)
   explains each.
 - **The address** (`--domain`, and `--hub-domain` for the dashboard). On Cloudflare keep both one level under the zone
   (`agents.example.com`, `agents-hub.example.com`). For `me` and `tailnet` the machine's own name is the default.

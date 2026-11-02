@@ -21,6 +21,7 @@ from agentlab import (
     config,
     disks,
     doctor,
+    hostsfile,
     init,
     install,
     main,
@@ -57,6 +58,10 @@ owner = "sara@example.com"
 id = "omar"
 owner = "omar@example.com"
 """
+
+
+# public hostnames behind the sign-in page (pair hosts need it); BASE is the default, private network
+PUBLIC = BASE.replace('team = "example"', 'team = "example"\nnetwork = "public"')
 
 
 def raw(text=BASE, **sections):
@@ -188,8 +193,8 @@ google_client_secret_file = "/s/secret"
         self.assertEqual([a['subnet'] for a in again['agents']], [a['subnet'] for a in cfg['agents']])
 
     def test_pair_domain_needs_the_id(self):
-        self.assertIn('pair_domain', problems(cluster__pair_domain='t3.example.com'))
-        cfg = resolve(cluster__pair_domain='{id}-t3.example.com')
+        self.assertIn('pair_domain', problems(PUBLIC, cluster__pair_domain='t3.example.com'))
+        cfg = resolve(PUBLIC, cluster__pair_domain='{id}-t3.example.com')
         self.assertEqual(cfg['agents'][0]['pair_host'], 'sara-t3.example.com')
 
     def test_per_person_storage(self):
@@ -448,7 +453,7 @@ class Migration(unittest.TestCase):
 class Rendering(unittest.TestCase):
     def setUp(self):
         self.cfg = resolve(
-            cluster__pair_domain='{id}-t3.example.com', cluster__coolify_domain='agents-coolify.example.com'
+            PUBLIC, cluster__pair_domain='{id}-t3.example.com', cluster__coolify_domain='agents-coolify.example.com'
         )
         self.edge = render.edge(self.cfg)
         self.routers = self.edge['http']['routers']
@@ -696,6 +701,8 @@ class FakeCloudflare:
 
     def __init__(self):
         self.tunnels, self.configs, self.dns, self.policies, self.apps = [], {}, [], [], []
+        self.routes, self.posture = [], []
+        self.settings = {'gateway_proxy_enabled': True}
         self.idps = [
             {'id': 'g1', 'type': 'google-apps', 'name': 'Google Workspace'},
             {'id': 'o1', 'type': 'onetimepin', 'name': 'One-time PIN'},
@@ -734,6 +741,30 @@ class FakeCloudflare:
         if path.endswith('/dns_records') and method == 'POST':
             self.dns.append({**body, 'id': f'd{len(self.dns)}'})
             return self.dns[-1]
+        if '/dns_records/' in path and method == 'DELETE':
+            self.dns = [r for r in self.dns if r['id'] != path.rsplit('/', 1)[1]]
+            return {}
+        if path.endswith('/zerotrust/routes/hostname'):
+            if method == 'POST':
+                self.routes.append({**body, 'id': f'r{len(self.routes) + 1}'})
+                return self.routes[-1]
+            return copy.deepcopy(self.routes)
+        if '/zerotrust/routes/hostname/' in path and method == 'DELETE':
+            self.routes = [r for r in self.routes if r['id'] != path.rsplit('/', 1)[1]]
+            return {}
+        if path.endswith('/devices/posture'):
+            if method == 'POST':
+                self.posture.append({**body, 'id': f'pc{len(self.posture) + 1}'})
+                return self.posture[-1]
+            return copy.deepcopy(self.posture)
+        if path.endswith('/devices/settings'):
+            return self.settings
+        if '/access/apps/' in path and method == 'DELETE':
+            self.apps = [a for a in self.apps if a['id'] != path.rsplit('/', 1)[1]]
+            return {}
+        if '/access/policies/' in path and method == 'DELETE':
+            self.policies = [p for p in self.policies if p['id'] != path.rsplit('/', 1)[1]]
+            return {}
         if path.endswith('/identity_providers'):
             return self.idps
         if path.endswith('/access/policies'):
@@ -768,7 +799,7 @@ class Cloudflare(unittest.TestCase):
         with open(f'{d}/secrets/cf.token', 'w') as f:
             f.write('api-token')
         self.config_path = f'{d}/cluster.toml'
-        text = BASE.replace('data = "/srv/agentlab"', f'data = "{d}"').replace(
+        text = PUBLIC.replace('data = "/srv/agentlab"', f'data = "{d}"').replace(
             'hub_domain = "agents-hub.example.com"',
             'hub_domain = "agents-hub.example.com"\npair_domain = "{id}-t3.example.com"',
         ) + (f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n')
@@ -1292,3 +1323,196 @@ class ConfigEdit(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PrivateNetwork(unittest.TestCase):
+    """network = "private": no public hostnames; hostname routes over the tunnel and a private Access app."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        os.makedirs(f'{d}/secrets')
+        with open(f'{d}/secrets/cf.token', 'w') as f:
+            f.write('api-token')
+        self.config_path = f'{d}/cluster.toml'
+        self.text = BASE.replace('data = "/srv/agentlab"', f'data = "{d}"') + (
+            f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n'
+        )
+        self.write(self.text)
+        self.fake = FakeCloudflare()
+
+    def write(self, text):
+        with open(self.config_path, 'w') as f:
+            f.write(text)
+
+    def run_setup(self):
+        cfg = config.load(self.config_path)
+        with (
+            mock.patch.object(cloudflare, 'api_for', return_value=self.fake),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cloudflare.setup(cfg, util.Plan(False), self.config_path)
+        return cfg
+
+    def test_private_is_the_default_and_has_no_public_hostnames(self):
+        self.assertTrue(config.private_network(config.load(self.config_path)))
+        self.run_setup()
+        self.assertEqual(self.fake.dns, [])
+        conf = self.fake.configs['t1']['config']
+        self.assertEqual(conf['ingress'], [{'service': 'http_status:404'}])
+        self.assertTrue(conf['warp-routing']['enabled'])
+        self.assertEqual(
+            sorted((r['hostname'], r['tunnel_id'], r['comment']) for r in self.fake.routes),
+            [('agents-hub.example.com', 't1', 'agentlab-test'), ('agents.example.com', 't1', 'agentlab-test')],
+        )
+        (app,) = self.fake.apps
+        self.assertEqual({d['type'] for d in app['destinations']}, {'private'})
+        self.assertEqual({d['port_range'] for d in app['destinations']}, {'80'})
+        self.assertTrue(app['allow_authenticate_via_warp'])
+
+    def test_second_run_changes_nothing(self):
+        self.run_setup()
+        before = len(self.fake.writes)
+        self.run_setup()
+        self.assertEqual(self.fake.writes[before:], [])
+
+    def test_switching_from_public_removes_only_agentlabs_public_objects(self):
+        self.write(
+            self.text.replace('team = "example"', 'team = "example"\nnetwork = "public"').replace(
+                'hub_domain = "agents-hub.example.com"',
+                'hub_domain = "agents-hub.example.com"\npair_domain = "{id}-t3.example.com"',
+            )
+        )
+        self.run_setup()
+        self.fake.dns.append({'id': 'mine', 'name': 'shop.example.com', 'type': 'A', 'content': '1.2.3.4'})
+        self.fake.apps.append({'id': 'x1', 'name': 'payroll', 'destinations': [{'uri': 'pay.example.com'}]})
+        self.write(self.text)
+        self.run_setup()
+        self.assertEqual([r['id'] for r in self.fake.dns], ['mine'])  # every agentlab record went, others stay
+        self.assertEqual(sorted(a['name'] for a in self.fake.apps), ['agentlab-test', 'payroll'])
+        self.assertNotIn('agentlab-test apps', [p['name'] for p in self.fake.policies])
+        self.assertEqual({d['type'] for d in self.fake.apps[0]['destinations']}, {'private'})
+
+    def test_someone_elses_route_for_our_name_stops_setup(self):
+        self.fake.routes.append({'id': 'x', 'hostname': 'agents.example.com', 'tunnel_id': 'other', 'comment': 'prod'})
+        with self.assertRaisesRegex(util.Failed, 'another tunnel'):
+            self.run_setup()
+        self.assertEqual(self.fake.routes[0]['id'], 'x')
+
+    def test_pair_domain_is_refused(self):
+        self.write(
+            self.text.replace(
+                'hub_domain = "agents-hub.example.com"',
+                'hub_domain = "agents-hub.example.com"\npair_domain = "{id}-t3.example.com"',
+            )
+        )
+        with self.assertRaisesRegex(util.Failed, 'pair_domain'):
+            config.load(self.config_path)
+
+    def test_edge_answers_on_loopback_port_80_for_cloudflared(self):
+        cfg = config.load(self.config_path)
+        self.assertIn('127.0.0.1:80:8088', render.edge_service(cfg)['ports'])
+        public = resolve(PUBLIC)
+        self.assertNotIn('127.0.0.1:80:8088', render.edge_service(public)['ports'])
+
+    def test_doctor_facts(self):
+        self.run_setup()
+        cfg = config.load(self.config_path)
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            checks = {cid: ok for cid, ok, *_ in cloudflare.client_only_checks(cfg)}
+        self.assertEqual(
+            checks,
+            {
+                'gateway-proxy': True,
+                'client-sign-in': True,
+                'private-app': True,
+                'hostname-routes': True,
+                'no-public-dns': True,
+            },
+        )
+        self.fake.settings = {'gateway_proxy_enabled': False}
+        self.fake.dns.append({'id': 'x', 'name': 'agents.example.com', 'type': 'A', 'content': '1.2.3.4'})
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            checks = {cid: ok for cid, ok, *_ in cloudflare.client_only_checks(cfg)}
+        self.assertFalse(checks['gateway-proxy'])
+        self.assertFalse(checks['no-public-dns'])
+
+    def test_token_asks_for_the_routes_and_devices_permissions(self):
+        keys = cloudflare.needed_permissions(config.load(self.config_path))
+        self.assertIn('routes', keys)
+        self.assertIn('devices', keys)
+        self.assertNotIn('routes', cloudflare.needed_permissions(resolve(PUBLIC)))
+
+
+class RequireWarp(unittest.TestCase):
+    """network = "public" with require_warp: the sign-in page stays, and the policy requires the Gateway check."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.tmp.name
+        os.makedirs(f'{d}/secrets')
+        with open(f'{d}/secrets/cf.token', 'w') as f:
+            f.write('api-token')
+        self.config_path = f'{d}/cluster.toml'
+        text = (
+            PUBLIC.replace('data = "/srv/agentlab"', f'data = "{d}"').replace(
+                'network = "public"', 'network = "public"\nrequire_warp = true'
+            )
+            + f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n'
+        )
+        with open(self.config_path, 'w') as f:
+            f.write(text)
+        self.fake = FakeCloudflare()
+
+    def run_setup(self):
+        with (
+            mock.patch.object(cloudflare, 'api_for', return_value=self.fake),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cloudflare.setup(config.load(self.config_path), util.Plan(False), self.config_path)
+
+    def test_policy_requires_the_gateway_check_and_the_app_takes_client_sessions(self):
+        self.run_setup()
+        (check,) = self.fake.posture
+        self.assertEqual(check['type'], 'gateway')
+        (people,) = self.fake.policies
+        self.assertEqual(people['require'], [{'device_posture': {'integration_uid': check['id']}}])
+        self.assertTrue(self.fake.apps[0]['allow_authenticate_via_warp'])
+        self.assertTrue(self.fake.dns)  # still public hostnames
+
+    def test_an_existing_gateway_check_is_reused_and_reruns_change_nothing(self):
+        self.fake.posture.append({'id': 'gw', 'type': 'gateway', 'name': 'Gateway'})
+        self.run_setup()
+        self.assertEqual(len(self.fake.posture), 1)
+        self.assertEqual(self.fake.policies[0]['require'], [{'device_posture': {'integration_uid': 'gw'}}])
+        before = len(self.fake.writes)
+        self.run_setup()
+        self.assertEqual(self.fake.writes[before:], [])
+
+    def test_require_warp_with_private_is_a_mistake(self):
+        self.assertIn(
+            'require_warp', problems(BASE.replace('team = "example"', 'team = "example"\nrequire_warp = true'))
+        )
+
+
+class HostsFile(unittest.TestCase):
+    def test_block_is_added_replaced_and_removed_keeping_everything_else(self):
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, 'hosts')
+        with open(path, 'w') as f:
+            f.write('127.0.0.1 localhost\n::1 localhost')
+        names = ['agents.example.com', 'agents-hub.example.com']
+        with contextlib.redirect_stdout(io.StringIO()):
+            hostsfile.ensure(names, util.Plan(False), path)
+            hostsfile.ensure(names, util.Plan(False), path)
+        with open(path) as f:
+            text = f.read()
+        self.assertTrue(text.startswith('127.0.0.1 localhost\n::1 localhost\n'))
+        self.assertEqual(text.count(hostsfile.BEGIN), 1)
+        self.assertIn('127.0.0.1 agents-hub.example.com\n', text)
+        with contextlib.redirect_stdout(io.StringIO()):
+            hostsfile.ensure([], util.Plan(False), path)
+        with open(path) as f:
+            self.assertEqual(f.read(), '127.0.0.1 localhost\n::1 localhost\n')

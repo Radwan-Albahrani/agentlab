@@ -19,6 +19,10 @@ REACH = {
     'cloudflare': 'Cloudflare: a tunnel plus Cloudflare Access (Google, Microsoft or a code by email)',
     'tinyauth': 'Google sign-in on the server itself (public ports)',
 }
+NETWORK = {
+    'private': 'only devices on your Cloudflare One (WARP) client, over the tunnel: no public address at all',
+    'public': 'a public address with a Cloudflare sign-in page in front',
+}
 FIRST_PORT, PORT_STEP, HUB_PORT = 7101, 10, 7190
 TOOLS = ('t3', 'accounts', 'browser', 'terminal', 'files')
 
@@ -158,6 +162,8 @@ def answers(flags, asker, machine):
             a['domain'] = asker.get('domain', 'The address for the agents, e.g. agents.example.com')
             zone = '.'.join(str(a['domain'] or 'example.com').split('.')[1:]) or 'example.com'
             a['hub_domain'] = asker.get('hub_domain', 'The address for the dashboard', f'agents-hub.{zone}')
+            if reach == 'cloudflare':
+                a['network'] = asker.choose('network', 'Who can reach the addresses?', NETWORK, 'private')
             if reach == 'tinyauth':
                 a['tinyauth_domain'] = asker.get(
                     'tinyauth_domain', 'The address for the sign-in page', f'agents-auth.{zone}'
@@ -238,6 +244,9 @@ def toml_text(a):
         lines.append(f'allow_domains = {q(a["allow_domains"])}')
     if mode == 'tinyauth':
         lines += ['', '[auth.tinyauth]', f'domain = {q(a["tinyauth_domain"])}']
+    if mode == 'cloudflare-access':
+        note = '   # only through the Cloudflare One client' if a['network'] == 'private' else ''
+        lines += ['', '[auth.cloudflare]', f'network = {q(a["network"])}{note}']
     if a['storage'] != 'shared':
         lines += ['', '[storage]', f'mode = {q(a["storage"])}']
     if a['android']:
@@ -300,7 +309,7 @@ def needed_secrets(cfg):
             (
                 'cloudflare-api',
                 'a Cloudflare API token (My Profile → API Tokens → Create Token → Custom) with '
-                + '; '.join(cloudflare.PERMISSIONS.values()),
+                + '; '.join(cloudflare.PERMISSIONS[k] for k in cloudflare.needed_permissions(cfg)),
             )
         )
     if cfg['auth']['mode'] == 'tinyauth':

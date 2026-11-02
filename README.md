@@ -26,7 +26,8 @@
 
 ## 🤝 Share it safely
 
-- 🔐 Sign in through **Tailscale**, **Cloudflare** (Google, Microsoft or an email code) or a **Google login**.
+- 🔐 Sign in through **Tailscale**, **Cloudflare** (only devices on your Cloudflare One client, or a sign-in page with
+  Google, Microsoft or an email code) or a **Google login**.
 - 🚪 Everyone gets their own sealed-off agents: no peeking at each other's files, chats or logins.
 - 👀 Whoever runs the machine can see everything, so they can help. Make sure everyone knows who that is.
 

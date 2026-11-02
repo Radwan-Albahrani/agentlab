@@ -209,6 +209,15 @@ class Cloudflare(Base):
     def test_each_person_gets_their_own(self):
         self.assertEqual(self.agent_of(self.verify(tok=token('omar@example.com'))), 'omar')
 
+    def test_a_cloudflare_one_client_session_token_works_the_same(self):
+        # Signed in through the client session (private network / allow_authenticate_via_warp): the token carries the
+        # same email plus device claims; only the signed email decides who it is
+        tok = token(device_id='3f1c-device', identity_nonce='n0nce', type='app', country='SA', warp=True)
+        status, headers, _ = self.verify(tok=tok)
+        self.assertEqual(
+            (status, headers['X-Agentlab-User'], headers['X-Agentlab-Agent']), (200, 'sara@example.com', 'sara')
+        )
+
     def test_no_agent_gets_gate(self):
         self.assertEqual(self.agent_of(self.verify(tok=token('new@example.com'))), 'gate')
 

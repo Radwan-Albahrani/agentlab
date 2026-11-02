@@ -98,13 +98,23 @@ class Answers(unittest.TestCase):
         self.assertEqual((cfg['domain'], cfg['auth']['mode']), ('box.tail1234.ts.net', 'tailscale'))
 
     def test_questions_at_a_terminal(self):
-        replies = ['3', 'boss@example.com', 'agents.example.com', '', '', 'boss@example.com=1, sara@example.com', '']
+        replies = [
+            '3',
+            'boss@example.com',
+            'agents.example.com',
+            '',
+            '',
+            '',
+            'boss@example.com=1, sara@example.com',
+            '',
+        ]
         a, missing = self.ask({}, interactive=True, replies=replies)
         self.assertEqual(missing, [])
         self.assertEqual(
             (a['reach'], a['domain'], a['hub_domain']), ('cloudflare', 'agents.example.com', 'agents-hub.example.com')
         )
         self.assertEqual([i for _, i in a['agents']], ['boss', 'sara'])
+        self.assertEqual(a['network'], 'private')  # the default: only the Cloudflare One client reaches it
 
     def test_a_bad_reply_is_asked_again(self):
         replies = ['1', 'nope', 'me@example.com', '', '']

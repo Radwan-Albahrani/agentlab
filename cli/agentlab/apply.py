@@ -8,7 +8,7 @@ import secrets
 import shutil
 import subprocess
 
-from . import cloudflare, deploy, disks, images, render, template
+from . import cloudflare, config, deploy, disks, health, hostsfile, images, render, template
 from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
 
 FIREWALL_UNIT = 'agentlab-firewall.service'
@@ -280,6 +280,8 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     files = render.all_files(cfg)
     changed = write_rendered(cfg, plan)
     firewall(cfg, changed, plan)
+    private = cloudflare.signed_in_hosts(cfg) if config.private_network(cfg) else []
+    hostsfile.ensure(private, plan)
     images.ensure(cfg, plan, force=build)
     for name, (kind, key) in render.stacks(cfg).items():
         if only is not None and name not in only:
@@ -306,4 +308,6 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
         templates = template.update_all(cfg, plan)
     if not dry and not changed:
         say('  rendered files unchanged')
+    if not dry and only is None:
+        health.wait_ready(cfg)  # ok only once every agent answers, not just runs
     return {'changed_files': changed, 'companion_templates': templates}

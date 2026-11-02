@@ -82,6 +82,10 @@ def edge_service(cfg):
         '--log.level=WARN',
     ]
     ports = [f'127.0.0.1:{INGRESS_PORT}:{INGRESS_PORT}']
+    if auth['mode'] == 'cloudflare-access' and auth['cloudflare']['network'] == 'private':
+        # Private hostname routes: cloudflared resolves the names on this host (hosts file -> 127.0.0.1) and connects to
+        # port 80, the plain-HTTP port Access issues its token on without Gateway TLS decryption
+        ports.append(f'127.0.0.1:80:{INGRESS_PORT}')
     volumes = [f'{data}/rendered/edge:/etc/traefik/dynamic:ro']
     if auth['ingress'] == 'tailscale':
         command.append(f'--entrypoints.hubingress.address=:{HUB_INGRESS_PORT}')
@@ -242,6 +246,9 @@ def agent(cfg, a):
             'AGENTLAB_PUBLISHED_HUB': str(cfg['hub']['publish'] or ''),
             'AGENTLAB_AUTH_MODE': cfg['auth']['mode'],
             'AGENTLAB_ISOLATION': cfg['isolation'],  # which Docker engine the agent runs (image: agent-dockerd)
+            # Coolify starts the container on a network of its own before agentlab takes it off; a download begun
+            # on that address is stranded, so the entrypoint waits until this is the container's only address
+            'AGENTLAB_WAIT_NETWORK': config.agent_ip(a) if cfg['deploy'] == 'coolify' else '',
             'ANDROID_ENABLED': '1' if cfg['android']['enabled'] else '',
             'ANDROID_SYSTEM_IMAGE': cfg['android']['system_image'],
             # agent-updater: how often to refresh T3/Claude/Codex, and what to do when T3 stays busy

@@ -9,7 +9,7 @@ import shutil
 import socket
 import urllib.request
 
-from . import cloudflare, config, coolify, deploy, disks, preflight, render
+from . import cloudflare, config, coolify, deploy, disks, health, hostsfile, preflight, render
 from .util import is_root, run, size_bytes
 
 
@@ -253,6 +253,8 @@ def access(cfg, c):
         _cloudflare_token(cfg, c)
     if mode == 'cloudflare-access':
         _cloudflare_access(cfg, c)
+        if config.private_network(cfg) or cfg['auth']['cloudflare']['require_warp']:
+            _client_only(cfg, c)
     if mode == 'tailscale':
         _tailscale(cfg, c)
     if mode == 'tinyauth':
@@ -360,6 +362,35 @@ def _cloudflare_access(cfg, c):
         f'Zero Trust login methods offered: {names or "none listed (the one-time PIN by email still works)"}'
         + ('; [auth.cloudflare] login_method can pin people to one' if names else ''),
     )
+
+
+def _client_only(cfg, c):
+    """network = "private" or require_warp: the routes, the app and the organization settings it depends on, plus
+    this host's half (the names resolve to the edge, which holds loopback port 80)."""
+    if config.private_network(cfg):
+        names = cloudflare.signed_in_hosts(cfg)
+        try:
+            with open(hostsfile.PATH) as f:
+                text = f.read()
+        except OSError:
+            text = ''
+        c.add(
+            'hosts-file',
+            hostsfile.merged(text, names) == text,
+            f'{hostsfile.PATH} sends {", ".join(names)} to the edge (cloudflared resolves them here)',
+            'agentctl apply',
+        )
+    if not cloudflare.configured(cfg) or (
+        not is_root() and not os.access(cfg['cloudflare']['api_token_file'], os.R_OK)
+    ):
+        return
+    try:
+        checks = cloudflare.client_only_checks(cfg)
+    except Exception as e:  # reported as a check, not a crash
+        c.add('client-only', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
+        return
+    for cid, ok, message, fix, severity in checks:
+        c.add(cid, ok, message, fix, 'warning' if severity == 'info' else severity)
 
 
 WINDOWS_TAILSCALE = '/mnt/c/Program Files/Tailscale/tailscale.exe'
@@ -535,6 +566,7 @@ def run_all(cfg):
     prerequisites(cfg, c)
     if docker(cfg, c):
         cluster(cfg, c)
+        health.checks(cfg, c)
     android(cfg, c)
     access(cfg, c)
     coolify_check(cfg, c)

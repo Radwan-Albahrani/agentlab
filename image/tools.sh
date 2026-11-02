@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2016  # the installers run in a child bash (attempt ... bash -c), which expands them
 # The fast-moving CLIs (Claude Code, Codex, T3, herdr, ...) live in the home volume, not the image, so they can update
 # without a rebuild. Sourced by the entrypoint (install what's missing before start) and by agent-updater (refresh
 # everything in the background), so both always install the same things the same way.
@@ -8,26 +9,82 @@ NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remot
 
 log() { echo "[tools $(date +%T)] $*"; }
 
-install_t3() { curl -fsSL https://t3.codes/install.sh | sh >"${HOME}/logs/t3-install.log" 2>&1 || log "T3 Code install FAILED"; }
+# No download may hang for good: a connection stranded on a network that went away once kept a first start waiting
+# forever (#18). curl reads $CURL_HOME/.curlrc, so these limits also cover the curl calls inside the vendors' install
+# scripts; `attempt` cuts each whole installer off and tries again.
+CURL_HOME_DIR="${HOME}/.cache/agentlab/curl"
+
+write_curlrc() {
+  mkdir -p "${CURL_HOME_DIR}"
+  printf '%s\n' 'connect-timeout = 20' 'retry = 5' 'retry-all-errors' 'speed-limit = 1024' 'speed-time = 60' \
+    >"${CURL_HOME_DIR}/.curlrc"
+}
+
+# attempt NAME SECONDS COMMAND...: up to three tries, each cut off after SECONDS.
+attempt() {
+  local name=$1 limit=$2 try rc
+  shift 2
+  for try in 1 2 3; do
+    CURL_HOME="${CURL_HOME_DIR}" timeout --kill-after=10 "${limit}" "$@"
+    rc=$?
+    [ "${rc}" -eq 0 ] && return 0
+    log "${name}: attempt ${try} failed (exit ${rc}$([ "${rc}" -eq 124 ] && echo ', stalled past its time limit'))"
+    [ "${try}" -lt 3 ] && sleep "$((try * ${ATTEMPT_BACKOFF_S:-15}))"
+  done
+  return 1
+}
+
+install_t3() {
+  attempt "T3 Code install" 600 bash -c 'set -o pipefail; curl -fsSL https://t3.codes/install.sh | sh >"${HOME}/logs/t3-install.log" 2>&1' \
+    || log "T3 Code install FAILED"
+}
 
 install_herdr() {
-  curl -fsSL https://herdr.dev/install.sh | sh >"${HOME}/logs/herdr-install.log" 2>&1 || log "herdr install FAILED"
+  attempt "herdr install" 600 bash -c 'set -o pipefail; curl -fsSL https://herdr.dev/install.sh | sh >"${HOME}/logs/herdr-install.log" 2>&1' \
+    || log "herdr install FAILED"
+}
+
+# Coolify first puts a container on a network of its own, and agentlab takes it off right after; a download begun
+# in between is stranded on an address that no longer exists (#18). When AGENTLAB_WAIT_NETWORK names the agent's
+# own address, wait until it is the only one before downloading anything; after NETWORK_WAIT_S, carry on anyway.
+container_addresses() { ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | sort; }
+
+wait_for_final_network() {
+  local want=${AGENTLAB_WAIT_NETWORK:-} limit=${NETWORK_WAIT_S:-300} waited=0 addrs
+  [ -n "${want}" ] || return 0
+  while :; do
+    addrs=$(container_addresses)
+    if [ "${addrs}" = "${want}" ]; then
+      [ "${waited}" -gt 0 ] && log "network settled after ${waited}s"
+      return 0
+    fi
+    if [ "${waited}" -ge "${limit}" ]; then
+      log "still on more than its own network after ${limit}s (${addrs//$'\n'/ }); starting anyway"
+      return 0
+    fi
+    [ "${waited}" -eq 0 ] && log "waiting until this container is on its own network only (${want})"
+    sleep 2
+    waited=$((waited + 2))
+  done
 }
 
 install_missing_tools() {
+  write_curlrc
   if ! command -v claude >/dev/null; then                    # Claude Code updates itself after the first install
     log "installing Claude Code"
-    curl -fsSL https://claude.ai/install.sh | bash || log "Claude Code install FAILED"
+    attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
+      || log "Claude Code install FAILED"
   fi
   if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null; then
     log "installing Codex, Cyrus, Playwright MCP, mcp-remote"
-    npm install -g "${NPM_TOOLS[@]}" >"${HOME}/logs/npm-update.log" 2>&1 || log "npm install failed (see ~/logs/npm-update.log)"
+    attempt "npm install" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
+      || log "npm install failed (see ~/logs/npm-update.log)"
   fi
   command -v t3 >/dev/null || install_t3
   command -v herdr >/dev/null || install_herdr
   if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew && -w /home/linuxbrew ]]; then   # first start only, ~2 min
     log "installing Homebrew in the background"
-    (NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    (CURL_HOME="${CURL_HOME_DIR}" NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
       >"${HOME}/logs/brew-install.log" 2>&1 && echo "[done]" >>"${HOME}/logs/brew-install.log") &
   fi
 }
@@ -35,12 +92,14 @@ install_missing_tools() {
 # Everything to its latest version in place. A running T3 server keeps its version until agent-updater restarts it
 # while the agent is idle; the CLIs pick theirs up on their next run.
 update_tools() {
+  write_curlrc
   log "updating Codex, Cyrus, Playwright MCP, mcp-remote, T3 Code, herdr, Claude Code"
-  npm install -g "${NPM_TOOLS[@]}" >"${HOME}/logs/npm-update.log" 2>&1 \
+  attempt "npm update" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
     || log "npm update failed (see ~/logs/npm-update.log); keeping installed versions"
   install_t3
   install_herdr
-  command -v claude >/dev/null && { claude update >"${HOME}/logs/claude-update.log" 2>&1 || log "claude update failed"; }
+  command -v claude >/dev/null \
+    && { attempt "claude update" 600 bash -c 'claude update >"${HOME}/logs/claude-update.log" 2>&1' || log "claude update failed"; }
   log "claude $(claude --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)" \
       "| t3 $(t3 --version 2>/dev/null | head -1) | herdr $(herdr --version 2>/dev/null | head -1)"
 }

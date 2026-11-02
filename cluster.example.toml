@@ -7,7 +7,7 @@ name = "example"
 domain = "agents.example.com"      # everyone's own agent, chosen by who signed in (first-level: free certificate)
 hub_domain = "agents-hub.example.com"   # the hub: everyone sees their own agents, admins see everything
 coolify_domain = ""                # optional, e.g. "agents-coolify.example.com" (admins)
-pair_domain = ""                   # optional, e.g. "{id}-t3.example.com": where the T3 desktop/mobile apps connect
+pair_domain = ""                   # Cloudflare public only, e.g. "{id}-t3.example.com": where the T3 apps connect
 timezone = "UTC"
 data = "/srv/agentlab"
 deploy = "compose"                 # plain Docker Compose; "coolify" if you'd like Coolify's UI for the stacks
@@ -28,6 +28,9 @@ team = ""                          # your Zero Trust team (<team>.cloudflareacce
 audience = ""                      # the Access application's id for the gate; filled in by setup too
 login_method = ""                  # "" = every Zero Trust login method is offered (the one-time PIN by email needs no
                                    # setup); or pin one, e.g. "One-time PIN" or "Google Workspace" (one-click)
+network = "private"                # "private": only devices on your Cloudflare One (WARP) client reach the agents,
+                                   # over the tunnel, with no public DNS; "public": a public sign-in page instead
+require_warp = false               # public only: just devices on the client get past the sign-in page
 
 [auth.tinyauth]                    # mode = "tinyauth"
 domain = ""                        # its login page, e.g. "login.example.com"

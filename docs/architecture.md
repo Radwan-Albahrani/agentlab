@@ -54,6 +54,17 @@ Allowed people are always the agent owners plus `auth.admins`, plus (cloudflare-
 system where it can (Cloudflare Access policy, tinyauth whitelist; for Tailscale the tailnet ACL is the admin's job
 and `doctor` explains it).
 
+**Cloudflare networks.** `[auth.cloudflare] network = "private"` (the default) publishes nothing: the tunnel carries
+the cluster's names as private hostname routes (`/zerotrust/routes/hostname`, comment `agentlab-<name>`), so only
+devices on the organization's Cloudflare One (WARP) client reach them, through Gateway. cloudflared resolves each name
+on the host, where `apply` keeps a marked block in `/etc/hosts` pointing them at `127.0.0.1`, and connects on port 80,
+which the edge also publishes on loopback. The Access application has private destinations (`port_range` 80) and
+`allow_authenticate_via_warp`, so the client session signs people in (the T3 apps included) and Access hands the
+origin the same `Cf-Access-Jwt-Assertion` it does for public apps: plain HTTP inside the client's tunnel is what lets
+it do that without Gateway TLS decryption. agentlab's own public DNS records and the pair-host Bypass app are removed;
+`pair_domain` is refused. `network = "public"` is the public-hostname setup, and `require_warp = true` adds a
+`device_posture` require rule (the account's Gateway posture check) to the people policy there.
+
 **Published ports (one person).** With `auth.mode` `tailscale` or `none` and a single owner, `[agents.publish]` and
 `[hub] publish` put the tools on host ports, reached over the person's own network (tailnet or LAN).
 When the hub and every agent's T3 are published, agentlab doesn't use `tailscale serve` or tailnet HTTPS at all and

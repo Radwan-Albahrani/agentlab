@@ -20,6 +20,12 @@ The gate logs every refusal with its reason: `docker logs` on the gate container
 `status` names the check that fails (Accounts, terminal or T3). The container's logs come next, then the program's own
 log inside it: `docker exec -u agent <container> tail -n 100 /home/agent/logs/<t3|accounts|terminal|dockerd>.log`.
 
+A first start downloads Claude Code, Codex and T3 into the agent's home, so it takes a few minutes; `apply` and
+`setup` wait for it and `doctor` shows it as still starting. Every download gives up on a stall and retries, so an
+agent that stays starting for more than 20 minutes is stuck on something else: its `docker logs` say what, and a
+restart usually clears it. With Coolify, a new agent first waits until it's off Coolify's own network (its log says
+so); that takes seconds.
+
 If it's memory, the dashboard's agent page shows usage. Heavy jobs wait their turn in the throttle (`journalctl -u
 agentlab-throttle`) rather than all running at once; raise an agent's `memory` only when the machine has room under
 `limits.total_memory`. Restarting an agent (dashboard → agent → Restart, or `docker restart`) keeps its chats and
