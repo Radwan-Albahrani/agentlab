@@ -69,6 +69,8 @@ class Config:
         self.mode = auth.get('mode') or 'cloudflare-access'
         self.team = team if TEAM.match(team) else ''
         self.audience = str(cf.get('audience') or '').strip()
+        # private HTTPS: requests over HTTPS sign in through Access's OIDC provider (oidc.py)
+        self.https = self.mode == 'cloudflare-access' and cf.get('https') is True
         self.hub_port = str(auth.get('hub_port') or 8443)
         self.admins = {_email(e) for e in auth.get('admins') or []} - {''}
         self.agents = {a['id']: {**a, 'owner': _email(a.get('owner'))} for a in raw.get('agents') or [] if a.get('id')}

@@ -45,7 +45,7 @@ the edge is the same in every mode.
 
 | `auth.mode` | Sign-in | Ingress (`auth.ingress`, default) | Identity the gate trusts |
 |---|---|---|---|
-| `cloudflare-access` | Cloudflare Access (any Zero Trust login method; one-time PIN by email needs no setup) | `cloudflared` tunnel → `127.0.0.1:8088` | `Cf-Access-Jwt-Assertion`, verified (RS256, `aud`, `iss`, expiry) |
+| `cloudflare-access` | Cloudflare Access (any Zero Trust login method; one-time PIN by email needs no setup) | `cloudflared` tunnel → `127.0.0.1:8088` | `Cf-Access-Jwt-Assertion`, verified (RS256, `aud`, `iss`, expiry); private HTTPS: the gate's own OIDC sign-in through Access |
 | `tailscale` | being on the tailnet | `tailscale serve` → `127.0.0.1:8088` | `Tailscale-User-Login`, set by `tailscale serve` |
 | `tinyauth` | tinyauth (Google OAuth etc.), runs in the core stack | `public` (edge on :80/:443, Let's Encrypt) or `cloudflared` (tunnel, no Access) | `Remote-Email`, set by tinyauth's forwardAuth response |
 | `none` | nobody: local testing only (gate needs `GATE_ALLOW_NONE=1`) | loopback | everyone is admin |
@@ -64,8 +64,33 @@ the compose file. The Access application has private destinations (`port_range` 
 `allow_authenticate_via_warp`, so the client session signs people in (the T3 apps included) and Access hands the
 origin the same `Cf-Access-Jwt-Assertion` it does for public apps: plain HTTP inside the client's tunnel is what lets
 it do that without Gateway TLS decryption. agentlab's own public DNS records and the pair-host Bypass app are removed;
-`pair_domain` is refused. `network = "public"` is the public-hostname setup, and `require_warp = true` adds a
-`device_posture` require rule (the account's Gateway posture check) to the people policy there.
+`pair_domain` is refused unless `https` is on. `network = "public"` is the public-hostname setup, and
+`require_warp = true` adds a `device_posture` require rule (the account's Gateway posture check) to the people policy
+there.
+
+**Private over HTTPS** (`[auth.cloudflare] https = true`, written by setup for new installs). Gateway TLS decryption
+stays off, so no Cloudflare root certificate goes on devices; Access still allows or refuses each connection to the
+private names by identity, but can't add `Cf-Access-Jwt-Assertion` to an encrypted request. Instead:
+- the edge listens on container port 443 too (`websecure`, no host port) with a Let's Encrypt certificate by DNS-01
+  (Traefik's `cloudflare` provider, `CF_DNS_API_TOKEN_FILE` pointing at the token mounted read-only; one
+  `*.<parent>` wildcard per parent name, so the CT log shows no agent names);
+- `cloudflare setup` creates `agentlab-<name> sign-in`, an Access for SaaS OIDC application (same people policy,
+  redirect URIs `https://<name>/_agentlab/oidc/callback`, PKCE, client session sign-in) and saves its client id and
+  secret (the secret is only returned on create; a lost one means a new application) to `<data>/secrets/gate/`, a
+  folder only the gate's uid reads; `apply` adds a random session key there;
+- the gate, for requests that arrived over HTTPS, is an OIDC relying party inside `/verify`: no session → 302 to
+  Access's authorization endpoint (state, nonce and PKCE verifier sealed in a short-lived `__Host-` cookie) for a
+  page load, 401 for anything else; the callback checks state, exchanges the code, verifies the ID token (RS256 with
+  the application's JWKS, `iss`, `aud`, `exp`, `nonce`, `email`) and sets `__Host-agentlab_session` (Fernet:
+  encrypted and signed, bound to the host, 12 hours, HttpOnly, Secure, SameSite=Lax);
+- the gate adds `X-Agentlab-Proof` (HMAC over its answer, two minutes) and the hub accepts that instead of the Access
+  JWT, so a request that reached the hub some other way still can't name someone;
+- every agent gets a private name from `pair_domain` (`<id>-t3.<zone>`): routed over the tunnel, an alias on the edge,
+  served on 443 straight to its T3 (T3's pairing protects it, no gate), and covered by the Access application.
+Make before break: the Access application keeps port 80 only until the edge serves a trusted certificate (checked
+from the host at `10.207.0.2:443` with SNI); then `apply` (`finish_https`) adds 443 for every name and writes
+`<data>/secrets/gate/https-live`, after which the gate answers plain HTTP with a 308 to HTTPS. Before that, plain
+HTTP keeps the Access JWT path. Port 80 stays in the Access application so even the redirect is only for your people.
 
 **Published ports (one person).** With `auth.mode` `tailscale` or `none` and a single owner, `[agents.publish]` and
 `[hub] publish` put the tools on host ports, reached over the person's own network (tailnet or LAN).
@@ -301,7 +326,7 @@ Agent links are always `https://<domain>/...`; to open a specific agent, `https:
 |---|---|---|---|
 | `agent-<id>` (alias) | `agentlab/agent` | `agentlab-<id>` | runtime `sysbox-runc` or unconfined opts; `cgroup_parent: agentlab.slice`; mem/cpu limits; `/dev/kvm` when Android is on; env `AGENT_ID`, `AGENT_OWNER`, `AGENTLAB_DOMAIN`, `AGENTLAB_HUB_DOMAIN`, `AGENTLAB_PAIR_HOST` (empty when none), `AGENTLAB_AUTH_MODE`, `AGENTLAB_ISOLATION`, `AGENTLAB_PUBLISHED` (`t3=7101,...`) and `AGENTLAB_PUBLISHED_HUB`, `ANDROID_ENABLED`, `ANDROID_SYSTEM_IMAGE`; `/dev/net/tun` in both modes; fixed IP `.2` in its subnet; the image has its own HEALTHCHECK; `[agents.publish]` (one-person setups) maps host ports |
 | `files-<id>` | `gtstef/filebrowser:2.0.2-stable` | `agentlab-<id>` | in the agent's stack; uid 1000; mounts only that agent's `workspace` (and `home` read-only); config in `<data>/files/<id>` (not on the agent's disk); noauth behind the gate; heavy folders excluded from indexing only |
-| `edge` | `traefik:v3.3.4` | `agentlab-edge` (fixed `10.207.0.2`) + every `agentlab-<id>` | entrypoints `ingress` :8088 (:80 for private names; published `127.0.0.1:8088`; public ingress adds :80/:443), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
+| `edge` | `traefik:v3.3.4` | `agentlab-edge` (fixed `10.207.0.2`) + every `agentlab-<id>` | entrypoints `ingress` :8088 (:80 for private names; published `127.0.0.1:8088`; public ingress adds :80/:443; private HTTPS adds :443, container only), `routed` 127.0.0.1:8089; file provider `<data>/rendered/edge/` |
 | `cloudflared` | `cloudflare/cloudflared` (pinned) | `agentlab-edge` | private names only: the tunnel, next to the edge; no host ports |
 | `gate` | `agentlab/gate` | `agentlab-edge` + every `agentlab-<id>` | `:8080`, reads `cluster.json`; asks agents for onboarding state |
 | `tinyauth` | `ghcr.io/tinyauthapp/tinyauth:v5.1.3` (≥ 5.1.3: fixes CVE-2026-77560) | `agentlab-edge` | tinyauth mode only |

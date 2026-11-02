@@ -1,6 +1,11 @@
 """Who is asking. The edge (pass 2) names the signed-in person in X-Agentlab-User; with Cloudflare Access the hub also
 verifies the Access JWT itself, so a routing mistake alone can't make someone else.
 
+Private HTTPS has no Access JWT on the request (Access can't add one without TLS decryption; the gate signs people in
+itself), so there the gate's own signature stands in for it: X-Agentlab-Proof, an HMAC over the gate's answer with a
+key derived from the gate's session key, valid for two minutes. Only the gate (and root on the host) holds that key;
+the hub reads it from the secrets folder it already mounts. Either check passing is enough.
+
 RS256 only, checked against the team's published keys (cached, re-fetched once for an unknown key id), with the
 Access application's audience, the team issuer, and the token's lifetime. Standard library only: the signature
 check is plain RSA (PKCS#1 v1.5 over SHA-256)."""
@@ -18,6 +23,7 @@ import cluster
 import scope
 
 CERTS_URL = os.environ.get('HUB_ACCESS_CERTS_URL', 'https://{team}.cloudflareaccess.com/cdn-cgi/access/certs')
+GATE_KEY = os.environ.get('HUB_GATE_KEY', '/secrets/gate/session.key')  # private HTTPS: see proof_ok
 KEYS_FOR = 3600  # s before the team's keys are fetched again
 LEEWAY = 60  # s of clock difference allowed on exp / nbf
 MODES = ('cloudflare-access', 'tailscale', 'tinyauth')
@@ -95,6 +101,31 @@ def verify(token, team, audience, now=None):
     return claims
 
 
+def _gate_key():
+    try:
+        with open(GATE_KEY, encoding='utf-8') as f:
+            text = f.read().strip()
+    except OSError:
+        return b''
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        return text.encode()
+
+
+def proof_ok(headers, user, now=None):
+    """Whether X-Agentlab-Proof is the gate's signature over this answer (gate/gate/oidc.py proof())."""
+    exp, _, mac = (headers.get('X-Agentlab-Proof') or '').partition('.')
+    key = _gate_key()
+    if not key or not exp.isdigit() or int(exp) < (time.time() if now is None else now):
+        return False
+    admin, agent = headers.get('X-Agentlab-Admin') or '', headers.get('X-Agentlab-Agent') or ''
+    msg = f'{user}\n{admin}\n{agent}\n{exp}'
+    sub = hmac.new(key, b'agentlab proof v1', hashlib.sha256).digest()
+    want = base64.urlsafe_b64encode(hmac.new(sub, msg.encode(), hashlib.sha256).digest()).rstrip(b'=').decode()
+    return hmac.compare_digest(mac, want)
+
+
 def token_of(headers):
     """The JWT Access adds as a header, or its cookie (browsers send it on every request)."""
     token = headers.get('Cf-Access-Jwt-Assertion')
@@ -129,11 +160,14 @@ def viewer(headers):
         raise DeniedError('not signed in')
     if mode == 'cloudflare-access':
         cf = conf.get('cloudflare') or {}
-        if not cf.get('team') or not cf.get('audience'):
+        if cf.get('https') is True and proof_ok(headers, user):
+            pass  # the gate signed this answer: an HTTPS sign-in, which carries no Access JWT
+        elif not cf.get('team') or not cf.get('audience'):
             raise DeniedError('Cloudflare Access is not configured')
-        claims = verify(token_of(headers), cf['team'], cf['audience'])
-        if str(claims['email']).lower() != user:
-            raise DeniedError('the sign-in does not match')
+        else:
+            claims = verify(token_of(headers), cf['team'], cf['audience'])
+            if str(claims['email']).lower() != user:
+                raise DeniedError('the sign-in does not match')
     who = scope.of(user)
     if not who.admin and not who.agents:
         raise DeniedError(f'{user} has no agent here')

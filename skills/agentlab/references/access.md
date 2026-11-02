@@ -92,7 +92,30 @@ front; anyone can reach the page, only your people get past it. Pick this when p
 ```toml
 [auth.cloudflare]
 network = "private"     # or "public"
+https = true            # private: a real certificate (setup writes this for new installs)
 ```
+
+**Private over HTTPS.** With `https = true` the addresses open as `https://agents.example.com` with the usual padlock,
+and nothing is installed on anyone's device. The server gets a Let's Encrypt certificate for your addresses by
+proving it controls the zone through Cloudflare DNS (the addresses are private, so Let's Encrypt couldn't reach them
+otherwise); the certificate names `*.example.com`, so the public certificate log shows one wildcard rather than every
+agent's address. Nothing is decrypted on the way: Gateway's TLS inspection stays off, so Access still lets each
+connection in or not by who is on the client, but it can't add its signed identity to an encrypted request. So the
+gate asks Access itself: agentlab creates a second application, `agentlab-<cluster> sign-in` (an OIDC application
+for the same people), and the gate signs people in through it once per session (12 hours; on a device on the client
+that's a few redirects with no prompt), then keeps its own encrypted cookie. Each agent's T3 desktop and phone apps
+get an address of their own (`pair_domain`, which setup sets to `{id}-t3.<your zone>`): it goes straight to T3,
+which only accepts devices its owner paired.
+
+The switch is careful: setup creates the sign-in application first and keeps plain `http://` working; once the
+server holds a valid certificate, the next `agentctl apply` adds port 443 to the Access application and the gate
+starts redirecting `http://` to `https://`. Until then there is simply no HTTPS to see, so nobody meets a certificate
+warning. `agentctl doctor` shows each step, and warns two weeks before the certificate would expire (it renews by
+itself well before). `https = false` goes back to plain HTTP and removes the sign-in application.
+
+The certificate needs a token that may edit DNS records in your zone; the API token below already can. To keep that
+power off the web server, give it a separate token with only Zone · DNS → Edit and set `[cloudflare]
+acme_token_file` to its file.
 
 For private, `cloudflare setup` also turns on what your Zero Trust organization needs, through the token, only
 where it's off or unset: the Gateway proxy (TCP and UDP), a Cloudflare One Client authentication session duration
@@ -136,11 +159,11 @@ Microsoft Entra ID in Zero Trust → Settings → Authentication (the redirect a
 `https://<your-team>.cloudflareaccess.com/cdn-cgi/access/callback`). If the account has a single method, agentlab uses
 it straight away; with several, everyone is offered all of them unless you set `login_method` to one.
 
-Keep every address one level under your domain (`agents.example.com`, `agents-hub.example.com`). Private addresses
-are plain `http://` inside the client's encrypted tunnel: that's what lets Access hand the server a signed identity
-without Gateway TLS decryption. With public, the T3 desktop and phone apps need `pair_domain = "{id}-t3.example.com"`:
-each agent then gets an address that skips the browser sign-in and only accepts devices its owner paired (private
-doesn't need it, and refuses it).
+Keep every address one level under your domain (`agents.example.com`, `agents-hub.example.com`). Without `https`,
+private addresses are plain `http://` inside the client's encrypted tunnel: that's what lets Access hand the server a
+signed identity without Gateway TLS decryption, and the T3 apps connect to the main address. With public, the T3
+desktop and phone apps need `pair_domain = "{id}-t3.example.com"`: each agent then gets an address that skips the
+browser sign-in and only accepts devices its owner paired.
 
 ## Google sign-in on the server (tinyauth)
 

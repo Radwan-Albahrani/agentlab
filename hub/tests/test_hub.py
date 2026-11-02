@@ -3,6 +3,7 @@ Run from hub/: python3 -m unittest discover -s tests"""
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -156,6 +157,43 @@ class Access(unittest.TestCase):
         for why, headers in cases.items():
             with self.subTest(why), self.assertRaises(access.DeniedError):
                 access.viewer(headers)
+
+    def test_https_takes_the_gates_proof_instead_of_a_token(self):
+        # private HTTPS: Access adds no token, the gate signs its answer with a key derived from its session key
+        path = f'{ROOT}/cluster.json'
+        conf = json.loads(Path(path).read_text())
+        conf['auth']['cloudflare']['https'] = True
+        Path(path).write_text(json.dumps(conf))
+        os.utime(path, (time.time() + 2, time.time() + 2))
+        cluster.load()
+        key = Path(f'{ROOT}/gate-session.key')
+        key.write_text('ab' * 32)
+        sub = hmac.new(bytes.fromhex('ab' * 32), b'agentlab proof v1', hashlib.sha256).digest()
+
+        def proved(user='sara@example.com', admin='0', agent='sara', exp=None, mac_user=None):
+            exp = int(time.time()) + 60 if exp is None else exp
+            msg = f'{mac_user or user}\n{admin}\n{agent}\n{exp}'.encode()
+            mac = base64.urlsafe_b64encode(hmac.new(sub, msg, hashlib.sha256).digest()).rstrip(b'=').decode()
+            return {
+                'X-Agentlab-User': user,
+                'X-Agentlab-Admin': admin,
+                'X-Agentlab-Agent': agent,
+                'X-Agentlab-Proof': f'{exp}.{mac}',
+            }
+
+        with mock.patch.object(access, 'GATE_KEY', str(key)):
+            self.assertEqual(access.viewer(proved()).email, 'sara@example.com')
+            self.assertTrue(access.viewer(signed()).admin)  # plain HTTP still carries Access's token
+            for why, headers in {
+                'someone else': proved('admin@example.com', mac_user='sara@example.com'),
+                'expired': proved(exp=int(time.time()) - 1),
+                'tampered': {**proved(), 'X-Agentlab-Agent': 'lab'},
+                'no proof': {'X-Agentlab-User': 'sara@example.com'},
+            }.items():
+                with self.subTest(why), self.assertRaises(access.DeniedError):
+                    access.viewer(headers)
+        with mock.patch.object(access, 'GATE_KEY', f'{ROOT}/missing.key'), self.assertRaises(access.DeniedError):
+            access.viewer(proved())
 
     def test_published_port_one_owner(self):
         os.environ['HUB_PUBLISHED_OWNER'] = 'Sara@example.com'

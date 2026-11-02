@@ -819,9 +819,16 @@ class FakeCloudflare:
             return {}
         if path.endswith('/access/apps'):
             if method == 'POST':
-                self.apps.append({**body, 'id': f'a{len(self.apps) + 1}', 'aud': f'aud{len(self.apps) + 1}'})
-                return self.apps[-1]
-            return copy.deepcopy([*self.apps, self.enroll])
+                n = len(self.apps) + 1
+                made = {**copy.deepcopy(body), 'id': f'a{n}', 'aud': f'aud{n}'}
+                if body.get('type') == 'saas':  # an OIDC client: its secret is in this answer only
+                    made['saas_app'] = {**body['saas_app'], 'client_id': f'cid{n}', 'client_secret': f'secret{n}'}
+                self.apps.append(made)
+                return copy.deepcopy(made)
+            listed = copy.deepcopy([*self.apps, self.enroll])
+            for a in listed:
+                (a.get('saas_app') or {}).pop('client_secret', None)
+            return listed
         if path.endswith('/access/apps/enroll') and method == 'PUT':
             self.enroll = {**body, 'id': 'enroll'}
             return self.enroll
@@ -1879,3 +1886,216 @@ class HostTunnelCheck(unittest.TestCase):
     def test_public_still_checks_it(self):
         public = BASE.replace('team = "example"', 'team = "example"\nnetwork = "public"')
         self.assertIn('cloudflared', self.checks(public))
+
+
+HTTPS = BASE.replace('team = "example"', 'team = "example"\nhttps = true').replace(
+    'hub_domain = "agents-hub.example.com"',
+    'hub_domain = "agents-hub.example.com"\npair_domain = "{id}-t3.example.com"',
+)
+
+
+class PrivateHttps(unittest.TestCase):
+    """network = "private" with https: a certificate on the edge, the gate's OIDC application, port 443 only once
+    the certificate is there, and the T3 apps' own names."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = self.d = self.tmp.name
+        os.makedirs(f'{d}/secrets')
+        with open(f'{d}/secrets/cf.token', 'w') as f:
+            f.write('api-token')
+        self.config_path = f'{d}/cluster.toml'
+        self.text = HTTPS.replace('data = "/srv/agentlab"', f'data = "{d}"') + (
+            f'\n[cloudflare]\naccount_id = "acc"\nzone = "example.com"\napi_token_file = "{d}/secrets/cf.token"\n'
+        )
+        self.write(self.text)
+        self.fake = FakeCloudflare()
+        self.cert = None  # what the edge serves: None (nothing trusted yet) or the days it has left
+        self.enterContext(mock.patch.object(cloudflare, 'edge_certificate', side_effect=lambda h: (self.cert, 'no')))
+        self.enterContext(mock.patch.object(cloudflare, 'api_for', return_value=self.fake))
+        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
+    def write(self, text):
+        with open(self.config_path, 'w') as f:
+            f.write(text)
+
+    def run_setup(self):
+        cfg = config.load(self.config_path)
+        cloudflare.setup(cfg, util.Plan(False), self.config_path)
+        return cfg
+
+    def finish(self):
+        cfg = config.load(self.config_path)
+        cloudflare.save_gate_secret(cfg, 'key', 'k' * 64)  # apply makes it before it deploys
+        cloudflare.finish_https(cfg, util.Plan(False), wait=0)
+        return cfg
+
+    def people(self):
+        return next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
+
+    def ports(self):
+        return sorted((d['hostname'], d['port_range']) for d in self.people()['destinations'])
+
+    def live(self):
+        return os.path.exists(f'{self.d}/secrets/gate/https-live')
+
+    def test_config_allows_pair_domain_only_with_https(self):
+        self.assertEqual('', problems(HTTPS))
+        self.assertIn('pair_domain', problems(HTTPS.replace('https = true', 'https = false')))
+        self.assertIn('https must be true or false', problems(HTTPS.replace('https = true', 'https = "yes"')))
+        public = PUBLIC.replace('network = "public"', 'network = "public"\nhttps = true')
+        self.assertIn('https is for network = "private"', problems(public))
+        cfg = resolve(HTTPS)
+        self.assertTrue(config.private_https(cfg) and cfg['auth']['cloudflare']['https'])
+        self.assertFalse(resolve(BASE)['auth']['cloudflare']['https'])  # absent: plain HTTP, as before
+
+    def test_the_sign_in_app_and_its_client_come_first_then_port_80_only_until_the_certificate(self):
+        self.run_setup()
+        sign_in = next(a for a in self.fake.apps if a['name'] == 'agentlab-test sign-in')
+        saas = sign_in['saas_app']
+        self.assertEqual((sign_in['type'], saas['auth_type']), ('saas', 'oidc'))
+        self.assertEqual(
+            sorted(saas['redirect_uris']),
+            [
+                'https://agents-hub.example.com/_agentlab/oidc/callback',
+                'https://agents.example.com/_agentlab/oidc/callback',
+            ],
+        )
+        self.assertEqual(saas['scopes'], ['openid', 'email', 'profile'])
+        self.assertEqual(saas['grant_types'], ['authorization_code_with_pkce'])
+        self.assertEqual([p['id'] for p in sign_in['policies']], [p['id'] for p in self.people()['policies']])
+        self.assertTrue(sign_in['allow_authenticate_via_warp'])
+        folder = f'{self.d}/secrets/gate'
+        with open(f'{folder}/oidc-client-id') as f:
+            self.assertEqual(f.read(), saas['client_id'])
+        with open(f'{folder}/oidc-client-secret') as f:
+            self.assertEqual(f.read(), 'secret' + saas['client_id'][3:])
+        self.assertEqual(stat.S_IMODE(os.stat(f'{folder}/oidc-client-secret').st_mode), 0o400)
+        self.assertEqual(self.fake.apps.index(sign_in), 0)  # made before the people's app
+        self.assertEqual({p for _, p in self.ports()}, {'80'})  # no certificate yet: HTTPS isn't offered
+        self.assertFalse(self.live())
+        self.assertIn('sara-t3.example.com', [r['hostname'] for r in self.fake.routes])
+
+    def test_port_443_and_the_redirect_once_the_certificate_is_trusted(self):
+        self.run_setup()
+        self.finish()  # apply right after: Let's Encrypt not done yet
+        self.assertEqual({p for _, p in self.ports()}, {'80'})
+        self.assertFalse(self.live())
+        self.cert = 89
+        self.finish()
+        self.assertEqual(
+            self.ports(),
+            [
+                ('agents-hub.example.com', '443'),
+                ('agents-hub.example.com', '80'),
+                ('agents.example.com', '443'),
+                ('agents.example.com', '80'),
+                ('omar-t3.example.com', '443'),
+                ('sara-t3.example.com', '443'),
+            ],
+        )
+        self.assertTrue(self.live())
+        before = len(self.fake.writes)
+        self.cert = None  # a passing failure never takes 443 away again
+        self.run_setup()
+        self.finish()
+        self.assertEqual(self.fake.writes[before:], [])
+
+    def test_a_lost_client_secret_means_a_new_client_and_the_old_one_goes(self):
+        self.run_setup()
+        self.fake.apps.append({'id': 'x', 'name': 'payroll', 'type': 'saas', 'saas_app': {'client_id': 'theirs'}})
+        os.remove(f'{self.d}/secrets/gate/oidc-client-secret')
+        self.run_setup()
+        names = [(a['name'], (a.get('saas_app') or {}).get('client_id')) for a in self.fake.apps]
+        self.assertIn(('payroll', 'theirs'), names)
+        sign_ins = [cid for name, cid in names if name == 'agentlab-test sign-in']
+        self.assertEqual(len(sign_ins), 1)
+        self.assertNotEqual(sign_ins[0], 'cid1')
+        with open(f'{self.d}/secrets/gate/oidc-client-id') as f:
+            self.assertEqual(f.read(), sign_ins[0])
+
+    def test_turning_https_off_goes_back_to_port_80_and_removes_only_agentlabs_sign_in(self):
+        self.cert = 89
+        self.run_setup()
+        self.finish()
+        self.assertTrue(self.live())
+        self.fake.apps.append({'id': 'x', 'name': 'payroll', 'type': 'saas', 'saas_app': {'client_id': 'theirs'}})
+        self.write(
+            self.text.replace('https = true', 'https = false').replace('pair_domain = "{id}-t3.example.com"', '')
+        )
+        self.run_setup()
+        self.assertEqual({p for _, p in self.ports()}, {'80'})
+        self.assertEqual(sorted(a['name'] for a in self.fake.apps), ['agentlab-test', 'payroll'])
+        self.assertFalse(self.live())
+
+    def test_doctor_reports_the_https_pieces(self):
+        cfg = self.run_setup()
+        checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
+        self.assertFalse(checks['certificate-agents.example.com'][1])
+        self.assertEqual(checks['certificate-agents.example.com'][4], 'error')
+        self.assertTrue(checks['sign-in-app'][1])
+        self.assertFalse(checks['https-port'][1])
+        self.assertFalse(checks['gate-secrets'][1])  # no session key until apply
+        self.cert = 5
+        self.finish()
+        checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
+        self.assertFalse(checks['certificate-agents.example.com'][1])  # expiring soon
+        self.assertEqual(checks['certificate-agents.example.com'][4], 'warning')
+        self.assertTrue(checks['https-port'][1] and checks['gate-secrets'][1] and checks['https-live'][1])
+
+    def test_render_serves_443_with_a_dns_challenge_certificate_and_no_token_in_compose(self):
+        cfg = resolve(HTTPS)
+        edge = render.edge_service(cfg)
+        self.assertIn('--entrypoints.websecure.address=:443', edge['command'])
+        self.assertIn('--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare', edge['command'])
+        self.assertFalse([c for c in edge['command'] if 'httpchallenge' in c])
+        self.assertEqual(edge['ports'], [f'127.0.0.1:{render.INGRESS_PORT}:80'])  # no host 443
+        self.assertEqual(edge['environment'], {'CF_DNS_API_TOKEN_FILE': render.ACME_TOKEN})
+        self.assertIn(f'/srv/agentlab/secrets/cloudflare-api.token:{render.ACME_TOKEN}:ro', edge['volumes'])
+        self.assertIn('/srv/agentlab/edge-acme:/acme', edge['volumes'])
+        self.assertIn('sara-t3.example.com', edge['networks']['agentlab-edge']['aliases'])
+        routers = render.edge(cfg)['http']['routers']
+        self.assertEqual(routers['in-agent']['entryPoints'], ['ingress', 'websecure'])
+        # one wildcard in Let's Encrypt's public log, rather than every agent's name
+        self.assertEqual(routers['in-agent']['tls'], {'certResolver': 'le', 'domains': [{'main': '*.example.com'}]})
+        self.assertEqual(routers['pair-sara']['entryPoints'], ['websecure'])
+        self.assertNotIn('gate', routers['pair-sara']['middlewares'])  # T3's own pairing protects it
+        forward = render.edge(cfg)['http']['middlewares']['gate']['forwardAuth']
+        self.assertIn('X-Agentlab-Proof', forward['authResponseHeaders'])
+        core = render.core(cfg)['services']
+        self.assertIn(f'/srv/agentlab/secrets/gate:{render.GATE_SECRETS}:ro', core['gate']['volumes'])
+        self.assertEqual(core['gate']['environment']['GATE_SECRETS'], render.GATE_SECRETS)
+        self.assertIn('sara-t3.example.com:10.207.0.2', core['cloudflared']['extra_hosts'])
+
+    def test_plain_private_renders_as_before(self):
+        cfg = resolve(BASE)
+        edge = render.edge_service(cfg)
+        self.assertNotIn('--entrypoints.websecure.address=:443', edge['command'])
+        self.assertNotIn('environment', edge)
+        self.assertNotIn('tls', render.edge(cfg)['http']['routers']['in-agent'])
+        self.assertNotIn('GATE_SECRETS', render.core(cfg)['services']['gate']['environment'])
+
+    def test_setup_writes_https_and_the_t3_names_for_private(self):
+        from agentlab import setup as guided  # noqa: PLC0415
+
+        answers = {
+            'reach': 'cloudflare',
+            'admin': 'boss@example.com',
+            'domain': 'agents.example.com',
+            'hub_domain': 'agents-hub.example.com',
+            'network': 'private',
+            'https': True,
+            'zone': 'example.com',
+            'allow_domains': [],
+            'agents': [('boss@example.com', 'boss')],
+            'storage': 'shared',
+            'android': False,
+            'deploy': 'compose',
+            'isolation': 'sysbox',
+            'name': 'test',
+            'tailscale': False,
+        }
+        cfg = config.resolve(tomllib.loads(guided.toml_text(answers)))
+        self.assertTrue(config.private_https(cfg))
+        self.assertEqual(cfg['agents'][0]['pair_host'], 'boss-t3.example.com')

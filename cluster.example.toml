@@ -7,7 +7,8 @@ name = "example"
 domain = "agents.example.com"      # everyone's own agent, chosen by who signed in (first-level: free certificate)
 hub_domain = "agents-hub.example.com"   # the hub: everyone sees their own agents, admins see everything
 coolify_domain = ""                # optional, e.g. "agents-coolify.example.com" (admins)
-pair_domain = ""                   # Cloudflare public only, e.g. "{id}-t3.example.com": where the T3 apps connect
+pair_domain = ""                   # e.g. "{id}-t3.example.com": where the T3 apps connect (Cloudflare public, or
+                                   # private with https)
 timezone = "UTC"
 data = "/srv/agentlab"
 deploy = "compose"                 # plain Docker Compose; "coolify" if you'd like Coolify's UI for the stacks
@@ -32,6 +33,8 @@ network = "private"                # "private": only devices on your Cloudflare 
                                    # over the tunnel, with no public DNS; "public": a public sign-in page instead
 require_warp = false               # public only: just devices on the client get past the sign-in page
 client_session = "24h"             # client sign-in length, set on your account only if it has none
+https = false                      # private only: a Let's Encrypt certificate and the gate's own sign-in through
+                                   # Access (nothing on devices); `agentctl setup` writes true for new installs
 
 [auth.tinyauth]                    # mode = "tinyauth"
 domain = ""                        # its login page, e.g. "login.example.com"
@@ -109,6 +112,8 @@ on_busy = "defer"                  # still busy then: "defer" (next run) or "res
 account_id = ""                    # found from the token and the domain when empty
 zone = ""                          # found the same way
 api_token_file = ""                # "" = <data>/secrets/cloudflare-api.token
+acme_token_file = ""               # private https: the edge's certificate token (Zone · DNS → Edit is enough);
+                                   # "" = api_token_file
 
 [coolify]                          # only with deploy = "coolify"
 url = "http://127.0.0.1:8000"

@@ -164,6 +164,9 @@ def answers(flags, asker, machine):
             a['hub_domain'] = asker.get('hub_domain', 'The address for the dashboard', f'agents-hub.{zone}')
             if reach == 'cloudflare':
                 a['network'] = asker.choose('network', 'Who can reach the addresses?', NETWORK, 'private')
+                # private: HTTPS with a real certificate unless --no-https (plain HTTP inside the tunnel)
+                a['https'] = a['network'] == 'private' and flags.get('https') is not False
+                a['zone'] = zone
             if reach == 'tinyauth':
                 a['tinyauth_domain'] = asker.get(
                     'tinyauth_domain', 'The address for the sign-in page', f'agents-auth.{zone}'
@@ -226,6 +229,9 @@ def toml_text(a):
     lines.append(f'domain = {q(a["domain"])}')
     if a.get('hub_domain') and a['reach'] != 'me':
         lines.append(f'hub_domain = {q(a["hub_domain"])}')
+    if a.get('https'):
+        # each agent's T3 desktop and phone apps connect to a name of their own
+        lines.append(f'pair_domain = {q("{id}-t3." + a["zone"])}')
     if a['reach'] == 'me':
         # the dashboard is reached on its own port; without Tailscale the name only has to differ from the domain
         lines.append(f'hub_domain = {q(a["domain"] if a["tailscale"] else "agentlab-hub")}')
@@ -247,6 +253,8 @@ def toml_text(a):
     if mode == 'cloudflare-access':
         note = '   # only through the Cloudflare One client' if a['network'] == 'private' else ''
         lines += ['', '[auth.cloudflare]', f'network = {q(a["network"])}{note}']
+        if a.get('https'):
+            lines.append("https = true                       # a Let's Encrypt certificate; nothing on devices")
     if a['storage'] != 'shared':
         lines += ['', '[storage]', f'mode = {q(a["storage"])}']
     if a['android']:

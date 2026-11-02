@@ -52,6 +52,12 @@ def parser():
         choices=['private', 'public'],
         help='cloudflare: private = only devices on the Cloudflare One (WARP) client; public = a sign-in page',
     )
+    st.add_argument(
+        '--https',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="cloudflare private: HTTPS with a Let's Encrypt certificate (default); --no-https keeps plain HTTP",
+    )
     st.add_argument('--isolation', choices=['sysbox', 'unconfined'])
     st.add_argument('--name', help='a short name for this cluster (default: the machine name)')
     st.add_argument('--yes', action='store_true', help='replace an existing cluster.toml with the new answers')
@@ -139,7 +145,10 @@ def dispatch(args):
         if not (args.pulled or args.no_pull):
             fresh_code_then_rerun()
         keys = ('reach', 'admin', 'domain', 'hub_domain', 'tinyauth_domain', 'people', 'agents', 'allow_domains')
-        flags = {k: getattr(args, k) for k in (*keys, 'storage', 'android', 'deploy', 'isolation', 'name', 'network')}
+        flags = {
+            k: getattr(args, k)
+            for k in (*keys, 'storage', 'android', 'deploy', 'isolation', 'name', 'network', 'https')
+        }
         flags.update(yes=args.yes, config_only=args.config_only)
         return setup.setup(args.config, flags)
     if args.cmd == 'config' and args.action == 'edit':

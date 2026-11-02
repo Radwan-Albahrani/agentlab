@@ -6,6 +6,13 @@ connects to the edge on port 80. An Access application for those private hostnam
 and admins and, because it is plain HTTP inside the client's encrypted tunnel, issues the signed token the gate
 verifies without Gateway TLS decryption. agentlab's own public DNS records and public apps are removed.
 
+private with https = true: the same, plus port 443. The edge holds a Let's Encrypt certificate for the names, so
+browsers show a padlock with nothing installed on devices. Without TLS decryption Access still admits or refuses each
+connection by who is on the client, but can't add its token to HTTPS requests, so an "Access for SaaS" OIDC
+application (same people) lets the gate sign people in itself. Each agent's T3 apps get their own private name
+(pair_domain), straight to T3. Port 443 joins the Access application only once the edge serves a valid certificate
+(finish_https, after apply deployed it); then the gate redirects plain HTTP to HTTPS.
+
 public: a public hostname per name (proxied CNAME to the tunnel) behind Access's sign-in page, plus a Bypass app for
 the pair hosts (the T3 apps can't do a browser sign-in; T3 accepts only paired sessions there). require_warp adds a
 Gateway device check to the people policy, so only devices on the client get past the sign-in.
@@ -18,6 +25,9 @@ Trust team are read from the token and the domain, and written into cluster.toml
 import ipaddress
 import json
 import os
+import socket
+import ssl
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -75,6 +85,58 @@ def signed_in_hosts(cfg):
 
 def pair_hosts(cfg):
     return [a['pair_host'] for a in cfg['agents'] if a['pair_host']]
+
+
+def private_hosts(cfg):
+    """Every name routed over the tunnel in private mode: the signed-in ones and (HTTPS only) the T3 apps' own."""
+    return signed_in_hosts(cfg) + pair_hosts(cfg)
+
+
+CALLBACK = '/_agentlab/oidc/callback'  # gate/gate/oidc.py
+GATE_FILES = {'client_id': 'oidc-client-id', 'client_secret': 'oidc-client-secret', 'key': 'session.key'}
+LIVE = 'https-live'  # tells the gate Access covers 443: plain HTTP is redirected from then on
+CERT_WAIT, CERT_WARN_DAYS = 180, 14
+
+
+def gate_dir(cfg):
+    return f'{cfg["data"]}/{render.GATE_SECRETS_DIR}'
+
+
+def gate_secret(cfg, name):
+    try:
+        with open(f'{gate_dir(cfg)}/{GATE_FILES.get(name, name)}') as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def save_gate_secret(cfg, name, value):
+    """Write one of the gate's secrets: a file only the gate's uid reads, in a folder only it may list."""
+    folder = gate_dir(cfg)
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    path = f'{folder}/{GATE_FILES.get(name, name)}'
+    changed = write_if_changed(path, value, mode=0o400)
+    if os.name == 'posix' and os.geteuid() == 0:
+        for p, mode in ((path, 0o400), (folder, 0o500)):
+            os.chown(p, render.GATE_UID, render.GATE_UID)
+            os.chmod(p, mode)
+    return changed
+
+
+def edge_certificate(host, address=render.EDGE_IP, port=443, timeout=5):
+    """(days the edge's certificate for `host` is still valid, '') when it is trusted by this machine's CAs and
+    names the host; (None, why) otherwise. Asked of the edge directly, the way the tunnel container connects."""
+    ctx = ssl.create_default_context()
+    try:
+        with (
+            socket.create_connection((address, port), timeout=timeout) as raw,
+            ctx.wrap_socket(raw, server_hostname=host) as tls,
+        ):
+            cert = tls.getpeercert()
+    except (OSError, ssl.SSLError) as e:
+        return None, str(e)
+    left = (ssl.cert_time_to_seconds(cert['notAfter']) - time.time()) / 86400
+    return int(left), ''
 
 
 def people(cfg):
@@ -278,8 +340,8 @@ class Setup:
         )
         return (made or {}).get('id', '<new gateway check id>')
 
-    def app(self, name, hosts, policy, idps, private=False):
-        destinations = (
+    def app(self, name, hosts, policy, idps, private=False, destinations=None):
+        destinations = destinations or (
             [{'type': 'private', 'hostname': h, 'port_range': '80'} for h in hosts]
             if private
             else [{'type': 'public', 'uri': h} for h in hosts]
@@ -341,17 +403,139 @@ class Setup:
         """Everything agentlab makes is named agentlab-<cluster> (plus a suffix): it only ever touches those."""
         return f'{self.name} {name}' if name else self.name
 
-    def access(self):
+    def access(self, sign_in=False):
         """The people's application (and, public only, the pair hosts' Bypass app). Removing a Bypass app left from
-        a public setup is left to `cleanup`, after the new way in works."""
+        a public setup is left to `cleanup`, after the new way in works. Private HTTPS: with `sign_in`, the OIDC
+        application first; port 443 joins once https_ready()."""
         providers = self.api.call('GET', f'/accounts/{self.account}/access/identity_providers') or []
         idps = login_methods(self.cfg, providers)
         private = config.private_network(self.cfg)
-        aud = self.app('', signed_in_hosts(self.cfg), self.people_policy(), idps, private=private)
-        if pair_hosts(self.cfg):
+        policy = self.people_policy()
+        if sign_in:
+            self.sign_in_app(policy, idps)
+        destinations = None
+        if private:
+            ports = ['80', '443'] if config.private_https(self.cfg) and self.https_ready() else ['80']
+            destinations = [
+                {'type': 'private', 'hostname': h, 'port_range': p} for h in signed_in_hosts(self.cfg) for p in ports
+            ]
+            # the T3 apps' names: HTTPS only, and only once 443 is ready for everyone
+            destinations += [
+                {'type': 'private', 'hostname': h, 'port_range': '443'} for h in pair_hosts(self.cfg) if '443' in ports
+            ]
+        aud = self.app('', signed_in_hosts(self.cfg), policy, idps, private=private, destinations=destinations)
+        if pair_hosts(self.cfg) and not private:
             bypass = self.policy('apps', 'bypass', [{'everyone': {}}], 'for the T3 apps (bypass)')
             self.app('apps', pair_hosts(self.cfg), bypass, [])
         return aud
+
+    # ---------------------------------------------------------------- private HTTPS
+    def people_app(self):
+        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        return next((a for a in apps if a.get('name') == self.name), None)
+
+    def https_ready(self):
+        """Whether port 443 may join the people's application: it already has (never taken back while https is on,
+        so a passing hiccup can't flap it), or the edge now serves a trusted certificate for every signed-in name.
+        Until then HTTPS isn't offered to anyone, so nobody meets a certificate warning."""
+        if not hasattr(self, '_ready'):
+            app = self.people_app() or {}
+            has = any(d.get('port_range') == '443' for d in app.get('destinations') or [])
+            self._ready = has or all(edge_certificate(h)[0] is not None for h in signed_in_hosts(self.cfg))
+        return self._ready
+
+    def sign_in_app(self, policy, idps):
+        """The Access for SaaS OIDC application the gate signs people in with: same people, same login methods,
+        client sign-in on so devices on the client go through without a prompt. Its client secret is shown only when
+        it is created, so a lost one means a new application: made and saved first, the old one removed after."""
+        hosts = signed_in_hosts(self.cfg)
+        warp = not self.account_allows_client_sign_in()
+        saas = {
+            'auth_type': 'oidc',
+            'redirect_uris': [f'https://{h}{CALLBACK}' for h in hosts],
+            'grant_types': ['authorization_code_with_pkce'],
+            'scopes': ['openid', 'email', 'profile'],
+            'allow_pkce_without_client_secret': False,
+        }
+        body = {
+            'name': self.named('sign-in'),
+            'type': 'saas',
+            'app_launcher_visible': False,
+            'policies': [{'id': policy, 'precedence': 1}],
+            'allowed_idps': idps,
+            'auto_redirect_to_identity': len(idps) == 1,
+            'allow_authenticate_via_warp': True if warp else None,
+            'saas_app': saas,
+        }
+        body = {k: v for k, v in body.items() if v is not None}
+        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        named = [a for a in apps if a.get('name') == body['name']]
+        mine = gate_secret(self.cfg, 'client_id')
+        found = next((a for a in named if mine and (a.get('saas_app') or {}).get('client_id') == mine), None)
+        if found and not gate_secret(self.cfg, 'client_secret'):
+            found = None  # its secret is lost: replaced below
+        if found:
+            have = found.get('saas_app') or {}
+            if (
+                sorted(have.get('redirect_uris') or []) != sorted(saas['redirect_uris'])
+                or sorted(have.get('scopes') or []) != sorted(saas['scopes'])
+                or sorted(have.get('grant_types') or []) != sorted(saas['grant_types'])
+                or [p.get('id') for p in found.get('policies') or []] != [policy]
+                or sorted(found.get('allowed_idps') or []) != sorted(idps)
+                or bool(found.get('allow_authenticate_via_warp')) != warp
+            ):
+                body['saas_app'] = {**saas, 'client_id': mine}  # a PUT replaces the app: keep its client
+                self.write(
+                    f'update Access application {body["name"]} (OIDC sign-in for the gate)',
+                    'PUT',
+                    f'/accounts/{self.account}/access/apps/{found["id"]}',
+                    body,
+                )
+        else:
+            made = self.write(
+                f'create Access application {body["name"]} (OIDC sign-in for the gate): ' + ', '.join(hosts),
+                'POST',
+                f'/accounts/{self.account}/access/apps',
+                body,
+            )
+            client = (made or {}).get('saas_app') or {}
+            if made and not (client.get('client_id') and client.get('client_secret')):
+                raise Failed(f'Cloudflare made {body["name"]} but returned no client id and secret: run setup again')
+            if made:
+                save_gate_secret(self.cfg, 'client_id', client['client_id'])
+                save_gate_secret(self.cfg, 'client_secret', client['client_secret'])
+                self.plan.do(f'saved its client id and secret to {gate_dir(self.cfg)} (only the gate reads them)')
+        for old in (a for a in named if a is not found):
+            self.write(
+                f'remove the replaced Access application {old["name"]} ({(old.get("saas_app") or {}).get("client_id")})',
+                'DELETE',
+                f'/accounts/{self.account}/access/apps/{old["id"]}',
+            )
+
+    def drop_sign_in(self):
+        """https turned off: agentlab's own OIDC application goes (after the people's app is back to port 80)."""
+        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        for app in (a for a in apps if a.get('name') == self.named('sign-in')):
+            path = f'/accounts/{self.account}/access/apps/{app["id"]}'
+            self.write(f'remove Access application {app["name"]} (https is off)', 'DELETE', path)
+
+    def mark_live(self, on):
+        """The gate redirects plain HTTP to HTTPS only while this file exists: written once Access covers 443 for
+        every name and the gate has its client, removed when https is off."""
+        path = f'{gate_dir(self.cfg)}/{LIVE}'
+        if not on:
+            if os.path.exists(path):
+                self.plan.do('stop redirecting plain HTTP to HTTPS', fn=lambda: os.remove(path))
+            return
+        if os.path.exists(path):
+            return
+        app = self.people_app() or {}
+        covered = {d.get('hostname') for d in app.get('destinations') or [] if d.get('port_range') == '443'}
+        if set(private_hosts(self.cfg)) <= covered and all(gate_secret(self.cfg, k) for k in GATE_FILES):
+            self.plan.do(
+                'redirect plain HTTP to HTTPS (Access covers port 443)',
+                fn=lambda: save_gate_secret(self.cfg, LIVE, time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
+            )
 
     def drop_apps_bypass(self):
         apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
@@ -385,7 +569,7 @@ class Setup:
             if e.status not in (401, 403):
                 raise
             raise Needs(f'the token may not manage tunnel hostname routes: add "{PERMISSIONS["routes"]}"') from None
-        hosts = signed_in_hosts(self.cfg)
+        hosts = private_hosts(self.cfg)
         for host in hosts:
             same = [r for r in routes if r.get('hostname') == host]
             if any(r.get('tunnel_id') == tunnel for r in same):
@@ -681,9 +865,11 @@ def setup(cfg, plan, config_path, opener=None):
         (s.hostname_routes if private else s.dns)(tunnel)
     cf = cfg['cloudflare']
     found = {('cloudflare', 'account_id'): cf['account_id'], ('cloudflare', 'zone'): cf['zone']}
+    https = config.private_https(cfg)
     if access:
         auth = cfg['auth']['cloudflare']
-        auth['audience'] = s.access() or auth['audience']
+        # HTTPS: the sign-in application and the gate's client exist before port 443 joins the people's app
+        auth['audience'] = s.access(sign_in=https) or auth['audience']
         if private:
             s.enrollment(s.people_policy())
         found[('auth.cloudflare', 'team')] = auth['team']
@@ -692,12 +878,18 @@ def setup(cfg, plan, config_path, opener=None):
         (s.private_ingress if private else s.ingress)(tunnel)
         s.token(tunnel)
     s.remember(config_path, found)
-    if access and (private or cfg['auth']['cloudflare']['require_warp']) and not pair_hosts(cfg):
+    if access and (private or (cfg['auth']['cloudflare']['require_warp'] and not pair_hosts(cfg))):
         s.drop_apps_bypass()  # a Bypass app left from a public setup would be a way around the client
     if tunneled:
         (s.drop_public_dns if private else lambda _t: s.drop_hostname_routes())(tunnel)
+    if access and private and not plan.dry:
+        s.mark_live(https)
+    if access and not https:
+        s.drop_sign_in()
     where = 'private: Cloudflare One client only' if private else 'public sign-in page'
-    names = signed_in_hosts(cfg) if private else hostnames(cfg)
+    if https:
+        where += ', HTTPS' if s.https_ready() else ', HTTPS once the edge has its certificate (agentctl apply)'
+    names = private_hosts(cfg) if private else hostnames(cfg)
     say(f'  Cloudflare: {", ".join(names)} -> tunnel {s.name} ({where}); {len(people(cfg))} people may sign in')
 
 
@@ -729,6 +921,33 @@ def stuck_message(s, tunnel, gaps):
     if now == 'public':
         return msg + ' Nothing was changed: the current public sign-in page keeps working until then.'
     return msg
+
+
+def finish_https(cfg, plan, opener=None, wait=CERT_WAIT, sleep=time.sleep):
+    """After apply (the edge now listens on 443): once its certificate is issued and trusted, port 443 joins the
+    people's application and the gate starts redirecting plain HTTP. Waits a little for Let's Encrypt on the first
+    run; anything missing is a warning, and plain HTTP keeps working meanwhile."""
+    if not config.private_https(cfg) or not configured(cfg) or plan.dry:
+        return
+    if not all(gate_secret(cfg, k) for k in ('client_id', 'client_secret')):
+        say('  HTTPS: the sign-in application is not set up yet: run agentctl cloudflare setup')
+        return
+    s = Setup(cfg, api_for(cfg, opener), plan)
+    if s.people_app() is None:
+        return  # `cloudflare setup` hasn't made it yet
+    deadline = time.monotonic() + wait
+    while not s.https_ready() and time.monotonic() < deadline:
+        sleep(10)
+        del s._ready  # ask the edge again
+    if not s.https_ready():
+        why = edge_certificate(cfg['domain'])[1]
+        say(
+            f'  HTTPS: the edge has no trusted certificate for {cfg["domain"]} yet ({why}); plain HTTP keeps '
+            'working. The edge log says why (docker logs of the edge); agentctl apply tries again.'
+        )
+        return
+    s.access()
+    s.mark_live(True)
 
 
 def sync_people(cfg, plan, opener=None):
@@ -875,7 +1094,7 @@ def client_only_checks(cfg, opener=None):
         )
     )
     if private:
-        hosts = signed_in_hosts(cfg)
+        hosts = private_hosts(cfg)
         kinds = {d.get('type') for d in (app or {}).get('destinations') or []}
         out.append(
             (
@@ -939,6 +1158,8 @@ def client_only_checks(cfg, opener=None):
             )
         )
         out += enrollment_exposure(cfg, api, account, apps, s.name)
+    if config.private_https(cfg):
+        out += https_checks(cfg, apps, app, s, bool(org_sign_in))
     if cfg['auth']['cloudflare']['require_warp']:
         policies = api.call('GET', f'/accounts/{account}/access/policies') or []
         people = next((p for p in policies if p.get('name') == s.name), {})
@@ -952,6 +1173,79 @@ def client_only_checks(cfg, opener=None):
                 'error',
             )
         )
+    return out
+
+
+def https_checks(cfg, apps, app, s, org_sign_in):
+    """Private HTTPS, read-only: the edge's certificate, the gate's sign-in application and secrets, port 443 on the
+    people's application, and whether plain HTTP is redirected yet."""
+    out = []
+    for host in signed_in_hosts(cfg):
+        days, why = edge_certificate(host)
+        out.append(
+            (
+                f'certificate-{host}',
+                days is not None and days >= CERT_WARN_DAYS,
+                f'the edge serves a trusted certificate for {host}'
+                + (f' ({days} days left)' if days is not None else f': {why}'),
+                "agentctl apply; if it stays, the edge's log names the Let's Encrypt problem (DNS → Edit on the zone "
+                'for the token in acme_token_file)',
+                'error' if days is None else 'warning',
+            )
+        )
+    name, mine = s.named('sign-in'), gate_secret(cfg, 'client_id')
+    sign_in = next((a for a in apps if a.get('name') == name), None)
+    saas = (sign_in or {}).get('saas_app') or {}
+    want = sorted(f'https://{h}{CALLBACK}' for h in signed_in_hosts(cfg))
+    out.append(
+        (
+            'sign-in-app',
+            bool(sign_in) and saas.get('client_id') == mine and sorted(saas.get('redirect_uris') or []) == want,
+            f'the gate signs people in with {name} (Access for SaaS, OIDC), and holds its client',
+            'agentctl cloudflare setup',
+            'error',
+        )
+    )
+    out.append(
+        (
+            'sign-in-client-session',
+            bool((sign_in or {}).get('allow_authenticate_via_warp')) or org_sign_in,
+            'the sign-in application accepts the Cloudflare One client session (no login prompt on enrolled devices)',
+            'agentctl cloudflare setup sets it; without it people sign in once per session in the browser',
+            'info',
+        )
+    )
+    out.append(
+        (
+            'gate-secrets',
+            all(gate_secret(cfg, k) for k in GATE_FILES),
+            f'the gate has its client and session key ({gate_dir(cfg)})',
+            'agentctl cloudflare setup (client), agentctl apply (session key)',
+            'error',
+        )
+    )
+    covered = {d.get('hostname') for d in (app or {}).get('destinations') or [] if d.get('port_range') == '443'}
+    missing = [h for h in private_hosts(cfg) if h not in covered]
+    out.append(
+        (
+            'https-port',
+            not missing,
+            'Access covers port 443 for every name'
+            if not missing
+            else f'Access does not cover port 443 for {", ".join(missing)} yet (plain HTTP works meanwhile)',
+            'agentctl apply adds it once the certificate is in place',
+            'warning',
+        )
+    )
+    out.append(
+        (
+            'https-live',
+            os.path.exists(f'{gate_dir(cfg)}/{LIVE}'),
+            'plain HTTP is redirected to HTTPS',
+            'agentctl apply, once the two above pass',
+            'info',
+        )
+    )
     return out
 
 

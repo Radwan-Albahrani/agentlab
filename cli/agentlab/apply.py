@@ -32,7 +32,7 @@ def folders(cfg, plan):
         shared.append(f'{data}/people')
     elif not cfg['storage']['pool_size']:
         shared.append(f'{data}/agents')
-    if cfg['auth']['ingress'] == 'public':
+    if cfg['auth']['ingress'] == 'public' or config.private_https(cfg):
         private.append(f'{data}/edge-acme')
     for path in private + shared:
         if not os.path.isdir(path):
@@ -93,6 +93,12 @@ def core_files(cfg, plan):
             plan.do('create the tinyauth session secret', fn=lambda: _secret_file(path, secrets.token_hex(16)))
     if config.private_network(cfg):
         tunnel_token_copy(cfg, plan)
+    if config.private_https(cfg) and not cloudflare.gate_secret(cfg, 'key'):
+        # the gate's session cookies and the proof the hub checks are keyed from it; a new one signs everyone out
+        plan.do(
+            "create the gate's session key",
+            fn=lambda: cloudflare.save_gate_secret(cfg, 'key', secrets.token_hex(32)),
+        )
 
 
 def tunnel_token_copy(cfg, plan):
@@ -334,6 +340,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     templates = {}
     if only is None:
         cloudflare.sync_people(cfg, plan)
+        cloudflare.finish_https(cfg, plan)  # the edge listens on 443 now: Access may cover it once it has a cert
         deploy.orphans(cfg)
         templates = template.update_all(cfg, plan)
     if not dry and not changed:

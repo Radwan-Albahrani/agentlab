@@ -5,7 +5,11 @@ The answer goes back as X-Agentlab-User / -Admin / -Agent, which pass 2 routes o
 X-Agentlab-* (and tinyauth's Remote-*) before calling us, so those headers here are always the edge's or tinyauth's.
 
 Pass 2, everything else: the gate's own pages (menu, view switching, "no agent yet"), reached only through the edge
-with pass 1's headers set. Agents can't open connections to the gate (nftables), so those headers are trusted here."""
+with pass 1's headers set. Agents can't open connections to the gate (nftables), so those headers are trusted here.
+
+Private HTTPS (auth.cloudflare.https): requests over HTTPS sign in through Access's OIDC provider and the gate's own
+session cookie (oidc.py), all inside /verify, so the edge's routing stays the same. Plain HTTP keeps Access's token
+until agentctl marks HTTPS live (Access covers port 443 and the certificate is in place); then it is redirected."""
 
 import logging
 import os
@@ -14,7 +18,7 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import landing
+from . import landing, oidc
 from .config import NONE, host_of, port_of
 from .tokens import TokenError, email_of
 
@@ -74,11 +78,26 @@ def is_t3_path(uri):
     return not (path == '/_agentlab' or path.startswith('/_agentlab/'))
 
 
-def safe_next(query):
-    """Where to go after switching views: a same-site path only, never `//host` or `/\\host` (open redirect)."""
-    nxt = (parse_qs(query).get('next') or ['/'])[0]
+def safe_path(nxt):
+    """A same-site path only, never `//host` or `/\\host` (open redirect); else '/'."""
     ok = nxt.startswith('/') and not nxt.startswith(('//', '/\\')) and not any(c < ' ' or c == '\\' for c in nxt)
     return nxt if ok else '/'
+
+
+def safe_next(query):
+    """Where to go after switching views."""
+    return safe_path((parse_qs(query).get('next') or ['/'])[0])
+
+
+def wants_page(headers):
+    """A browser opening a page (sent to sign in), rather than a script or an API call (told 401): what the browser
+    says it is fetching, else whether it accepts HTML. Only GET and HEAD, so a form post never turns into a redirect."""
+    if (headers.get('X-Forwarded-Method') or 'GET').upper() not in ('GET', 'HEAD'):
+        return False
+    mode = (headers.get('Sec-Fetch-Mode') or '').strip().lower()
+    if mode:
+        return mode == 'navigate'
+    return 'text/html' in (headers.get('Accept') or '')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -125,10 +144,22 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get('X-Forwarded-Host')
         port = port_of(host, self.headers.get('X-Forwarded-Port'))
         place = cfg.where(host, port, self.headers.get('X-Agentlab-Site'))
-        try:
-            email = identify(cfg, self.server.keys, self.headers, place == 'domain')
-        except TokenError as e:
-            return self._deny(host, '-', str(e))
+        signin = self.server.signin if cfg.https else None
+        email = None
+        if cfg.https and place:
+            proto = (self.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+            if proto == 'https':
+                email = self._oidc(cfg, host_of(host))
+                if email is None:
+                    return None  # answered: off to sign in, back from it, or refused
+            elif signin is not None and signin.live():
+                uri = safe_path(self.headers.get('X-Forwarded-Uri') or '/')
+                return self._send(308, 'text/plain', b'', {'Location': f'https://{host_of(host)}{uri}'})
+        if email is None:
+            try:
+                email = identify(cfg, self.server.keys, self.headers, place == 'domain')
+            except TokenError as e:
+                return self._deny(host, '-', str(e))
         admin = cfg.mode == 'none' or email in cfg.admins
         ok, why, agent = cfg.decide(place, email, cookie(self.headers, VIEW), admin)
         if not ok:
@@ -139,7 +170,56 @@ class Handler(BaseHTTPRequestHandler):
                 to = f'{cfg.hub_url()}/agents/{agent}/onboarding'
                 return self._send(302, 'text/plain', b'', {'Location': to})
         extra = {'X-Agentlab-User': email, 'X-Agentlab-Admin': '1' if admin else '0', 'X-Agentlab-Agent': agent}
+        if signin is not None and signin.ready():
+            extra['X-Agentlab-Proof'] = signin.proof(email, extra['X-Agentlab-Admin'], agent)
         return self._send(200, 'text/plain', b'ok\n', extra)
+
+    def _oidc(self, cfg, host):
+        """The person signed in on this host over HTTPS, or None once this answered the request itself."""
+        signin = self.server.signin
+        if signin is None or not signin.ready():
+            self._deny(host, '-', 'HTTPS sign-in is not set up yet: run agentctl cloudflare setup')
+            return None
+        uri = urlsplit(self.headers.get('X-Forwarded-Uri') or '/')
+        if uri.path == oidc.CALLBACK:
+            try:
+                email, nxt = signin.finish(cfg.team, host, uri.query, cookie(self.headers, oidc.PENDING))
+            except oidc.SignInError as e:
+                log.warning('sign-in failed host=%s why=%s', host, e)
+                page = landing.signin_failed().encode()
+                self._send(403, 'text/html; charset=utf-8', page, [('Set-Cookie', oidc.cleared(oidc.PENDING))])
+                return None
+            log.info('signed in host=%s email=%s', host, email)
+            self._send(
+                302,
+                'text/plain',
+                b'',
+                [
+                    ('Location', safe_path(nxt)),
+                    ('Set-Cookie', signin.session_cookie(email, host)),
+                    ('Set-Cookie', oidc.cleared(oidc.PENDING)),
+                ],
+            )
+            return None
+        if uri.path == oidc.LOGOUT:
+            # Access's own logout ends the Access session too, so the next visit really asks again
+            to = f'https://{cfg.team}.cloudflareaccess.com/cdn-cgi/access/logout'
+            self._send(302, 'text/plain', b'', [('Location', to), ('Set-Cookie', oidc.cleared(oidc.SESSION))])
+            return None
+        email = signin.session_email(cookie(self.headers, oidc.SESSION), host)
+        if email:
+            return email
+        if not wants_page(self.headers):
+            self._send(401, 'text/plain', b'Unauthorized: the sign-in expired, reload the page.\n')
+            return None
+        try:
+            to, pending = signin.start(cfg.team, host, safe_path(uri.path + (f'?{uri.query}' if uri.query else '')))
+        except oidc.SignInError as e:
+            log.warning('cannot start a sign-in host=%s why=%s', host, e)
+            self._send(503, 'text/plain', b'Sign-in is unavailable right now; try again in a minute.\n')
+            return None
+        self._send(302, 'text/plain', b'', [('Location', to), ('Set-Cookie', pending)])
+        return None
 
     # ------------------------------------------------------------ pass 2
     def _page(self):
@@ -186,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        for k, v in (extra or {}).items():
+        for k, v in extra.items() if isinstance(extra, dict) else extra or []:
             self.send_header(k, v)
         self.end_headers()
         if self.command != 'HEAD':
@@ -196,8 +276,8 @@ class Handler(BaseHTTPRequestHandler):
         pass  # decisions are logged in _deny; per-request access logs would be every asset of every page
 
 
-def serve(config, keys, onboarding, port):
+def serve(config, keys, onboarding, port, signin=None):
     server = ThreadingHTTPServer(('0.0.0.0', port), Handler)
     server.daemon_threads = True
-    server.config, server.keys, server.onboarding = config, keys, onboarding
+    server.config, server.keys, server.onboarding, server.signin = config, keys, onboarding, signin
     return server

@@ -20,12 +20,17 @@ EDGE_NETWORK, EDGE_BRIDGE, EDGE_SUBNET = 'agentlab-edge', 'al-edge', '10.207.0.0
 EDGE_IP = '10.207.0.2'
 TUNNEL_TOKEN_DIR = 'secrets/cloudflared'  # under <data>: a copy of the tunnel token readable by cloudflared's uid
 CLOUDFLARED_UID = 65532  # the image's nonroot user
+# Private HTTPS: the gate's sign-in secrets (OIDC client, session key), a folder only the gate's uid reads.
+GATE_SECRETS_DIR, GATE_SECRETS, GATE_UID = 'secrets/gate', '/run/agentlab-gate', 10001
+ACME_TOKEN = '/run/secrets/cloudflare-dns-token'  # in the edge: the token its certificate's DNS challenge uses
 AGENTLAB_NET = '10.207.0.0/16'
 
 # Pass-1 entrypoints: `ingress` is what cloudflared / tailscale serve reach on host loopback; `hubingress` is the
-# hub's own port in tailscale mode (one MagicDNS name, two ports); `websecure` exists only for public ingress.
+# hub's own port in tailscale mode (one MagicDNS name, two ports); `websecure` exists for public ingress and for
+# private HTTPS (container port 443 only, which the tunnel container reaches directly).
 INGRESS_PORT, HUB_INGRESS_PORT, ROUTED = 8088, 8090, '127.0.0.1:8089'
-IDENTITY = ['X-Agentlab-User', 'X-Agentlab-Admin', 'X-Agentlab-Agent']
+# X-Agentlab-Proof: the gate's signature over the other three, which the hub checks in private HTTPS mode
+IDENTITY = ['X-Agentlab-User', 'X-Agentlab-Admin', 'X-Agentlab-Agent', 'X-Agentlab-Proof']
 CLIENT_HEADERS = [*IDENTITY, 'X-Agentlab-Site', 'X-Agentlab-Target']
 TINYAUTH_HEADERS = ['Remote-User', 'Remote-Email', 'Remote-Name', 'Remote-Groups']
 
@@ -76,18 +81,27 @@ def public_hosts(cfg):
 
 
 def private_names(cfg):
-    """The names Cloudflare routes privately to this cluster (network = "private")."""
+    """The names Cloudflare routes privately to this cluster (network = "private"); the T3 apps' per-agent names
+    only over HTTPS (config refuses pair_domain otherwise)."""
     if not config.private_network(cfg):
         return []
-    return [h for h in (cfg['domain'], cfg['hub_domain'], cfg['coolify_domain']) if h]
+    hosts = [cfg['domain'], cfg['hub_domain'], cfg['coolify_domain'], *[a['pair_host'] for a in cfg['agents']]]
+    return [h for h in hosts if h]
+
+
+def wildcard(host):
+    """The certificate name covering `host`: *.<its parent>, so Let's Encrypt's public log shows one wildcard rather
+    than every agent's name; '' when the parent is a bare TLD."""
+    parent = host.split('.', 1)[1] if '.' in host else ''
+    return f'*.{parent}' if parent.count('.') >= 1 else ''
 
 
 def edge_service(cfg):
     data, auth = cfg['data'], cfg['auth']
     private = config.private_network(cfg)
-    # Private hostname routes make cloudflared connect to each name on port 80, the plain-HTTP port Access issues its
-    # token on without Gateway TLS decryption; the tunnel container reaches the edge directly on that port, so it
-    # needs no host port (Coolify's proxy may already hold 80).
+    # Private hostname routes make cloudflared connect to each name on the port the client asked for: 80, the
+    # plain-HTTP port Access issues its token on without Gateway TLS decryption, and with https also 443. The tunnel
+    # container reaches the edge directly, so neither needs a host port (Coolify's proxy may already hold 80).
     ingress = 80 if private else INGRESS_PORT
     command = [
         f'--entrypoints.ingress.address=:{ingress}',
@@ -114,7 +128,23 @@ def edge_service(cfg):
         ]
         ports += ['80:80', '443:443']
         volumes.append(f'{data}/edge-acme:/acme')
-    return {
+    environment = {}
+    if config.private_https(cfg):
+        # The names are private, so Let's Encrypt can't reach them: the DNS challenge proves the zone instead, with a
+        # Cloudflare token mounted as a file (never in the compose text Coolify shows). Public resolvers, because
+        # Docker's DNS answers the private names with this container's own aliases. No host port: the tunnel
+        # container reaches 443 on the edge's own address.
+        command += [
+            '--entrypoints.websecure.address=:443',
+            '--certificatesresolvers.le.acme.dnschallenge=true',
+            '--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare',
+            '--certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53',
+            f'--certificatesresolvers.le.acme.email={auth["admins"][0]}',
+            '--certificatesresolvers.le.acme.storage=/acme/acme.json',
+        ]
+        environment['CF_DNS_API_TOKEN_FILE'] = ACME_TOKEN
+        volumes += [f'{data}/edge-acme:/acme', f'{cfg["cloudflare"]["acme_token_file"]}:{ACME_TOKEN}:ro']
+    out = {
         'image': TRAEFIK,
         'restart': 'unless-stopped',
         'command': command,
@@ -126,6 +156,9 @@ def edge_service(cfg):
         'networks': {EDGE_NETWORK: {'aliases': ['edge', *private_names(cfg)], 'ipv4_address': EDGE_IP}},
         'mem_limit': '256m',
     }
+    if environment:
+        out['environment'] = environment
+    return out
 
 
 def cloudflared_service(cfg):
@@ -192,13 +225,18 @@ def core(cfg):
     gate_env = {'AGENTLAB_CLUSTER': '/etc/agentlab/cluster.json', 'TZ': cfg['timezone']}
     if none:
         gate_env['GATE_ALLOW_NONE'] = '1'  # local testing only: the edge is loopback-bound either way
+    gate_mounts = mounts
+    if config.private_https(cfg):
+        # the OIDC client and the session key: written by agentctl, a folder only the gate's uid may read
+        gate_mounts = [*mounts, f'{data}/{GATE_SECRETS_DIR}:{GATE_SECRETS}:ro']
+        gate_env['GATE_SECRETS'] = GATE_SECRETS
     services = {
         'edge': edge_service(cfg),
         'gate': {
             **_image(cfg, 'gate'),
             'restart': 'unless-stopped',
             'environment': gate_env,
-            'volumes': mounts,
+            'volumes': gate_mounts,
             'networks': {EDGE_NETWORK: {'aliases': ['gate']}},
             'mem_limit': '128m',
         },
@@ -212,7 +250,7 @@ def core(cfg):
                 **({'HUB_ALLOW_NONE': '1'} if none else {}),
             },
             'volumes': [
-                *mounts,
+                f'{data}/rendered:/etc/agentlab:ro',
                 f'{data}/rendered:/rendered:ro',  # the Configs screen shows the rendered stacks
                 f'{data}/hub/data:/data',  # its own state (phone pushes, display settings): on the host, in backups
                 f'{data}/hub/watch:/watch',  # the host watcher's output, and requests/ for its buttons
@@ -434,7 +472,10 @@ def edge(cfg):
     auth = cfg['auth']
     mode, ingress = auth['mode'], auth['ingress']
     routers, services, middlewares = {}, {}, {}
-    pass1 = ['ingress', 'websecure'] if ingress == 'public' else ['ingress']
+    https = ingress == 'public' or config.private_https(cfg)
+    # Private HTTPS keeps plain HTTP on `ingress` too: until Access covers port 443 the gate serves it as before,
+    # then redirects it (the gate decides, so the switch waits for the certificate; see cloudflare.finish_https).
+    pass1 = ['ingress', 'websecure'] if https else ['ingress']
 
     def route(name, rule, service, chain, entrypoints, priority=None):
         r = {'entryPoints': entrypoints, 'rule': rule, 'service': service}
@@ -442,8 +483,11 @@ def edge(cfg):
             r['middlewares'] = chain
         if priority is not None:
             r['priority'] = priority
-        if ingress == 'public' and 'websecure' in entrypoints:
+        if https and 'websecure' in entrypoints:
             r['tls'] = {'certResolver': 'le'}
+            host = re.match(r'Host\(`([^`]+)`\)', rule)
+            if ingress != 'public' and host and wildcard(host.group(1)):
+                r['tls']['domains'] = [{'main': wildcard(host.group(1))}]
         routers[name] = r
 
     def lb(name, url):
@@ -497,7 +541,8 @@ def edge(cfg):
         lb(f'{a["id"]}-t3', f'{a["upstream"]}:{PORTS["t3"]}')
         if a['pair_host']:
             # Apps can't do a browser sign-in: this host goes straight to T3, which accepts only paired sessions.
-            route(f'pair-{a["id"]}', f'Host(`{a["pair_host"]}`)', f'{a["id"]}-t3', [strip('strip')], pass1)
+            entry = ['websecure'] if config.private_https(cfg) else pass1  # the apps connect over HTTPS only
+            route(f'pair-{a["id"]}', f'Host(`{a["pair_host"]}`)', f'{a["id"]}-t3', [strip('strip')], entry)
 
     # ---- pass 2
     def site(name):

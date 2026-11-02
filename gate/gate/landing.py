@@ -68,7 +68,8 @@ def menu(cfg, email, admin, current, pending=False):
     """The picker and switcher. `current` is the agent this domain reaches for this person right now (NONE when they
     have several and haven't picked, or none at all); `pending` means it is theirs and onboarding isn't finished."""
     hub, own = cfg.hub_url(), cfg.owned(email)
-    body = f'<h1>{escape(cfg.name)} agents</h1><p class="who">Signed in as {escape(email)}</p>'
+    out = ' &middot; <a href="/_agentlab/oidc/logout">Sign out</a>' if cfg.https else ''
+    body = f'<h1>{escape(cfg.name)} agents</h1><p class="who">Signed in as {escape(email)}{out}</p>'
     if current != NONE and current not in own:
         owner = cfg.agents[current]['owner']
         body += (
@@ -112,4 +113,12 @@ def denied():
         'Not available',
         '<h1>Not available</h1><p class="who">You\'re not signed in, or this isn\'t yours. '
         'If you think it should be, ask an admin.</p>',
+    )
+
+
+def signin_failed():
+    return _doc(
+        'Sign-in did not finish',
+        '<h1>Sign-in did not finish</h1><p class="who">It took too long or was interrupted. '
+        '<a href="/">Try again</a>.</p>',
     )

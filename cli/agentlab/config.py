@@ -67,6 +67,9 @@ SCHEMA = {  # section -> {key: default}; None = required
         'require_warp': False,
         # how long a Cloudflare One Client session signs people in; set on the account only while it has none
         'client_session': '24h',
+        # private only: the edge serves the names over HTTPS (a Let's Encrypt certificate) and the gate signs people
+        # in through Access as an OIDC provider; false keeps plain HTTP inside the tunnel with Access's own token
+        'https': False,
     },
     'auth.tinyauth': {
         'domain': '',
@@ -79,7 +82,8 @@ SCHEMA = {  # section -> {key: default}; None = required
     'limits': {'total_memory': '96g', 'throttle_io_psi_max': 25},
     'android': {'enabled': False, 'system_image': 'system-images;android-35;google_apis;x86_64'},
     'backups': {'enabled': True, 'keep_days': 14, 'time': '03:30'},
-    'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': ''},
+    # acme_token_file: what the edge gets its certificate with (DNS edit on the zone is enough); default: api_token_file
+    'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': '', 'acme_token_file': ''},
     'coolify': {'url': 'http://127.0.0.1:8000', 'token_file': '', 'project': 'agentlab'},
     'images': {'registry': '', 'tag': 'latest'},
     # agentlab: the nightly `agentctl update`; agent_tools_hours: agents refresh T3/Claude/Codex themselves (0 = never);
@@ -318,6 +322,10 @@ def _auth(raw, problems):
         problems.append('[auth.cloudflare] require_warp must be true or false')
     if not re.fullmatch(r'(\d+h)?(\d+m)?', str(cf['client_session'])) or not str(cf['client_session']):
         problems.append('[auth.cloudflare] client_session must look like 24h, 30m or 2h45m')
+    if not isinstance(cf['https'], bool):
+        problems.append('[auth.cloudflare] https must be true or false')
+    if mode == 'cloudflare-access' and cf['network'] == 'public' and cf['https'] is True:
+        problems.append('[auth.cloudflare] https is for network = "private"; public names are HTTPS already')
     if mode == 'cloudflare-access' and cf['network'] == 'private' and cf['require_warp'] is True:
         problems.append('[auth.cloudflare] require_warp is for network = "public"; private is WARP-only already')
     if cf['team'] and not re.match(r'^[a-z0-9][a-z0-9-]*$', str(cf['team'])):
@@ -420,10 +428,10 @@ def resolve(raw, previous=None, state=None):
     if pair and ('{id}' not in pair or not DOMAIN.match(pair.replace('{id}', 'x'))):
         problems.append('[cluster] pair_domain must be a hostname pattern with {id}, e.g. "{id}-t3.example.com"')
     c['pair_domain'] = pair if mode in ('cloudflare-access', 'tinyauth') else ''
-    if pair and mode == 'cloudflare-access' and auth_cf['network'] == 'private':
+    if pair and mode == 'cloudflare-access' and auth_cf['network'] == 'private' and auth_cf['https'] is not True:
         problems.append(
-            '[cluster] pair_domain bypasses the sign-in for the T3 apps on public hostnames; with network = "private" '
-            'the apps connect over the WARP client to the main domain: remove pair_domain'
+            '[cluster] pair_domain with network = "private" needs [auth.cloudflare] https = true (the T3 apps only '
+            'connect over HTTPS): turn it on, or remove pair_domain'
         )
     if mode == 'cloudflare-access' and auth_cf['require_warp'] is True and pair:
         problems.append('[cluster] pair_domain would bypass require_warp: remove it')
@@ -564,6 +572,7 @@ def resolve(raw, previous=None, state=None):
     # writes them there).
     secrets = f'{c["data"]}/secrets'
     cloudflare['api_token_file'] = str(cloudflare['api_token_file'] or f'{secrets}/cloudflare-api.token')
+    cloudflare['acme_token_file'] = str(cloudflare['acme_token_file'] or cloudflare['api_token_file'])
     coolify['token_file'] = str(coolify['token_file'] or f'{secrets}/coolify.token')
     auth_ta['google_client_id_file'] = str(auth_ta['google_client_id_file'] or f'{secrets}/tinyauth-google-id')
     auth_ta['google_client_secret_file'] = str(
@@ -589,6 +598,7 @@ def resolve(raw, previous=None, state=None):
                 'audience': auth_cf['audience'],
                 'network': auth_cf['network'] if mode == 'cloudflare-access' else '',
                 'require_warp': auth_cf['require_warp'] is True and mode == 'cloudflare-access',
+                'https': auth_cf['https'] is True and mode == 'cloudflare-access' and auth_cf['network'] == 'private',
             },
             'tinyauth': {'domain': auth_ta['domain'] if mode == 'tinyauth' else ''},
             'hub_port': auth['hub_port'],
@@ -650,6 +660,12 @@ def private_network(cfg):
     """Cloudflare with network = "private": the names exist only for devices on the Cloudflare One (WARP) client,
     which Gateway sends over the tunnel; there are no public DNS records or public hostnames."""
     return cfg['auth']['mode'] == 'cloudflare-access' and cfg['auth']['cloudflare']['network'] == 'private'
+
+
+def private_https(cfg):
+    """Private network over HTTPS: the edge holds a Let's Encrypt certificate for the private names and the gate
+    signs people in through Access as an OIDC provider. No Gateway TLS decryption, nothing installed on devices."""
+    return private_network(cfg) and cfg['auth']['cloudflare']['https']
 
 
 def ports_only(cfg):

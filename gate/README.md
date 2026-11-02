@@ -12,6 +12,14 @@ it doesn't recognise is a 403. See `docs/architecture.md` ("Access modes", "Edge
      `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, `aud` = `auth.cloudflare.audience`, `iss` = that team
      URL, not expired (30 s leeway), with an `email` claim. On the main domain, Cloudflare's
      `Cf-Access-Authenticated-User-Email` must match the token when present.
+   - `cloudflare-access` with `auth.cloudflare.https` (private over HTTPS), for requests that arrived over HTTPS
+     (`X-Forwarded-Proto`): Access adds no token there, so the gate signs people in itself as an OIDC client of the
+     `agentlab-<name> sign-in` application (`oidc.py`: authorization code with PKCE, state and nonce; the ID token
+     checked against that application's keys, issuer, audience, expiry and nonce), then trusts its own session cookie
+     (`__Host-agentlab_session`, encrypted and signed, per host, 12 hours). A page load without one is sent to sign
+     in; anything else gets 401. `/_agentlab/oidc/callback` and `/_agentlab/oidc/logout` are answered here. Its
+     secrets are files in `GATE_SECRETS`. Plain HTTP keeps the Access token until agentctl writes `https-live` there,
+     then gets a 308 to HTTPS.
    - `tailscale`: `Tailscale-User-Login`, set by `tailscale serve`. Required (tagged devices have none).
    - `tinyauth`: `Remote-Email`, set by tinyauth's forwardAuth answer just before ours. Required.
    - `none`: everyone is `local@localhost`, an admin. Needs `GATE_ALLOW_NONE=1`.
@@ -37,7 +45,8 @@ it doesn't recognise is a 403. See `docs/architecture.md` ("Access modes", "Edge
 
 Allowed requests get `X-Agentlab-User`, `X-Agentlab-Admin` (`0`/`1`) and `X-Agentlab-Agent` (an agent id, `gate`, or
 `none` on hub/Coolify without a chosen agent). The edge copies them onto the request (`authResponseHeaders`) and pass 2
-routes on `X-Agentlab-Agent`.
+routes on `X-Agentlab-Agent`. With HTTPS sign-in they also get `X-Agentlab-Proof`, an HMAC over the three (two
+minutes), which the hub checks in place of the Access token.
 
 ## Pass 2: pages (main domain only)
 
