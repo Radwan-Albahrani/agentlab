@@ -121,7 +121,9 @@ For private, `cloudflare setup` also turns on what your Zero Trust organization 
 where it's off or unset: the Gateway proxy (TCP and UDP), a Cloudflare One Client authentication session duration
 (`[auth.cloudflare] client_session`, 24h by default; one already set is never changed, and "client authentication for
 all applications" is never turned on), and agentlab's people policy added to device enrollment after the policies
-already there, so your people can enroll the client. Two things stay yours: if your client profiles use split tunnels
+already there, so your people can enroll the client. Client profiles in Include mode get your team domain and the
+sign-in provider added to their list (nothing removed), or an expired client session can't re-authenticate. Two
+things stay yours: if your client profiles use split tunnels
 in Include mode, include the range Cloudflare resolves private hostnames to (`172.64.128.0/20` by default), and keep
 your domain out of Local Domain Fallback.
 

@@ -725,6 +725,9 @@ class FakeCloudflare:
         self.own_groups = None  # the token's permission group names, when it may read itself
         self.calls = []  # every call, in order
         self.ip_routes = []  # private IP routes on tunnels (teamnet)
+        # device profiles: the default one in Exclude mode, as a new account has it
+        self.profile = {'default': True, 'exclude': [{'address': '10.0.0.0/8'}]}
+        self.profiles = []
 
     def call(self, method, path, body=None):
         self.calls.append((method, path))
@@ -794,6 +797,17 @@ class FakeCloudflare:
                 self.posture.append({**body, 'id': f'pc{len(self.posture) + 1}'})
                 return self.posture[-1]
             return copy.deepcopy(self.posture)
+        if path.endswith('/devices/policy'):
+            return copy.deepcopy(self.profile)
+        if path.endswith('/devices/policies'):
+            return copy.deepcopy([{**self.profile, 'policy_id': 'def', 'name': 'Default'}, *self.profiles])
+        if path.endswith('/devices/policy/include') and method == 'PUT':
+            self.profile = {**self.profile, 'include': body}
+            return body
+        if '/devices/policy/' in path and path.endswith('/include') and method == 'PUT':
+            pid = path.split('/')[-2]
+            self.profiles = [{**p, 'include': body} if p['policy_id'] == pid else p for p in self.profiles]
+            return body
         if path.endswith('/teamnet/routes'):
             return copy.deepcopy(self.ip_routes)
         if path.endswith('/devices/settings'):
@@ -1449,6 +1463,33 @@ class PrivateNetwork(unittest.TestCase):
         self.assertNotIn('agentlab-test apps', [p['name'] for p in self.fake.policies])
         self.assertEqual({d['type'] for d in self.fake.apps[0]['destinations']}, {'private'})
 
+    def test_include_mode_profiles_get_the_team_domain_and_the_sign_in_provider(self):
+        # an expired client in Include mode asked to be connected first, and couldn't be
+        own = [{'host': 'intranet.example.com'}]
+        self.fake.profile = {'default': True, 'include': list(own)}
+        self.fake.profiles = [
+            {'policy_id': 'mac', 'name': 'Macs', 'include': list(own)},
+            {'policy_id': 'ops', 'name': 'Ops', 'exclude': [{'address': '10.0.0.0/8'}]},
+        ]
+        self.fake.idps = [{'id': 'g1', 'type': 'google-apps', 'name': 'Google'}]
+        self.run_setup()
+        want = ['intranet.example.com', 'example.cloudflareaccess.com', 'accounts.google.com']
+        self.assertEqual([e['host'] for e in self.fake.profile['include']], want)
+        mac, ops = self.fake.profiles
+        self.assertEqual([e['host'] for e in mac['include']], want)
+        self.assertNotIn('include', ops)  # Exclude mode already reaches both
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            checks = {c[0]: c for c in cloudflare.client_only_checks(config.load(self.config_path))}
+        self.assertTrue(checks['client-reauth'][1])
+
+    def test_doctor_names_a_profile_that_cannot_re_authenticate(self):
+        self.fake.profile = {'default': True, 'include': [{'host': 'example.cloudflareaccess.com'}]}
+        with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
+            checks = {c[0]: c for c in cloudflare.client_only_checks(config.load(self.config_path))}
+        ok, message = checks['client-reauth'][1:3]
+        self.assertFalse(ok)
+        self.assertIn('default device profile is in Include mode without accounts.google.com', message)
+
     def test_someone_elses_route_for_our_name_stops_setup(self):
         self.fake.routes.append({'id': 'x', 'hostname': 'agents.example.com', 'tunnel_id': 'other', 'comment': 'prod'})
         with self.assertRaisesRegex(util.Failed, 'another tunnel'):
@@ -1522,6 +1563,7 @@ class PrivateNetwork(unittest.TestCase):
             {
                 'gateway-proxy': True,
                 'client-session': True,
+                'client-reauth': True,
                 'client-sign-in': True,
                 'client-enrollment': True,
                 'private-app': True,

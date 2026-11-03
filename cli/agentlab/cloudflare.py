@@ -30,6 +30,7 @@ import ssl
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import config, render, tomledit
@@ -724,6 +725,15 @@ class Setup:
                 path,
                 body,
             )
+        for name, path, have, missing in reauth_gaps(self.cfg, self.api, self.account, org):
+            added = [{'host': h, 'description': 'agentlab: client re-authentication'} for h in missing]
+            self.write(
+                f'add {", ".join(missing)} to the Include list of the {name} device profile (re-authentication goes '
+                'through the client; nothing is removed)',
+                'PUT',
+                path,
+                [*have, *added],
+            )
         if private:
             path = f'/accounts/{self.account}/devices/settings'
             settings = self.api.call('GET', path) or {}
@@ -993,6 +1003,52 @@ def login_methods(cfg, providers):
     return [providers[0]['id']] if len(providers) == 1 and providers[0].get('id') else []
 
 
+def idp_hosts(cfg, providers):
+    """Where people's browsers sign in, per identity provider type (a one-time PIN needs none)."""
+    ids = login_methods(cfg, providers) or [p.get('id') for p in providers]
+    hosts = []
+    for p in providers:
+        if p.get('id') not in ids:
+            continue
+        conf, kind = p.get('config') or {}, p.get('type')
+        url = conf.get('auth_url') or conf.get('sso_target_url') or ''
+        host = {
+            'google': 'accounts.google.com',
+            'google-apps': 'accounts.google.com',
+            'azureAD': 'login.microsoftonline.com',
+            'github': 'github.com',
+            'okta': urllib.parse.urlsplit(conf.get('okta_account') or '').hostname,
+        }.get(kind) or urllib.parse.urlsplit(url).hostname
+        if host:
+            hosts.append(host)
+    return list(dict.fromkeys(hosts))
+
+
+def reauth_gaps(cfg, api, account, org):
+    """Client sessions expire (warp_auth_session_duration), and re-authenticating only works when the team domain and
+    the identity provider go through the client. A profile in Include mode sends only what it lists, so the expired
+    client asks to be connected first and can't be: [(profile, include path, its list, missing hosts)]."""
+    if not (config.private_network(cfg) or cfg['auth']['cloudflare']['require_warp']):
+        return []
+    providers = api.call('GET', f'/accounts/{account}/access/identity_providers') or []
+    team = org.get('auth_domain') or f'{cfg["auth"]["cloudflare"]["team"]}.cloudflareaccess.com'
+    want = [team, *idp_hosts(cfg, providers)]
+    base = f'/accounts/{account}/devices/policy'
+    profiles = [('default', f'{base}/include', api.call('GET', base) or {})]
+    for p in api.call('GET', f'/accounts/{account}/devices/policies') or []:
+        if not p.get('default'):
+            profiles.append((repr(p.get('name') or p.get('policy_id')), f'{base}/{p.get("policy_id")}/include', p))
+    gaps = []
+    for name, path, profile in profiles:
+        have = profile.get('include')
+        if not have or profile.get('exclude'):  # Exclude mode already sends everything else through the client
+            continue
+        missing = [h for h in want if not any(e.get('host') == h for e in have)]
+        if missing:
+            gaps.append((name, path, have, missing))
+    return gaps
+
+
 # What each part of `cloudflare setup` needs, named as the token page in the dashboard shows it.
 PERMISSIONS = {
     'tunnels': 'Account · Cloudflare One Connector: cloudflared → Edit',
@@ -1084,7 +1140,7 @@ def client_only_checks(cfg, opener=None):
                 'info',
             )
         )
-    org_sign_in = False
+    org_sign_in, org = False, {}
     try:
         org = api.call('GET', f'/accounts/{account}/access/organizations') or {}
         org_sign_in = org.get('allow_authenticate_via_warp')
@@ -1099,6 +1155,25 @@ def client_only_checks(cfg, opener=None):
         )
     except Failed:
         out.append(('client-session', True, f"couldn't read it: {CLIENT_SESSION_FIX}", '', 'info'))
+    try:
+        gaps = reauth_gaps(cfg, api, account, org)
+        out.append(
+            (
+                'client-reauth',
+                not gaps,
+                'an expired client session can re-authenticate (Include-mode profiles list the team domain and the '
+                'sign-in provider)'
+                if not gaps
+                else '; '.join(
+                    f'the {n} device profile is in Include mode without {", ".join(m)}' for n, _, _, m in gaps
+                )
+                + ': an expired client asks to be connected and cannot be',
+                'agentctl cloudflare setup',
+                'error',
+            )
+        )
+    except Failed:
+        out.append(('client-reauth', True, "couldn't read the device profiles with this token", '', 'info'))
     apps = api.call('GET', f'/accounts/{account}/access/apps') or []
     app = next((a for a in apps if a.get('name') == s.name), None)
     out.append(
