@@ -98,15 +98,25 @@ def errand(who, how, owner, asked, lines, files, folder):
         f'{who} {how} in Slack, asking:\n\n{asked}\n\n---\nThe conversation around it:\n'
         + ('\n'.join(lines[-40:]) or '(nothing else)')
         + (('\n\nAttachments, downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)) if files else '')
-        + f'\n\nYou are handling this for {owner} while they are busy, as them: the browser has their logins.'
+        + f'\n\nYou are handling this for {owner} while they are busy, as them, with their connected tools and'
+        ' browser logins.'
         f' First decide: is {who} asking {owner} for something you can do yourself (get access or documents, look'
         f' something up, change something in a service {owner} manages, check the code)? If not, or it needs'
         f' {owner} personally (a decision, an opinion, a promise), reply with exactly one line'
         ' `NO_ACTION: <short reason>` and stop.'
         f'\n\nLanguage: everything for {owner} (your messages, progress, summaries, the approval "action" and'
         f' "details") is in English, whatever language {who} wrote in. Only the "reply" meant for {who} is in'
-        f" {who}'s language." + approvals(folder, who, owner) + work_accounts(owner, folder)
+        f" {who}'s language." + TOOL_CHOICE + approvals(folder, who, owner) + work_accounts(owner, folder)
     )
+
+
+# Connected tools (MCP) are exact and audited; the browser is the fallback.
+TOOL_CHOICE = (
+    '\n\nTools: check which connected (MCP) tools this chat has before opening the browser, and use a matching one'
+    ' for lookups and approved changes alike. Use the browser only when no tool covers it or the tool is down,'
+    ' never to get around a tool that refused. After a change, read the state back to confirm it; if the result'
+    ' is unclear, check before retrying so nothing happens twice.'
+)
 
 
 def work_accounts(owner, folder):
@@ -136,7 +146,7 @@ def approvals(folder, who, owner):
         f' salaries, customer data, credentials), and anything going outside {org()}. Routine documents (invoices,'
         f' receipts) and answers for the colleague who asked do NOT need approval: hand them over with'
         f' manifest.json as described below; {NAME} shows them to {owner} anyway. For the sensitive ones,'
-        ' prepare everything WITHOUT changing anything (sign in, find the exact place, the person, the setting),'
+        ' prepare everything WITHOUT changing anything (read-only: find the exact place, the person, the setting),'
         f' then write {box}/approval.json: {{"action": "<one line: exactly what will change>", "details": "<where,'
         f' who, current vs new, anything they should know>", "reply": "<what to tell {who} once it is done, in their'
         f' language>", "files": ["<files in {box}/ that would be sent, if any>"]}} and end your turn with one line'
@@ -152,7 +162,7 @@ def triage(owner, who, convo, texts):
     """Team mode: what does a colleague's message to the owner need? Errand is the strict one."""
     return (
         f'You triage Slack messages for {owner} (works at {org()}) and their assistant. The assistant can use'
-        f" {owner}'s browser logins to work tools and the codebase"
+        f" {owner}'s connected work tools, their browser logins and the codebase"
         + (', plus their work accounts' if work_tools() else '')
         + '.\n\nEarlier in this conversation:\n'
         + (convo or '(nothing)')

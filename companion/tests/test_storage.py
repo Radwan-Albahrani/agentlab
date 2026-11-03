@@ -65,5 +65,7 @@ def test_where_the_owner_works_and_the_default_project_are_live_settings():
         '/workspace/x'
     )
     assert 'outside Example Co' in prompts.approvals('/files/x', 'Ali', 'Sam')
+    errand = prompts.errand('Ali', 'wrote', 'Sam', 'add me to the dashboard', [], [], '/files/x')
+    assert errand.index('connected (MCP) tools') < errand.index('Sensitive things')  # tools first, gate unchanged
     keys = [s['key'] for s in config.SCHEMA]
     assert {'org', 'default_project'} <= set(keys)
