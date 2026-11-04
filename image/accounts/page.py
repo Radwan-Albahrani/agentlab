@@ -44,6 +44,7 @@ def page():
         'keys': [{'label': k, 'value': v} for k, v in signin.KEYS.items()],
         'ai': [_flow(f) for f in signin.AI_FLOWS],
         'github': github,
+        'tools': [_flow(f) for f in signin.TOOL_FLOWS],
         'connectors': [_connector(k, s) for k, s in connectors.servers().items()],
         'devices': pairing.devices(),
         'onboarding': onboarding.state(),

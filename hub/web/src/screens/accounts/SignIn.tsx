@@ -13,7 +13,7 @@ import { useAccountAct } from './useAccountAct';
 
 type Keys = AccountsPage['keys'];
 
-/** One account (Claude, Codex or GitHub): its state, its buttons, and the steps while a sign-in runs. */
+/** One account (Claude, Codex, GitHub or Expo): its state, its buttons, and the steps while a sign-in runs. */
 export function SignIn({ agent, f, keys }: { agent: string; f: Flow; keys: Keys }) {
   const run = useAccountAct(agent);
   const start = (how?: string) => run({ action: 'start', p: f.key, how });
@@ -82,9 +82,18 @@ function SecondStep({ f, send }: { f: Flow; send: (text: string) => unknown }) {
         <SubmitField placeholder="127.0.0.1:1455/auth/callback?…" button="Finish" onSubmit={send} />
       </Step>
     );
-  if (f.key === 'codex' || f.key === 'github')
+  if (f.key === 'codex' || f.key === 'github' || f.key === 'expo')
     return (
-      <Step n={2} done={f.done} title="Enter this code" sub="On the page that opens.">
+      <Step
+        n={2}
+        done={f.done}
+        title={f.key === 'expo' ? 'Approve if the page shows this code' : 'Enter this code'}
+        sub={
+          f.key === 'expo'
+            ? 'If it then shows a number, pick the same one in the terminal below with ↑ ↓ and Enter.'
+            : 'On the page that opens.'
+        }
+      >
         {f.code ? (
           <Inline>
             <DeviceCode code={f.code} />

@@ -1,4 +1,4 @@
-"""Claude / Codex / GitHub sign-in through each official CLI, driven in tmux (device code, link + pasted code)."""
+"""Claude / Codex / GitHub / Expo sign-in through each official CLI, driven in tmux (device code, link + pasted code)."""
 
 import json
 import os
@@ -31,8 +31,19 @@ FLOWS = {
         'hint': 'Open the link and enter the code. This signs in git, the gh CLI and the GitHub MCP server.',
         'link': 'https://github.com/login/device',  # gh also prints announcement links before it
     },
+    # EAS builds, submits and updates Expo apps. --device: a link and a code, like GitHub; when the browser shows a
+    # number, eas lists the choices and the person picks the same one with the arrow keys.
+    'expo': {
+        'name': 'Expo',
+        'login': 'eas login --device',
+        'logout': 'eas logout',
+        'hint': 'Open the link and approve. If the page shows a number, pick the same one in the terminal below.',
+        'link': 'https://expo.dev/',
+    },
 }
 AI_FLOWS = ('claude', 'codex')
+TOOL_FLOWS = ('expo',)
+CODE_FLOWS = ('codex', 'github', 'expo')  # sign-ins that show a device code to type on the provider's page
 CODEX_BROWSER_LOGIN = 'codex login'  # for workspaces with device-code login turned off
 CODEX_CALLBACK_RE = re.compile(r'^(https?://)?(localhost|127\.0\.0\.1):1455/\S+$')  # Safari drops "http://"
 URL_RE = re.compile(r'https://\S+')
@@ -92,6 +103,9 @@ def _check(flow):
     if flow == 'github':
         rc, out = run('gh api user --jq .login')
         return (True, f'@{out}') if rc == 0 and out else (False, '')
+    if flow == 'expo':
+        rc, out = run('eas whoami')
+        return (True, out.splitlines()[0]) if rc == 0 and out else (False, '')
     rc, out = run('codex login status')
     ok = rc == 0 and not re.search(r'not logged in', out, re.I)
     return ok, out.splitlines()[0] if ok and out else ''
@@ -118,7 +132,7 @@ def state(flow):
     signed_in, detail = status(flow)
     scr = screen(flow) if active(flow) else ''
     urls = [u.rstrip('.,)') for u in URL_RE.findall(scr)]
-    code = DEVICE_CODE_RE.search(scr) if flow in ('codex', 'github') and mode(flow) != 'browser' else None
+    code = DEVICE_CODE_RE.search(scr) if flow in CODE_FLOWS and mode(flow) != 'browser' else None
     done = signed_in and (
         bool(re.search(r'success|logged in|signed in|authentication complete', scr, re.I)) or flow == 'github'
     )

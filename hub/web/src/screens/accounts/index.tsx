@@ -62,6 +62,17 @@ function AccountsView({ agent, d }: { agent: string; d: AccountsPage }) {
           </List>
         </Card>
       </Section>
+      {d.tools?.length ? (
+        <Section title="Developer tools" sub="Command-line tools the agent uses as you.">
+          <Card>
+            <List>
+              {d.tools.map((f) => (
+                <SignIn key={f.key} agent={agent} f={f} keys={d.keys} />
+              ))}
+            </List>
+          </Card>
+        </Section>
+      ) : null}
       <Section
         title="Connectors"
         sub="Each becomes a tool for both Claude and Codex; one sign-in each, and new chats pick it up."

@@ -4,8 +4,8 @@
 # without a rebuild. Sourced by the entrypoint (install what's missing before start) and by agent-updater (refresh
 # everything in the background), so both always install the same things the same way.
 
-# mcp-remote lets Claude and Codex share connector OAuth.
-NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest)
+# mcp-remote lets Claude and Codex share connector OAuth; eas-cli builds and ships Expo apps (signed in on Accounts).
+NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest)
 
 log() { echo "[tools $(date +%T)] $*"; }
 
@@ -75,8 +75,8 @@ install_missing_tools() {
     attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
       || log "Claude Code install FAILED"
   fi
-  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null; then
-    log "installing Codex, Cyrus, Playwright MCP, mcp-remote"
+  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null; then
+    log "installing Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI"
     attempt "npm install" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
       || log "npm install failed (see ~/logs/npm-update.log)"
   fi
@@ -93,7 +93,7 @@ install_missing_tools() {
 # while the agent is idle; the CLIs pick theirs up on their next run.
 update_tools() {
   write_curlrc
-  log "updating Codex, Cyrus, Playwright MCP, mcp-remote, T3 Code, herdr, Claude Code"
+  log "updating Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, T3 Code, herdr, Claude Code"
   attempt "npm update" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
     || log "npm update failed (see ~/logs/npm-update.log); keeping installed versions"
   install_t3
@@ -101,5 +101,5 @@ update_tools() {
   command -v claude >/dev/null \
     && { attempt "claude update" 600 bash -c 'claude update >"${HOME}/logs/claude-update.log" 2>&1' || log "claude update failed"; }
   log "claude $(claude --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)" \
-      "| t3 $(t3 --version 2>/dev/null | head -1) | herdr $(herdr --version 2>/dev/null | head -1)"
+      "| t3 $(t3 --version 2>/dev/null | head -1) | herdr $(herdr --version 2>/dev/null | head -1) | eas $(eas --version 2>/dev/null | head -1)"
 }

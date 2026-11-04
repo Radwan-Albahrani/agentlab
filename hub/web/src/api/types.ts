@@ -174,6 +174,7 @@ export interface AccountsPage {
   keys: { label: string; value: string }[];
   ai: Flow[];
   github: Flow;
+  tools?: Flow[]; // developer CLIs (Expo); absent on agents not yet updated
   connectors: Connector[];
   devices: Device[];
   onboarding: Onboarding;

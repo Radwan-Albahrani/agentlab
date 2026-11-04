@@ -28,3 +28,22 @@ def test_no_link_until_gh_prints_the_device_page(monkeypatch):
 def test_other_flows_take_the_first_link(monkeypatch):
     flow_screen(monkeypatch, 'Visit https://auth.openai.com/codex/device.\nCode: WXYZ-1234')
     assert signin.state('codex')['url'] == 'https://auth.openai.com/codex/device'
+
+
+EAS_SCREEN = """Open https://expo.dev/oauth/device?user_code=QLXX-VLNZ
+Code: QLXX-VLNZ
+You can resume with eas login --device --resume addc955f-4a30-4795-882b-ea74c2786712
+"""
+
+
+def test_expo_shows_its_device_page_and_code(monkeypatch):
+    flow_screen(monkeypatch, EAS_SCREEN)
+    st = signin.state('expo')
+    assert (st['url'], st['code']) == ('https://expo.dev/oauth/device?user_code=QLXX-VLNZ', 'QLXX-VLNZ')
+
+
+def test_expo_is_signed_in_as_whoever_eas_says(monkeypatch):
+    monkeypatch.setattr(signin, 'run', lambda cmd: (0, 'radwan\n') if cmd == 'eas whoami' else (1, ''))
+    assert signin._check('expo') == (True, 'radwan')
+    monkeypatch.setattr(signin, 'run', lambda cmd: (1, 'Not logged in'))
+    assert signin._check('expo') == (False, '')

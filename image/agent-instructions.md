@@ -55,6 +55,8 @@ and yours to change. Use the `companion` skill for how (test, commit, restart, l
 ### GitHub and connectors
 - `git` and `gh` are signed in as your owner's GitHub account (if they set it up on the Accounts page), and the
   GitHub MCP tools use the same account.
+- `eas` (Expo: builds, submits, updates) uses your owner's Expo account once they sign in to Expo on the Accounts
+  page. If `eas whoami` says you're not logged in, ask them to; don't log in with a password yourself.
 - Other services (Linear, Sentry, Notion, ...) are available as MCP tools once your owner
   connects them on the Accounts page. If a tool you need is missing, tell them which connector to add.
 
