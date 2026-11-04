@@ -83,7 +83,15 @@ def keep_connected(rows):
             if net not in joined:
                 alias = ['--alias', r['service']] if r['service'] != 'edge' else []
                 rc, msg = host.run(['docker', 'network', 'connect', *alias, net, r['name']])
-                store.event('network', f'{r["service"]} rejoined {net}', '' if rc == 0 else msg[-200:], ok=rc == 0)
+                agent = net.removeprefix('agentlab-')
+                store.event(
+                    'network',
+                    f'{r["service"].capitalize()} reconnected to the {agent} agent',
+                    'Restarting it drops the link to each agent; without it the agent would be unreachable.'
+                    if rc == 0
+                    else f'Could not reconnect: {msg[-200:]}',
+                    ok=rc == 0,
+                )
 
 
 def extra_networks(networks, agent_id):
@@ -102,9 +110,18 @@ def keep_isolated(rows):
             joined = json.loads(out or '{}')
         except ValueError:
             continue
-        for net in extra_networks(joined, r['stack'].removeprefix('agentlab-agent-')):
+        agent = r['stack'].removeprefix('agentlab-agent-')
+        for net in extra_networks(joined, agent):
             rc, msg = host.run(['docker', 'network', 'disconnect', net, r['name']])
-            store.event('network', f'{r["name"]} left {net}', '' if rc == 0 else msg[-200:], ok=rc == 0)
+            store.event(
+                'network',
+                f'{agent} agent isolated again after a deploy',
+                f'Coolify adds every container it deploys to a network of its own ({net}); taken off it, so the agent '
+                'reaches only what its own network allows.'
+                if rc == 0
+                else f'Could not take it off {net}: {msg[-200:]}',
+                ok=rc == 0,
+            )
 
 
 def check(_state):

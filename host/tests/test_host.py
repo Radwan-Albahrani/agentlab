@@ -318,11 +318,14 @@ class Watch(unittest.TestCase):
             {'name': 'agent-u1', 'stack': 'agentlab-agent-sara', 'service': 'agent', 'state': 'running'},
             {'name': 'files-u1', 'stack': 'agentlab-agent-sara', 'service': 'files', 'state': 'running'},
         ]
-        with mock.patch.object(inventory.host, 'run', fake_run), mock.patch.object(inventory.store, 'event'):
+        with mock.patch.object(inventory.host, 'run', fake_run), mock.patch.object(inventory.store, 'event') as event:
             inventory.keep_isolated(rows)
         self.assertEqual(
             [c for c in calls if c[1] == 'network'], [['docker', 'network', 'disconnect', 'u1', 'agent-u1']]
         )
+        self.assertEqual(
+            event.call_args.args[1], 'sara agent isolated again after a deploy'
+        )  # names, not container ids
 
     def test_inventory_tags_by_compose_project(self):
         stacks = [{'id': 'agentlab-core', 'uuid': ''}, {'id': 'agentlab-agent-sara', 'uuid': 'u1'}]
