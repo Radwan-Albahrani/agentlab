@@ -304,11 +304,7 @@ def publish(task, box, data):
     if qa.get('verdict') in ('pass', 'fail', 'partial') and qa.get('report'):
         qa_url = _post_qa(a, f, box, qa, problems)
     limitation = str(data.get('limitation') or '').strip()[:500]
-    extra = '\n\n'.join(
-        x
-        for x in (f'_Not fully covered: {limitation}_' if limitation else '', f'QA report: {qa_url}' if qa_url else '')
-        if x
-    )
+    extra = report.closing(findings, limitation, qa.get('verdict'), qa_url)
     url = ''
     try:
         if findings or limitation:  # only what is new: earlier findings live on in their own threads

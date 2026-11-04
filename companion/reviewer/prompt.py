@@ -246,7 +246,10 @@ Then write {box}/review.json LAST:
    inconclusive) | "skipped" (nothing runnable changed), "report": "qa.md", "images": ["<file names>"]}},
  "threads": [{{"id": "<thread id>", "action": "fixed" | "retract" | "update", "note": "<one or two sentences>",
    "finding": {{"title": "...", "severity": "...", "lane": "...", "body": "..."}} (only with "update")}}],
- "limitation": "<one sentence, only if part of the PR could not be reviewed or run>"}}
+ "limitation": "<only if part of the PR could not be reviewed or run: one or two plain sentences for the PR author,
+   without your working terms (lanes, claims, heads, bindings): what was not checked, why, and what would let it be
+   checked, e.g. 'The new screens were not tried on a device: no Android build of this commit exists. An EAS
+   development build of this branch would let the next review run them.'>"}}
 Blocking findings first, one per underlying problem. Leave "findings" empty when nothing clears the bar.
 
 Then end your turn with one short line, for example "2 findings (1 blocking) · QA: 3 of 4 claims pass, 1 blocked"."""

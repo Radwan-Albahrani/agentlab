@@ -114,6 +114,19 @@ def _alt(name):
     return re.sub(r'[-_]+', ' ', name.rsplit('.', 1)[0])
 
 
+def closing(findings, limitation, verdict, qa_url):
+    """What follows the findings in the review body. A review with no findings is posted only to say what was not
+    checked, so it opens with that verdict; without it the author saw a lone caveat and had to guess the result."""
+    lines = []
+    if not findings and limitation:
+        lines.append('**No problems found in what was checked, but part of this PR was not checked.**')
+    if limitation:
+        lines.append(f'**Not checked:** {limitation}')
+    if qa_url:
+        lines.append(f'**QA:** {QA_WORDS.get(verdict, "report")} · [full report]({qa_url})')
+    return '\n\n'.join(lines)
+
+
 def summary(findings, qa):
     """'2 findings (1 blocking) · QA: verified' style line for the dashboard and Slack."""
     n = len(findings)

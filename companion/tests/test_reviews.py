@@ -505,3 +505,15 @@ def test_reviews_from_before_the_counts_still_show_them():
     }
     assert report.counts_of('no findings · QA verified')['qa'] == 'pass'
     assert report.counts_of('answered') is None
+
+
+def test_a_review_with_only_a_limitation_says_plainly_what_was_and_was_not_checked(gh, told):
+    task = started(gh, told)
+    qa_box(task)
+    limitation = 'The new screens were not tried on a device: no Android build of this commit exists.'
+    finish(task, {**QA_DONE, 'qa': {'verdict': 'partial', 'report': 'qa.md'}, 'limitation': limitation})
+    _, _, body = next(c for c in gh.calls if c[1].endswith('/reviews'))
+    first, checked, qa = body['body'].split('\n\n')
+    assert first == '**No problems found in what was checked, but part of this PR was not checked.**'
+    assert checked == f'**Not checked:** {limitation}'
+    assert qa.startswith('**QA:** partly verified · [full report](https://')
