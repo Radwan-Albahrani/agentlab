@@ -4,7 +4,7 @@ import { api, post } from './client';
 import type { AccountsPage } from './types';
 
 /** While `on` (a change the companion is about to make: a fresh PR list, a review starting), its page is refetched
- * every 1.5 s instead of every 15 s; `giveUp` runs after 30 s so a lost change can't keep it polling. */
+ * every second instead of every 15 s; `giveUp` runs after 30 s so a lost change can't keep it polling. */
 export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) {
   const qc = useQueryClient();
   const latest = useRef(giveUp); // the newest callback, without restarting the timers on every render
@@ -15,7 +15,7 @@ export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) 
     if (!on) return;
     const poll = setInterval(() => {
       void qc.invalidateQueries({ queryKey: ['companion', name] });
-    }, 1500);
+    }, 1000);
     const stop = setTimeout(() => {
       latest.current();
     }, 30_000);
@@ -27,7 +27,7 @@ export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) 
 }
 
 /** Asks a companion to re-read its pull requests from GitHub (on open, and on demand: never on a timer) and
- * refetches its page every 1.5 s until the new list is in, or 30 s pass. `at`: when its list was last read. */
+ * refetches its page every second until the new list is in, or 30 s pass. `at`: when its list was last read. */
 export function usePullsRefresh(name: string, at: number): [boolean, () => void] {
   const [opened] = useState(at);
   const [waiting, setWaiting] = useState<number | null>(null); // the list time a fresher list must beat

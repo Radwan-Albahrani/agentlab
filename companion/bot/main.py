@@ -1,6 +1,7 @@
 """Start the companion: Slack Socket Mode (connects out, nothing is exposed) plus one poller that, every few seconds,
-moves every task forward, picks up the agents' outbox files and drafts, takes asks from the hub, starts
-queued pull request reviews, closes polls that are due, and refreshes what the hub shows."""
+moves every task forward, picks up the agents' outbox files and drafts, starts
+queued pull request reviews, closes polls that are due, and refreshes what the hub shows. Asks from the hub get a
+quicker check of their own."""
 
 import os
 import threading
@@ -20,7 +21,7 @@ from . import (  # noqa: F401  (routing registers the handlers)
     slack,
     tasks,
 )
-from .config import AGENT, BRIDGE, COMP, DATA, FILES, NAME, OWNER, POLL, log, mode, secret
+from .config import AGENT, ASKS_POLL, BRIDGE, COMP, DATA, FILES, NAME, OWNER, POLL, log, mode, secret
 from .state import lock, prepare_for_start, save, state
 
 
@@ -40,7 +41,6 @@ def poll():
             with lock:
                 _guarded(f'tick {task.get("thread")}', outbox.tick, task)  # files first, then the answer
                 _guarded(f'tick {task.get("thread")}', tasks.tick, task)
-        _guarded('asks', asks.tick)
         with lock:
             _guarded('reviews', reviews.tick)
         _guarded('evidence', reviews.prune_tick)
@@ -56,6 +56,13 @@ def poll():
         _guarded('publish', publish.tick)
 
 
+def watch_asks():
+    """The page's asks (refresh, review, an ask) are clicks someone is watching: check often, apart from the tasks."""
+    while True:
+        time.sleep(ASKS_POLL)
+        _guarded('asks', asks.tick)
+
+
 def run():
     for d in (DATA, FILES, drafts.DRAFTS, outbox.OUTBOX):
         os.makedirs(d, exist_ok=True)
@@ -65,5 +72,6 @@ def run():
     slack.WORKSPACE = slack.app.client.auth_test()['url']  # also verifies the bot token: a bad one stops here
     COMP.event('live', f'{NAME} started', detail=f'mode: {mode()}')
     threading.Thread(target=poll, daemon=True).start()
+    threading.Thread(target=watch_asks, daemon=True).start()
     publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
     publish.handler.start()

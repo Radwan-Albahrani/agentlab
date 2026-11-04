@@ -70,9 +70,14 @@ def latest(pr_id):
 def rows(card):
     """The PR list for the page, each with its latest review (card: publish.card, for the same status words)."""
     queued = {q['id'] for q in state.get('review_queue', [])}
+    newest = {}  # PR id -> (key, task) of its latest review, from one pass over the tasks
+    for k, t in state['tasks'].items():
+        pr = (t.get('review') or {}).get('id')
+        if pr and (pr not in newest or t.get('start', '') > newest[pr][1].get('start', '')):
+            newest[pr] = (k, t)
     out = []
     for p in state.get('pulls') or []:
-        k, t = latest(p['id'])
+        k, t = newest.get(p['id'], (None, None))
         review = None
         if p['id'] in queued:
             review = {'status': 'queued', 'outcome': 'Waiting for a free slot', 'task': '', 'head': '', 'at': ''}

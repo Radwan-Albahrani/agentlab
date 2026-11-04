@@ -2,13 +2,15 @@
 open pull requests its GitHub App sees, each with its latest review."""
 
 import re
+import threading
 import time
 
 from . import polls, reviews, slack
 from .config import COMP, MODES, mode
-from .state import state
+from .state import lock, state
 
 _last = 0.0
+_writing = threading.Lock()  # the poller and a refresh may both publish
 _mode = None
 handler = None  # the Socket Mode connection, set by main
 
@@ -63,6 +65,19 @@ def tick():
     if time.time() - _last < 5:
         return
     _last = time.time()
+    with _writing:
+        _publish()
+
+
+def now():
+    """Publish at once (a fresh PR list the page is waiting for), not on the next 5 s beat."""
+    global _last
+    _last = time.time()
+    with lock, _writing:
+        _publish()
+
+
+def _publish():
     try:
         connected = bool(handler and handler.client.is_connected())
     except Exception:

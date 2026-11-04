@@ -37,6 +37,7 @@ AGENT_FILES = f'/workspace/.companion/{ID}'
 DATA = os.environ.get('COMPANION_DATA', '/data')  # <data>/companions/<name>/: its database + what the hub reads
 
 POLL = 3  # s between checks of every task
+ASKS_POLL = 0.5  # s between checks for the hub's asks (someone just clicked)
 SETTLE = 60  # s an orchestrator gets to start more workers before its turn counts as finished
 STATUS_EVERY = 8  # s minimum between live edits of a "thinking" line
 REQ_SETTLE = 20  # s a burst of messages to the owner may keep arriving before it is looked at

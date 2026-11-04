@@ -5,9 +5,10 @@ import json
 import os
 import re
 import stat
+import time
 
 import pytest
-from bot import outbox, projects, reviews, routing, state, t3, tasks
+from bot import asks, config, outbox, projects, publish, reviews, routing, state, t3, tasks
 from conftest import OWNER, set_settings
 from reviewer import report
 from reviewer.github import GitHubError
@@ -169,6 +170,25 @@ def test_the_list_comes_from_the_apps_installations(gh):
     assert rows[1]['ci'] == 'passing' and rows[0]['ci'] == 'failing'
     assert rows[0]['labels'] == [{'name': 'lane:green', 'color': '0e8a16'}]
     assert reviews.status['ready'] and reviews.status['accounts'] == ['example-org']
+
+
+def test_a_refresh_from_the_page_is_published_at_once(gh):
+    publish._last = time.time()  # the 5 s beat just ran: a refresh must not wait for the next one
+    with open(os.path.join(config.COMP.asks_dir, 'refresh.json'), 'w') as f:
+        json.dump({'type': 'pulls'}, f)
+    asks.tick()
+    shown = [r[0] for r in config.COMP.db.execute('select number from pulls order by number')]
+    assert shown == [5922, 5923]
+    with open(os.path.join(config.COMP.dir, 'heartbeat.json')) as f:
+        assert json.load(f)['github']['ready']
+
+
+def test_each_row_carries_its_newest_review(gh):
+    reviews.refresh()
+    for k, start in (('old', '2026-11-01T10:00:00'), ('new', '2026-11-02T10:00:00')):
+        state.state['tasks'][k] = {'start': start, 'review': {'id': f'{REPO}#5922', 'head': k}}
+    row = next(r for r in reviews.rows(lambda k, t: {'status': 'done', 'outcome': k}) if r['number'] == 5922)
+    assert row['review']['task'] == 'new'
 
 
 def test_without_the_app_nothing_is_listed_or_reviewed(monkeypatch):

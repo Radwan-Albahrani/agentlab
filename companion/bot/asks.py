@@ -4,7 +4,7 @@ reply to steer it; whatever the agent prepares for the channel comes back throug
 The page also changes polls this way (type "poll": single / multiple choice, closing time, close now), re-reads the
 open pull requests (type "pulls") and asks for a review of one (type "review")."""
 
-from . import jobs, polls, prompts, reviews, slack, t3, tasks
+from . import jobs, polls, prompts, publish, reviews, slack, t3, tasks
 from .config import COMP, OWNER, default_project, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
@@ -16,7 +16,7 @@ def tick():
             with lock:
                 polls.change(ask)
         elif ask.get('type') == 'pulls':
-            jobs.run_later(reviews.refresh)
+            jobs.run_later(refresh_pulls)
         elif ask.get('type') == 'review':
             with lock:
                 problem = reviews.request(str(ask.get('repo') or ''), int(ask.get('number') or 0))
@@ -26,6 +26,12 @@ def tick():
                 )
         else:
             jobs.run_later(start, ask)
+
+
+def refresh_pulls():
+    """The page is waiting on this list: show it as soon as GitHub answers."""
+    reviews.refresh()
+    publish.now()
 
 
 def start(ask):
