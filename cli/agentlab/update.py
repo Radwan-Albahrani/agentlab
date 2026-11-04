@@ -11,8 +11,8 @@
    `--resume` skips the wait: busy agents are resumed at once (when something waiting on the update can't wait).
 5. (inside apply) Each companion checkout gets template changes merged in when it's clean and they don't conflict
    (template.py).
-6. The host's always-on services (watcher, throttle) restart when the pull changed their code under host/: they run
-   from the checkout, and a running Python keeps the code it started with, so they'd stay on the old one until a reboot.
+6. (inside apply) The host's always-on services (watcher, throttle) restart when their code changed since they
+   started.
 
 The outcome goes to <data>/state/update.json, which `status` and `doctor` show."""
 
@@ -158,7 +158,6 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=F
         else:
             images.pull(cfg, plan)
         applied = apply.apply(cfg, config_path)
-        restart_host_services(frm)
         wait_hours, on_busy = (0, 'resume') if resume_now else (u['wait_hours'], u['on_busy'])
         updated, deferred, resumed = wait_for_agents(cfg, plan, wait_hours, on_busy)
     except Failed as e:
@@ -177,24 +176,6 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=F
         chats_resumed=resumed,
         companion_templates=applied.get('companion_templates', {}),
     )
-
-
-HOST_SERVICES = ('agentlab-watch.service', 'agentlab-throttle.service')  # the timers' jobs start fresh every run
-
-
-def restart_host_services(frm):
-    """Restart the running host services when host/ changed since `frm` (step 6). The throttle keeps its queue in
-    spool files, so nothing waiting is lost."""
-    if run(['git', '-C', REPO, 'diff', '--quiet', frm, 'HEAD', '--', 'host/'], check=False)[0] == 0:
-        return []
-    restarted = []
-    for unit in HOST_SERVICES:
-        if run(['systemctl', 'is-active', '-q', unit], check=False)[0] == 0:
-            run(['systemctl', 'restart', unit], check=False)
-            restarted.append(unit)
-    if restarted:
-        say(f'  restarted {", ".join(restarted)} (their code changed)')
-    return restarted
 
 
 def _safe_head():

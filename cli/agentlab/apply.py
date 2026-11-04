@@ -288,6 +288,38 @@ def firewall(cfg, changed, plan):
         warn(f'{FIREWALL_UNIT} is not installed: agents are not firewalled until `agentctl install` runs')
 
 
+HOST_SERVICES = ('agentlab-watch.service', 'agentlab-throttle.service')  # the timers' jobs start fresh every run
+
+
+def code_changed_at(folder=None):
+    """When the newest Python file under host/ was written: a pull rewrites the files it changes."""
+    folder = folder or os.path.join(REPO, 'host')
+    newest = 0.0
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in ('__pycache__', 'tests')]
+        newest = max([newest, *(os.path.getmtime(os.path.join(root, f)) for f in files if f.endswith('.py'))])
+    return newest
+
+
+def started_at(unit):
+    """When the unit last started (epoch), or None when it isn't running."""
+    if run(['systemctl', 'is-active', '-q', unit], check=False)[0] != 0:
+        return None
+    rc, out = run(['systemctl', 'show', '--timestamp=unix', '-p', 'ActiveEnterTimestamp', '--value', unit], check=False)
+    return float(out.strip()[1:]) if rc == 0 and out.strip().startswith('@') else None
+
+
+def host_services(plan, changed=None):
+    """The watcher and the throttle run from the checkout for good, and a running Python keeps the code it started
+    with: each that started before its code last changed (an update's pull, or an edit) restarts, so nobody has to.
+    The throttle keeps its queue in spool files, so nothing waiting is lost."""
+    changed = code_changed_at() if changed is None else changed
+    for unit in HOST_SERVICES:
+        since = started_at(unit)
+        if since is not None and since < changed:
+            plan.do(f'restart {unit} onto its new code', ['systemctl', 'restart', unit])
+
+
 def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force=False):
     """`only`: deploy just these stacks (a companion an agent created or removed), everything else is still
     rendered but left running as it is. `force`: redeploy every stack, even agents with a T3 turn running."""
@@ -316,6 +348,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     files = render.all_files(cfg)
     changed = write_rendered(cfg, plan)
     firewall(cfg, changed, plan)
+    host_services(plan)
     # The tunnel container resolves the private names itself now; a block an earlier version wrote goes.
     hostsfile.ensure([], plan)
     images.ensure(cfg, plan, force=build)

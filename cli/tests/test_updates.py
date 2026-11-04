@@ -14,7 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentlab import config, coolify, deploy, render, update, util
+from agentlab import apply, config, coolify, deploy, render, update, util
 
 BASE = """
 [cluster]
@@ -262,29 +262,32 @@ class Waiting(Stack):
 
 
 class HostServices(unittest.TestCase):
-    def runs(self, changed, active=('agentlab-watch.service',)):
+    """apply restarts a host service that started before its code last changed, whichever update changed it."""
+
+    def restarts(self, changed):
         calls = []
 
         def fake(cmd, **_):
             calls.append(cmd)
-            if cmd[:2] == ['git', '-C']:
-                return (1 if changed else 0), ''
-            if cmd[1] == 'is-active':
-                return (0 if cmd[-1] in active else 3), ''
+            if cmd[1] == 'show':
+                return 0, {'agentlab-watch.service': '@1000', 'agentlab-throttle.service': '@3000'}[cmd[-1]]
             return 0, ''
 
-        with mock.patch('agentlab.update.run', fake), mock.patch('agentlab.update.say'):
-            done = update.restart_host_services('abc')
-        return done, [c for c in calls if c[1] == 'restart']
+        with mock.patch('agentlab.apply.run', fake), mock.patch('agentlab.util.run', fake):
+            apply.host_services(util.Plan(False), changed)
+        return [c[-1] for c in calls if c[1] == 'restart']
 
-    def test_a_running_service_restarts_when_its_code_changed(self):
-        self.assertEqual(
-            self.runs(changed=True),
-            (['agentlab-watch.service'], [['systemctl', 'restart', 'agentlab-watch.service']]),
-        )
+    def test_only_services_older_than_their_code_restart(self):
+        self.assertEqual(self.restarts(2000), ['agentlab-watch.service'])
+        self.assertEqual(self.restarts(500), [])
 
-    def test_nothing_restarts_when_host_is_unchanged(self):
-        self.assertEqual(self.runs(changed=False), ([], []))
+    def test_the_code_time_is_the_newest_python_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f'{d}/watch/__pycache__')
+            for name, t in (('cluster.py', 100), ('watch/store.py', 200), ('watch/__pycache__/x.py', 900)):
+                open(f'{d}/{name}', 'w').close()
+                os.utime(f'{d}/{name}', (t, t))
+            self.assertEqual(apply.code_changed_at(d), 200)
 
 
 class OncePerRun(Waiting):
