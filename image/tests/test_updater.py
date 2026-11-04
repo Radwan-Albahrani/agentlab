@@ -153,7 +153,7 @@ def test_defers_at_the_end_of_the_window(tmp_path, monkeypatch):
     assert run.restarted == []
 
 
-def test_resume_restarts_and_tells_only_the_interrupted_chats(tmp_path, monkeypatch):
+def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, 'WAIT_HOURS', 4)
     monkeypatch.setattr(updater, 'ON_BUSY', 'resume')
     rows = [('r1', 't1', 'running'), ('r2', 't2', 'running'), ('r3', 't3', 'completed'), ('r4', 't1', 'running')]
@@ -164,4 +164,4 @@ def test_resume_restarts_and_tells_only_the_interrupted_chats(tmp_path, monkeypa
     clock.t += 4 * 3600
     assert waiter.step(run, PS_015, db, sleep=lambda _: None) == 'resumed'
     assert len(run.restarted) == 1
-    assert run.sent == [('t1', updater.CONTINUE), ('t2', updater.CONTINUE)]  # once per chat; finished ones untouched
+    assert run.sent == []  # T3 resumes them itself on start

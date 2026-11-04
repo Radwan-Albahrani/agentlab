@@ -62,8 +62,8 @@ Each night at `backups.time` agentlab keeps the T3 databases, the companion data
 
 `agentctl update` pulls the repo (only fast-forward: it stops on local changes rather than merging), rebuilds the
 images and applies. Agents restart only when something they run changed, and never mid-turn: a busy agent is waited
-for up to `[updates] wait_hours`, then `on_busy` decides between `defer` (next time) and `resume` (restart it and tell
-its interrupted chats to carry on). `agentctl update --resume` skips the wait and resumes busy agents straight away.
+for up to `[updates] wait_hours`, then `on_busy` decides between `defer` (next time) and `resume` (restart it; T3
+picks the cut-off turns back up by itself). `agentctl update --resume` skips the wait and resumes busy agents straight away.
 `agentctl status` shows the last run.
 
 - Nightly updates: set `[updates] agentlab = "daily"` and run `agentctl install --only units`; `"off"` stops them. A

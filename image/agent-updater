@@ -6,7 +6,7 @@ Every AGENTLAB_UPDATE_HOURS (default 6; 0 = never install) it re-runs the same i
 started with, so whenever the installed T3 is newer than the running one, it restarts ONLY the t3 program, and only
 while no T3 run is in progress (a restart mid-turn would cut it off). Busy: it checks again every few minutes, for up
 to AGENTLAB_UPDATE_WAIT_HOURS (default 4). Still busy then, AGENTLAB_ON_BUSY decides: "defer" (default) waits for the
-next update cycle; "resume" restarts T3 anyway and sends each chat whose turn it cut off a message to carry on.
+next update cycle; "resume" restarts T3 anyway, and T3 picks the turns it cut off back up by itself.
 
 The first check comes ~2 min after start, so a T3 installed while the server was already starting is picked up too."""
 
@@ -23,7 +23,6 @@ T3_DB = os.path.join(HOME, '.t3', 'userdata', 'statev2.sqlite')
 SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
 WAIT_HOURS = float(os.environ.get('AGENTLAB_UPDATE_WAIT_HOURS') or 4)
 ON_BUSY = os.environ.get('AGENTLAB_ON_BUSY') or 'defer'
-CONTINUE = 'The server restarted for an update; continue where you left off.'
 FIRST_CHECK_S = 120
 RETRY_S = 300
 SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')  # every other run status means a turn is in progress
@@ -70,27 +69,6 @@ def running_t3(ps=None):
     return found[-1] if found else ''
 
 
-def inflight(db=T3_DB):
-    """[(run id, thread id)] of turns in progress."""
-    try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
-            marks = ','.join('?' * len(SETTLED))
-            q = f'select run_id, thread_id from orchestration_v2_projection_runs where status not in ({marks})'
-            return [tuple(r) for r in c.execute(q, SETTLED)]
-    except sqlite3.Error:
-        return []
-
-
-def statuses(run_ids, db=T3_DB):
-    try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
-            marks = ','.join('?' * len(run_ids))
-            q = f'select run_id, status from orchestration_v2_projection_runs where run_id in ({marks})'
-            return dict(c.execute(q, list(run_ids)).fetchall())
-    except sqlite3.Error:
-        return {}
-
-
 def idle(db=T3_DB):
     """No T3 run in progress. Unreadable DB counts as busy: better a later restart than a cut-off turn."""
     try:
@@ -118,36 +96,11 @@ def align_t3(run=subprocess.run, ps=None, db=T3_DB):
     return 'restarted'
 
 
-def t3_up(run=subprocess.run, sleep=time.sleep, timeout_s=300):
-    for _ in range(int(timeout_s / 5)):
-        p = run(['curl', '-fs', '-o', '/dev/null', 'http://127.0.0.1:3773/'], check=False)
-        if p.returncode == 0:
-            return True
-        sleep(5)
-    return False
-
-
-def resume_t3(run=subprocess.run, db=T3_DB, sleep=time.sleep):
-    """Restart t3 although a turn is running, then tell each chat it cut off to continue. -> threads told"""
-    running = inflight(db)
-    log(f'restarting T3 although {len(running)} turn(s) are running; they will be told to continue')
+def resume_t3(run=subprocess.run):
+    """Restart t3 although a turn is running. T3 resumes the turns it cut off when it starts ("T3 Code restarted and
+    resumed this turn"), so nothing is sent to them."""
+    log('restarting T3 although a turn is running; T3 resumes it after the restart')
     run([*SUPERVISOR, 'restart', 't3'], check=False)
-    if not t3_up(run, sleep):
-        log('T3 did not come back within 5 min; the interrupted chats were not resumed')
-        return []
-    now = statuses([r for r, _ in running], db) if running else {}
-    told = []
-    for run_id, thread in running:
-        if now.get(run_id) != 'interrupted' or thread in told:
-            continue
-        p = run(['t3', 'thread', 'send', '--json', thread, '-'], input=CONTINUE, text=True, capture_output=True,
-                cwd='/workspace', check=False)
-        if p.returncode == 0:
-            told.append(thread)
-        else:
-            log(f'could not tell chat {thread} to continue: {(p.stderr or p.stdout or "").strip()[:200]}')
-    log(f'resumed {len(told)} chat(s)')
-    return told
 
 
 class Waiter:
@@ -169,7 +122,7 @@ class Waiter:
             return 'busy'
         self.since = None
         if ON_BUSY == 'resume':
-            resume_t3(run, db, sleep)
+            resume_t3(run)
             return 'resumed'
         log(f'T3 busy for {WAIT_HOURS:g} h; the new version waits for the next cycle')
         self.until = self.clock() + max(HOURS, 1) * 3600

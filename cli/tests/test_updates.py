@@ -241,50 +241,24 @@ class Waiting(Stack):
         self.assertGreaterEqual(self.clock.t - 1_000_000.0, 4 * 3600)
         self.assertNotIn('agentlab-agent-omar', self.deployed)
 
-    def test_resume_restarts_and_tells_only_interrupted_chats(self):
+    def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(self):  # T3 resumes them itself on start
         runs_db(self.sara, [])
         rows = [('r1', 't1', 'running'), ('r2', 't2', 'running'), ('r3', 't3', 'completed'), ('r4', 't1', 'running')]
         runs_db(self.omar, rows)
-        told = []
-
-        def restart(cfg, stack, *a, **k):  # the restart cuts off what was running, the way T3 marks it on start
-            self.deployed.append(stack)
-            if stack == 'agentlab-agent-omar':
-                set_status(self.omar, 'interrupted')
-
-        with (
-            mock.patch('agentlab.deploy.deploy', restart),
-            mock.patch('agentlab.update.wait_healthy', return_value='c9'),
-            mock.patch('agentlab.update.send_continue', lambda cid, thread: told.append((cid, thread)) or True),
-        ):
-            updated, deferred, resumed = self.wait('resume', lambda n: None)
+        updated, deferred, resumed = self.wait('resume', lambda n: None)
         self.assertEqual(updated, ['sara', 'omar'])
         self.assertEqual(deferred, [])
         self.assertEqual(resumed, {'omar': ['t1', 't2']})
-        self.assertEqual(told, [('c9', 't1'), ('c9', 't2')])
+        self.assertEqual(self.deployed, ['agentlab-agent-sara', 'agentlab-agent-omar'])
 
     def test_resume_now_does_not_wait(self):  # agentctl update --resume
         runs_db(self.sara, [])
         runs_db(self.omar, [('r2', 't2', 'running')])
         slept = []
-        with (
-            mock.patch('agentlab.update.wait_healthy', return_value='c9'),
-            mock.patch('agentlab.update.send_continue', return_value=True),
-        ):
-            updated, deferred, _ = update.wait_for_agents(
-                self.cfg, util.Plan(False), 0, 'resume', sleep=slept.append, clock=self.clock
-            )
+        updated, deferred, _ = update.wait_for_agents(
+            self.cfg, util.Plan(False), 0, 'resume', sleep=slept.append, clock=self.clock
+        )
         self.assertEqual((updated, deferred, slept), (['sara', 'omar'], [], []))
-
-
-class Healthy(unittest.TestCase):
-    def test_the_container_from_before_the_deploy_does_not_count(self):
-        ids = iter(['old', 'old', 'new'])
-        with (
-            mock.patch('agentlab.update.agent_container', lambda cfg, agent: next(ids)),
-            mock.patch('agentlab.update.run', return_value=(0, 'healthy\n')),
-        ):
-            self.assertEqual(update.wait_healthy({}, {}, sleep=lambda s: None, replaced='old'), 'new')
 
 
 class OncePerRun(Waiting):

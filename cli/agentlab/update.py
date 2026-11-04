@@ -7,7 +7,7 @@
    agent in the middle of a T3 turn is not restarted.
 4. Busy agents are waited for: checked every few minutes for up to [updates] wait_hours, each updated the moment it is
    idle (an idle agent never waits for a busy one). At the end of the window, on_busy decides: "defer" leaves it for
-   the next run, "resume" restarts it anyway and then tells each T3 chat whose turn the restart cut off to carry on.
+   the next run, "resume" restarts it anyway; T3 resumes the turns that cut off by itself.
    `--resume` skips the wait: busy agents are resumed at once (when something waiting on the update can't wait).
 5. (inside apply) Each companion checkout gets template changes merged in when it's clean and they don't conflict
    (template.py).
@@ -22,10 +22,9 @@ import sys
 import time
 
 from . import apply, deploy, images, render
-from .util import REPO, Failed, Plan, load_json, need_root, run, say, warn
+from .util import REPO, Failed, Plan, load_json, need_root, run, say
 
 CHECK_EVERY_S = 300
-CONTINUE = 'The server restarted for an update; continue where you left off.'
 
 
 def state_path(cfg):
@@ -82,66 +81,12 @@ def inflight(agent):
         return []
 
 
-def statuses(agent, run_ids):
-    db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
-    try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
-            marks = ','.join('?' * len(run_ids))
-            q = f'select run_id, status from orchestration_v2_projection_runs where run_id in ({marks})'
-            return dict(c.execute(q, list(run_ids)).fetchall())
-    except sqlite3.Error:
-        return {}
-
-
-def agent_container(cfg, agent):
-    ids = deploy.containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
-    return ids[0] if ids else ''
-
-
-def wait_healthy(cfg, agent, timeout_s=900, sleep=time.sleep, replaced=''):
-    """Until the agent's container reports healthy (T3 answers). -> container id, or '' on timeout. `replaced`: the
-    container from before a deploy, which doesn't count: Coolify deploys in the background, and the old one answering
-    healthy once made resume look for interrupted chats before the restart had even happened."""
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        cid = agent_container(cfg, agent)
-        if (
-            cid
-            and cid != replaced
-            and run(['docker', 'inspect', '-f', '{{.State.Health.Status}}', cid], check=False)[1].strip() == 'healthy'
-        ):
-            return cid
-        sleep(10)
-    return ''
-
-
-def send_continue(cid, thread):
-    """Post the continue message to one T3 chat, the way the companion bridge does (`t3 thread send`, text on stdin)."""
-    rc, out = run(
-        ['docker', 'exec', '-i', '-u', 'agent', '-w', '/workspace', cid, 't3', 'thread', 'send', '--json', thread, '-'],
-        check=False,
-        input_text=CONTINUE,
-    )
-    if rc:
-        warn(f'could not tell chat {thread} to continue: {out.strip()[:200]}')
-    return rc == 0
-
-
-def resume(cfg, agent, kind, key, plan, sleep=time.sleep):
-    """Restart a busy agent anyway, then tell each chat whose turn it cut off to carry on. -> threads told"""
-    running = inflight(agent)
-    before = agent_container(cfg, agent)
+def resume(cfg, agent, kind, key, plan):
+    """Restart a busy agent anyway. T3 picks the turns it cut off back up by itself when it starts again ("T3 Code
+    restarted and resumed this turn"), so nothing is sent to them. -> the chats that were mid-turn"""
+    running = sorted({thread for _, thread in inflight(agent)})
     deploy.deploy(cfg, f'agentlab-agent-{agent["id"]}', kind, key, plan, force=True)
-    cid = wait_healthy(cfg, agent, sleep=sleep, replaced=before)
-    if not cid:
-        warn(f'{agent["id"]} did not come back healthy in time; its interrupted chats were not resumed')
-        return []
-    now = statuses(agent, [r for r, _ in running]) if running else {}
-    told = []
-    for run_id, thread in running:
-        if now.get(run_id) == 'interrupted' and thread not in told and send_continue(cid, thread):
-            told.append(thread)
-    return told
+    return running
 
 
 def pending_agents(cfg):
@@ -180,9 +125,9 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
     for a in pending:
         if on_busy == 'resume':
             waited = f'still busy after {wait_hours:g} h' if wait_hours else 'busy'
-            say(f'  {a["id"]} {waited}: restarting it and resuming its chats')
+            say(f'  {a["id"]} {waited}: restarting it (T3 resumes its turns)')
             kind, key = stacks[f'agentlab-agent-{a["id"]}']
-            resumed[a['id']] = resume(cfg, a, kind, key, plan, sleep=sleep)
+            resumed[a['id']] = resume(cfg, a, kind, key, plan)
             updated.append(a['id'])
         else:
             say(f'  {a["id"]} still busy after {wait_hours:g} h: its update waits for the next run')
