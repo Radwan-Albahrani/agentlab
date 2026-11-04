@@ -1,11 +1,4 @@
-"""Posts to a channel: the agent writes post.json in its outbox ({"channel", "text", "poll"?}) and the companion posts it as
-a new message of its own (a poll is never a thread reply). When to ask the owner first:
-  they tagged the companion in that same channel            -> posted at once (they asked right there), a link in their thread
-  an ask from the hub                     -> as the ask said (a preview with Post it / Don't post, or at once)
-  any other channel                               -> a preview first
-A poll is run by the companion itself from there (see polls).
-{"to": "<person>" or [...], "text"} instead of a channel sends it to each person in their own DM with the companion; it
-speaks for the owner to someone directly, so it is always previewed unless they turned review off on the page."""
+"""The agent's post.json: a message or poll for a channel, or DMs to people; previewed for the owner unless review is off."""
 
 import time
 from datetime import datetime
@@ -20,7 +13,6 @@ MAX_PEOPLE = 10
 
 
 def in_channel(task):
-    """The task lives in a channel thread (the owner tagged the companion there), not in their DM."""
     return not task['channel'].startswith('D')
 
 
@@ -49,7 +41,7 @@ def where(post, md=False):
 
 
 def parse(p, default=''):
-    """(post, problem): a clean post, or why it can't be used. No channel given means `default`."""
+    """(post, problem): a clean post, or why it can't be used; no channel means `default`."""
     if p.get('to'):
         return _direct(p)
     known = slack.channels()
@@ -93,7 +85,7 @@ def preview_md(post):
 
 
 def offer(task, p):
-    """post.json from the agent -> a preview to approve, or straight out when the owner chose no review."""
+    """post.json -> a preview to approve, or sent at once."""
     ch, tts = task['channel'], task['thread_ts']
     post, problem = parse(p, ch if in_channel(task) else '')
     if problem:
@@ -105,7 +97,7 @@ def offer(task, p):
         return
     k = key(ch, tts)
     old = task.pop('post_draft', None)
-    if old:  # a revision: the older preview can no longer be posted
+    if old:
         line = ':pencil2: Replaced by the version below'
         slack.app.client.chat_update(channel=ch, ts=old['ts'], text=line, blocks=slack.blocks(old['md'], line))
     md = ':outbox_tray: ' + preview_md(post)
@@ -158,14 +150,14 @@ def send(task, post):
         log('post failed:', e)
         slack.post(ch, tts, 'Posting failed', md=f":warning: Couldn't send it to {dest}: {str(e)[:200]}")
         return
-    link = None if post.get('to') else slack.permalink(post['channel'], ts)  # the owner can't open the companion's DMs
+    link = None if post.get('to') else slack.permalink(post['channel'], ts)
     what = 'Poll' if post.get('poll') else 'Message'
     sent = f'sent to {dest}' if post.get('to') else f'posted in {dest}'
     note = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
     if post.get('poll'):
         note += f' · closes {clock(post["poll"]["closes"])}'
     slack.note_only(ch, tts, note)
-    if post.get('poll'):  # the early close is the owner's alone: in their DM, not in a channel thread
+    if post.get('poll'):  # close button goes to the owner's DM only
         dm, dm_thread = (slack.dm_owner(), None) if in_channel(task) else (ch, tts)
         slack.app.client.chat_postMessage(
             channel=dm,

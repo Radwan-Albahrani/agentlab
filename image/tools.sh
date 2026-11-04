@@ -1,17 +1,12 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # the installers run in a child bash (attempt ... bash -c), which expands them
-# The fast-moving CLIs (Claude Code, Codex, T3, herdr, ...) live in the home volume, not the image, so they can update
-# without a rebuild. Sourced by the entrypoint (install what's missing before start) and by agent-updater (refresh
-# everything in the background), so both always install the same things the same way.
+# Home-volume CLI installers, sourced by the entrypoint (missing only) and agent-updater (everything).
 
-# mcp-remote lets Claude and Codex share connector OAuth; eas-cli builds and ships Expo apps (signed in on Accounts).
 NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest)
 
 log() { echo "[tools $(date +%T)] $*"; }
 
-# No download may hang for good: a connection stranded on a network that went away once kept a first start waiting
-# forever (#18). curl reads $CURL_HOME/.curlrc, so these limits also cover the curl calls inside the vendors' install
-# scripts; `attempt` cuts each whole installer off and tries again.
+# Via $CURL_HOME/.curlrc these limits also cover curl inside vendor install scripts, so no download hangs (#18).
 CURL_HOME_DIR="${HOME}/.cache/agentlab/curl"
 
 write_curlrc() {
@@ -44,9 +39,7 @@ install_herdr() {
     || log "herdr install FAILED"
 }
 
-# Coolify first puts a container on a network of its own, and agentlab takes it off right after; a download begun
-# in between is stranded on an address that no longer exists (#18). When AGENTLAB_WAIT_NETWORK names the agent's
-# own address, wait until it is the only one before downloading anything; after NETWORK_WAIT_S, carry on anyway.
+# Coolify briefly attaches its own network (#18): wait until AGENTLAB_WAIT_NETWORK is our only address.
 container_addresses() { ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | sort; }
 
 wait_for_final_network() {
@@ -70,7 +63,7 @@ wait_for_final_network() {
 
 install_missing_tools() {
   write_curlrc
-  if ! command -v claude >/dev/null; then                    # Claude Code updates itself after the first install
+  if ! command -v claude >/dev/null; then
     log "installing Claude Code"
     attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
       || log "Claude Code install FAILED"
@@ -82,15 +75,14 @@ install_missing_tools() {
   fi
   command -v t3 >/dev/null || install_t3
   command -v herdr >/dev/null || install_herdr
-  if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew && -w /home/linuxbrew ]]; then   # first start only, ~2 min
+  if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew && -w /home/linuxbrew ]]; then
     log "installing Homebrew in the background"
     (CURL_HOME="${CURL_HOME_DIR}" NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
       >"${HOME}/logs/brew-install.log" 2>&1 && echo "[done]" >>"${HOME}/logs/brew-install.log") &
   fi
 }
 
-# Everything to its latest version in place. A running T3 server keeps its version until agent-updater restarts it
-# while the agent is idle; the CLIs pick theirs up on their next run.
+# Everything to latest in place; a running T3 keeps its version until agent-updater restarts it.
 update_tools() {
   write_curlrc
   log "updating Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, T3 Code, herdr, Claude Code"

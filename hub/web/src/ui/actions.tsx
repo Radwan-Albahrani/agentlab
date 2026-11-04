@@ -3,7 +3,6 @@ import type { Action } from '../api/types';
 import { Button, LinkButton, type ButtonLook, type Variant } from './Button';
 import { useAct, useFeedback } from './feedback';
 
-/** A button that POSTs an action (asking first when `confirm` is set) and shows the result. */
 export function ActButton({
   url,
   body,
@@ -20,7 +19,6 @@ export function ActButton({
   return <Button {...look} busy={busy} onClick={run} />;
 }
 
-/** Buttons the server described (Needs you items). */
 export function Actions({ actions }: { actions: Action[] }) {
   return (
     <>

@@ -1,5 +1,4 @@
-"""Stacks grouped by agent: an agent's domain is its own stack (agentlab-agent-<id>) plus its companions' stacks
-(agentlab-companion-<name>, tied to the agent in cluster.json). The core stack and anything else stand alone."""
+"""Stacks grouped by agent: its own stack (agentlab-agent-<id>) plus its companions' (agentlab-companion-<name>)."""
 
 import cluster
 import display
@@ -10,7 +9,7 @@ STACK_LABELS = {'agentlab-core': 'Core · edge, gate, hub', 'coolify': 'Coolify'
 
 
 def known(sid):
-    """agentlab's own stacks and the extra ones cluster.json names; other containers on the host stay off the page."""
+    """agentlab's own stacks and cluster.json's extra ones; anything else stays off the page."""
     return sid in STACK_LABELS or bool(domain_of(sid)[0]) or sid in cluster.extra_stacks()
 
 
@@ -41,7 +40,6 @@ def healthy(r):
 
 
 def by_stack():
-    """{stack id: [containers sorted by service]}"""
     groups = {}
     for r in store.watch.containers().get('items') or []:
         sid = r.get('stack') or 'other'
@@ -51,7 +49,7 @@ def by_stack():
 
 
 def by_domain(stack_ids):
-    """[(agent id or None, [stack ids])]: each visible agent's domain (agent first, then companions), then the rest."""
+    """[(agent id or None, [stack ids])]: each visible agent's stacks, then the rest."""
     out = []
     for a in cluster.ids():
         mine = sorted((s for s in stack_ids if domain_of(s)[0] == a), key=lambda s: domain_of(s)[1] != 'agent')
@@ -62,7 +60,6 @@ def by_domain(stack_ids):
 
 
 def _rest_order(sid):
-    """agentlab's core first, then the extra stacks in config order."""
     extra = cluster.extra_stacks()
     if sid in STACK_LABELS:
         return 0, list(STACK_LABELS).index(sid), sid

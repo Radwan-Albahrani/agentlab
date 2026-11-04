@@ -1,7 +1,4 @@
-"""`agentctl init`: the first command on a new server. Puts `agentctl` on PATH, creates the `agentlab` group (its
-members read the config and run the read-only commands without sudo) with the caller in it, and starts
-/etc/agentlab/cluster.toml from the example. Safe to re-run: it never overwrites a config. `agentctl setup` runs it
-for you."""
+"""`agentctl init`: PATH, the `agentlab` group and a starter cluster.toml; never overwrites a config."""
 
 import os
 import shutil
@@ -52,8 +49,7 @@ def group(plan, name, user, get=_group):
 def config_file(plan, path, example, name, get=_group):
     if os.path.exists(path):
         say(f'  kept {path} (init never overwrites it)')
-        # a config put in place before init (e.g. by hand as root:root) must still be readable by the group, or the
-        # read-only commands fail for the people init just added; only ownership and mode change, never the content
+        # a pre-existing config must stay readable by the group; only ownership and mode change, never content
         g = get(name)
         st = os.stat(path)
         if g and (st.st_gid != g.gr_gid or st.st_mode & 0o777 != 0o640):
@@ -90,8 +86,7 @@ def init(config_path, bin_dir='/usr/local/bin', user=None, get=_group, plan=None
 
 
 def edit(config_path, editor=None, runner=run, isatty=None):
-    """Open the config in $VISUAL / $EDITOR (nano by default), through sudoedit when the caller can't write it, then
-    check it. People only: an agent edits the file itself."""
+    """Edit the config in $VISUAL / $EDITOR (via sudoedit when not writable), then check it."""
     if not (isatty if isatty is not None else sys.stdin.isatty()):
         raise Needs(f'config edit opens an editor and needs a terminal: edit {config_path} directly instead')
     if not os.path.exists(config_path):

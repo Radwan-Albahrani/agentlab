@@ -1,7 +1,5 @@
 #!/bin/bash
-# Root half of agent-dockerd: the one command, without arguments, the agent may run with sudo
-# (/etc/sudoers.d/agent-dockerd). Its socket is root:docker 0660, so only the agent (group docker) reaches it.
-# Refuses outside a user namespace: without Sysbox, root here would be the host's root.
+# Root half of agent-dockerd (sudo rule, no args); refuses outside a user namespace, where root is the host's root.
 set -eu
 read -r inside outside count < /proc/self/uid_map
 if [ "${inside} ${outside} ${count}" = "0 0 4294967295" ]; then

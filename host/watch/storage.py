@@ -1,6 +1,4 @@
-"""Disk usage for the hub's Storage screen: every storage unit (the shared pool image, each person's image, or the
-host's filesystem for a plain folder), an event when one fills past 80 / 90 / 95 %, and a per-folder breakdown of
-each agent (du at idle IO priority, in its own systemd unit) every few hours or on request."""
+"""Disk usage, fill alerts and per-folder breakdown for the hub's Storage screen."""
 
 import os
 import sys
@@ -12,7 +10,7 @@ from . import host, store
 from .settings import ALERT_LEVELS, DATA, REARM_BELOW, SCAN_EVERY_S, SCAN_MIN_BYTES
 
 SCAN_UNIT = 'agentlab-watch-scan'
-PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # host/, so `-m watch` resolves
+PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def usage(path):
@@ -25,7 +23,6 @@ def usage(path):
 
 
 def host_usage(path):
-    """Like usage(), for the filesystem holding path (mounted or not)."""
     s = os.statvfs(path if os.path.exists(path) else '/')
     size = s.f_blocks * s.f_frsize
     return {'size': size, 'used': size - s.f_bfree * s.f_frsize, 'avail': s.f_bavail * s.f_frsize}
@@ -36,8 +33,7 @@ def crossed(pct):
 
 
 def alert_change(pct, alerted):
-    """('up', level) when a new level is crossed, ('down', level) when usage fell well below the last alert,
-    else None. `alerted` is the level last alerted (0 = none)."""
+    """('up' | 'down', level) or None; `alerted` is the level last alerted (0 = none)."""
     level = crossed(pct)
     if level > alerted:
         return 'up', level
@@ -63,15 +59,13 @@ def _alert(state, key, label, use):
 
 
 def check(state):
-    units = {}  # storage unit path -> usage (None while an image isn't mounted)
+    units = {}  # path -> usage (None while unmounted)
     for a in agents():
         unit = a.get('storage_unit') or ''
         if unit and unit not in units:
             units[unit] = usage(unit)
     disks = {a['id']: units[a['storage_unit']] if a.get('storage_unit') else host_usage(a['path']) for a in agents()}
     per_person = (cluster.load().get('storage') or {}).get('mode') == 'per-person'
-    # pool: what the shared agents live on (the pool image, else the host's disk); per person: the host's disk, and
-    # people: each owner's own image. disks: what each agent lives on, either way.
     people = {a['owner'].lower(): disks[a['id']] for a in agents() if a.get('owner')} if per_person else {}
     pool = host_usage(DATA) if per_person or not units else next(iter(units.values()))
     snapshot = store.load('usage.json', {})
@@ -90,7 +84,6 @@ def check(state):
 
 
 def start_scan():
-    """Run the breakdown as its own low-priority unit: du over every agent disk takes a while."""
     if host.unit_active(SCAN_UNIT):
         return
     properties = ['IOSchedulingClass=idle', 'Nice=15', 'MemoryHigh=512M', f'WorkingDirectory={PACKAGE_PARENT}']
@@ -109,7 +102,7 @@ def start_scan():
 
 
 def breakdown(du_output, agent, base):
-    """Rows of the per-folder breakdown from `du -xb --max-depth=2 <base>` (the agent's total has path '')."""
+    """Breakdown rows from `du -xb --max-depth=2 <base>`; the agent's total has path ''."""
     rows = []
     for line in du_output.splitlines():
         size, _, folder = line.partition('\t')

@@ -1,5 +1,4 @@
-# Mounts the storage images (the shared pool, or one per person) before Docker starts, so no agent ever starts on
-# an empty folder and writes to the host's disk instead of its image.
+# Must run before Docker, or agents start on empty folders and write to the host's disk instead of their image.
 [Unit]
 Description=agentlab: mount agent storage images
 Before=docker.service

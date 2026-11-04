@@ -52,7 +52,6 @@ interface TextProps {
   children: ReactNode;
 }
 
-/** Inline text. Use block for a paragraph-like line. */
 export function Text({ tone, size, weight, mono, block, right, children }: TextProps) {
   const Tag = block ? 'div' : 'span';
   return (
@@ -82,7 +81,6 @@ export const Eyebrow = ({ children }: { children: ReactNode }) => <div {...style
 export const BigNumber = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.big)}>{children}</div>;
 export const MidNumber = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.mid)}>{children}</div>;
 
-/** Numbered how-to steps in small print. */
 export const HelpSteps = ({ steps }: { steps: ReactNode[] }) => (
   <ol {...stylex.props(styles.steps)}>
     {steps.map((s, i) => (
@@ -91,7 +89,6 @@ export const HelpSteps = ({ steps }: { steps: ReactNode[] }) => (
   </ol>
 );
 
-/** Label / value pairs in two columns. */
 export const KeyValues = ({ items }: { items: [string, ReactNode][] }) => (
   <dl {...stylex.props(styles.keyValues)}>
     {items.map(([k, v]) => (

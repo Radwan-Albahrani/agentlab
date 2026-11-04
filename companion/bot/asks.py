@@ -1,8 +1,4 @@
-"""Asks from the hub: the owner writes what they want in a channel (an announcement, a poll, anything) and
-The companion gets the agent on it. Each ask gets a thread in the owner's DM with the companion, where they follow the work and can
-reply to steer it; whatever the agent prepares for the channel comes back through the outbox as post.json.
-The page also changes polls this way (type "poll": single / multiple choice, closing time, close now), re-reads the
-open pull requests (type "pulls") and asks for a review of one (type "review")."""
+"""Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
 from . import jobs, polls, prompts, publish, reviews, slack, t3, tasks
 from .config import COMP, OWNER, default_project, log
@@ -12,7 +8,7 @@ from .text import first_sentence, quote
 
 def tick():
     for ask in COMP.take_asks():
-        if ask.get('type') == 'poll':  # a change to one of its polls, made on the page
+        if ask.get('type') == 'poll':
             with lock:
                 polls.change(ask)
         elif ask.get('type') == 'pulls':
@@ -29,7 +25,7 @@ def tick():
 
 
 def refresh_pulls():
-    """The page is waiting on this list: show it as soon as GitHub answers."""
+    """Re-read open pull requests and publish them at once."""
     reviews.refresh()
     publish.now()
 

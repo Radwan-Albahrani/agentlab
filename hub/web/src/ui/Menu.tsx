@@ -45,13 +45,12 @@ const styles = stylex.create({
 export interface MenuEntry {
   label: string;
   icon?: string;
-  hint?: string; // shown on the right, e.g. a count or why it's disabled
+  hint?: string;
   danger?: boolean;
   disabled?: boolean;
   onSelect: () => unknown;
 }
 
-/** A toolbar button ("Sort", "Filters") whose menu picks one option; the current one is ticked. */
 export function PickMenu<V extends string>({
   label,
   icon,
@@ -94,7 +93,6 @@ export function PickMenu<V extends string>({
   );
 }
 
-/** A "⋯" button that opens a short list of less common actions. */
 export function MoreMenu({ label, entries }: { label: string; entries: MenuEntry[] }) {
   return (
     <Menu.Root>

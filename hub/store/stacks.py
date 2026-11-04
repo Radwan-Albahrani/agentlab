@@ -1,6 +1,4 @@
-"""The compose files agentctl rendered from cluster.toml (<data>/rendered/compose/<stack>/docker-compose.yml, mounted
-read-only at /rendered). They are shown as they are: a change goes into cluster.toml and `agentctl apply`, which
-re-renders them, so editing them here would be lost."""
+"""The compose files agentctl rendered from cluster.toml (read-only; edits belong in cluster.toml)."""
 
 import os
 from pathlib import Path
@@ -13,7 +11,6 @@ def _compose(sid):
 
 
 def stacks():
-    """[{id, modified}] of every rendered stack, sorted by id."""
     root = os.path.join(RENDERED, 'compose')
     try:
         names = sorted(os.listdir(root))

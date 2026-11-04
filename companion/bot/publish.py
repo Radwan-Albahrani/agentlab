@@ -1,5 +1,4 @@
-"""What the hub shows about the companion (see companion.py): a heartbeat, every task as a small card, and the
-open pull requests its GitHub App sees, each with its latest review."""
+"""Writes what the hub shows (see companion.py): heartbeat, task cards, open pull requests."""
 
 import re
 import threading
@@ -10,9 +9,9 @@ from .config import COMP, MODES, mode
 from .state import lock, state
 
 _last = 0.0
-_writing = threading.Lock()  # the poller and a refresh may both publish
+_writing = threading.Lock()
 _mode = None
-handler = None  # the Socket Mode connection, set by main
+handler = None  # Socket Mode handler, set by main
 
 
 def card(k, t):
@@ -70,7 +69,7 @@ def tick():
 
 
 def now():
-    """Publish at once (a fresh PR list the page is waiting for), not on the next 5 s beat."""
+    """Publish now instead of on the next beat."""
     global _last
     _last = time.time()
     with lock, _writing:
@@ -84,7 +83,7 @@ def _publish():
         connected = False
     global _mode
     m = mode()
-    if _mode and m != _mode:  # changed on the hub
+    if _mode and m != _mode:
         label = next((o['label'] for o in MODES if o['value'] == m), m)
         COMP.event('settings', f'Mode is now {label}', detail=f'{_mode} -> {m}')
     _mode = m

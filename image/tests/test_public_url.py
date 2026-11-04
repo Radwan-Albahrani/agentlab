@@ -38,7 +38,6 @@ def test_published_tools_use_the_opened_host_and_their_port(monkeypatch):
     assert util.public_url('hub', 'HomeBox:7102') == 'http://homebox:7190'
     assert util.public_url('browser', 'homebox:7102') == 'http://homebox:7103'
     assert util.public_url('terminal', 'homebox') == 'http://homebox:7104/_agentlab/terminal'
-    # An odd Host header never ends up in a link: the cluster's own address is used instead.
     assert util.public_url('hub', '[::1]:7102') == 'https://agents-hub.example.com'
     monkeypatch.setenv('AGENTLAB_PUBLISHED_HUB', '')
     assert util.public_url('hub', 'homebox:7102') == 'https://agents-hub.example.com'

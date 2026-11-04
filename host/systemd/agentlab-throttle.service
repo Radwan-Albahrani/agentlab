@@ -1,4 +1,3 @@
-# Admission control for heavy jobs (installs, builds, tests) across all agents: see host/throttle/broker.py.
 [Unit]
 Description=agentlab: heavy-job throttle
 After=docker.service agentlab-disks.service

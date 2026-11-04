@@ -1,6 +1,5 @@
 # shellcheck shell=bash
-# Login shells (T3, supervisord programs, the web terminal) rebuild PATH from /etc/profile: put the agent's tools,
-# Homebrew and its env back (installed as /etc/profile.d/zz-agent.sh, so it runs after the system's own files).
+# /etc/profile.d/zz-agent.sh: puts the agent's tools and env back after login shells rebuild PATH.
 export NPM_CONFIG_PREFIX=${HOME}/.npm-global
 export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${PATH}"
 export DISPLAY=:99

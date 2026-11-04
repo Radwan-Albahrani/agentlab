@@ -1,5 +1,3 @@
-// Formatting shared by every screen. Times are epoch seconds, shown in the viewer's local time.
-
 const pad = (n: number) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -40,14 +38,14 @@ export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** 20261028-144742 -> 2026-10-28 14:47 */
 export const versionLabel = (v: string) => v.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)\d\d$/, '$1-$2-$3 $4:$5');
 
-/** Coolify names containers <service>-<stack uuid>; the uuid is noise on screen. */
+/** Strips the stack uuid Coolify appends to container names. */
 export const containerLabel = (name: string) => name.replace(/-[a-z0-9]{24}$/, '');
 
-/** A day and 12-hour time, e.g. "Thu 2:00 PM". */
+/** "Thu 2:00 PM" */
 export const clock = (t: number) =>
   new Date(t * 1000).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 
-/** Epoch seconds <-> a datetime-local input's value, in the viewer's time zone. */
+/** Epoch seconds <-> a datetime-local input's value. */
 export const toLocalInput = (t: number) => {
   const d = new Date(t * 1000);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);

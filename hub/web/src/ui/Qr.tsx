@@ -8,7 +8,6 @@ const styles = stylex.create({
   img: (size: number) => ({ width: size, height: size }),
 });
 
-/** A scannable QR code of `text`, on white in both themes. */
 export function Qr({ text, size = 96, label = '' }: { text: string; size?: number; label?: string }) {
   const [src, setSrc] = useState('');
   useEffect(() => {

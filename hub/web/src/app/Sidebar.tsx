@@ -134,13 +134,11 @@ const Group = ({ title, items }: { title?: string; items: MenuItem[] }) =>
     </>
   );
 
-/** The desktop menu: brand (its logo is the silent presenting switch), menu groups, theme and a live note. */
 export function Sidebar({ menu, onLogo }: { menu: Menu; onLogo: (e: MouseEvent) => void }) {
   return (
     <aside {...stylex.props(styles.side)}>
       <div {...stylex.props(styles.brand)}>
-        {/* Decorative logo, not a control: its triple click is the hidden presenting switch, whose keyboard twin is
-            Alt+Shift+P (usePresentingSwitch), so screen readers and the tab order skip it. */}
+        {/* Not a control on purpose: hidden presenting switch; Alt+Shift+P is its keyboard twin. */}
         <span {...stylex.props(styles.logo)} role="presentation" onClick={onLogo}>
           <Icon name="agents" size={17} />
         </span>

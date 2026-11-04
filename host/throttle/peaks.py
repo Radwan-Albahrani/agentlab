@@ -1,4 +1,4 @@
-"""Learned memory peaks per job signature, so a job reserves what it really needs instead of a guess."""
+"""Learned memory peaks per job signature."""
 
 import json
 import os

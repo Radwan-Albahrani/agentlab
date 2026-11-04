@@ -12,7 +12,6 @@ import { Mono } from '../../ui/text';
 
 type Env = NonNullable<AccountsPage['env']>;
 
-/** The agent's own environment variables: masked until shown, set one by one or pasted as a .env file. */
 export function EnvVars({ agent, env }: { agent: string; env: Env }) {
   const keys = Object.keys(env).sort();
   return (

@@ -1,5 +1,4 @@
-"""Edits to cluster.toml as text, so the admin's comments and layout survive `agentctl agent add/remove` and
-`cloudflare setup`. Only whole [[agents]] blocks and single `key = value` lines are touched."""
+"""Edits to cluster.toml as text, so the admin's comments and layout survive."""
 
 import json
 import re
@@ -19,8 +18,7 @@ def _headers(lines):
 
 
 def _block_end(lines, start, heads, name=''):
-    """End (exclusive) of the block starting at `start`: the next header that isn't one of its own sub-tables (an
-    agent's [agents.publish]), minus the comments and blank lines just above it, which describe that next section."""
+    """End (exclusive) of the block at `start`, excluding the comments and blank lines just above the next header."""
     end = next((i for i, n, array in heads if i > start and (array or not n.startswith(name + '.'))), len(lines))
     while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith('#')):
         end -= 1
@@ -57,7 +55,7 @@ def remove_agent(text, agent_id):
     lines = text.splitlines()
     for start, end in _blocks(lines, 'agents'):
         if _value(lines, start, end, 'id') == agent_id:
-            first = start - 1 if start > 0 and not lines[start - 1].strip() else start  # its blank line goes too
+            first = start - 1 if start > 0 and not lines[start - 1].strip() else start
             del lines[first:end]
             return '\n'.join(lines) + '\n'
     raise ValueError(f'no [[agents]] block with id = "{agent_id}"')
@@ -78,8 +76,7 @@ def _comment(rest):
 
 
 def set_key(text, section, key, value):
-    """Set `key = value` in [section] (value JSON-encoded, which is valid TOML for strings and numbers), adding the
-    key or the section when missing. A trailing comment on the line is kept."""
+    """Set `key = value` in [section], adding the key or section when missing; keeps a trailing comment."""
     lines = text.splitlines()
     encoded = json.dumps(value)
     heads = _headers(lines)

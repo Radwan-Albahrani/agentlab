@@ -1,4 +1,4 @@
-"""The watcher's folder, read by the hub: JSON snapshots (usage, containers, state) and the activity log."""
+"""The watcher's folder, read by the hub: JSON snapshots and the activity log."""
 
 import json
 import os
@@ -28,7 +28,6 @@ def dump(name, data):
 
 
 def event(kind, title, detail='', ok=True):
-    """One line of the page's activity log."""
     line = json.dumps({'at': time.time(), 'kind': kind, 'title': title, 'detail': detail, 'ok': ok})
     with open(path('events.jsonl'), 'a') as f:
         f.write(line + '\n')

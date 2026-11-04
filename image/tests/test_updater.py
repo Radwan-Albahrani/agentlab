@@ -97,7 +97,7 @@ def runs_with_threads(path, rows):
 
 
 class Restarting(Runner):
-    """A restart cuts off whatever was running, the way T3 marks runs on start; curl finds T3 back up."""
+    """A restart marks running runs interrupted, as T3 does on start."""
 
     def __init__(self, db, t3='t3 v0.1.6'):
         super().__init__(t3)
@@ -149,7 +149,7 @@ def test_defers_at_the_end_of_the_window(tmp_path, monkeypatch):
     clock.t += 4 * 3600
     assert waiter.step(run, PS_015, db) == 'deferred'
     clock.t += 60
-    assert waiter.step(run, PS_015, db) == 'deferred'  # left for the next cycle, no restart
+    assert waiter.step(run, PS_015, db) == 'deferred'
     assert run.restarted == []
 
 
@@ -164,4 +164,4 @@ def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(tmp_path, monkeypatc
     clock.t += 4 * 3600
     assert waiter.step(run, PS_015, db, sleep=lambda _: None) == 'resumed'
     assert len(run.restarted) == 1
-    assert run.sent == []  # T3 resumes them itself on start
+    assert run.sent == []

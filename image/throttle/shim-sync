@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Keeps the throttle shims in step with the heavy tools actually installed (supervisord program shim-sync). Agents'
-heavy commands only queue for memory if a shim stands in front of the tool, and a shim for a tool that isn't installed
-would make `command -v` lie to the agents' scripts. So: a full sync at start, then inotify on the folders tools are
-installed into; any change there triggers another sync, within about a second."""
+"""Keeps a throttle shim linked for exactly the heavy tools installed, re-syncing on inotify changes."""
 
 import ctypes
 import os
@@ -26,13 +23,13 @@ TOOL_DIRS = [
     '/bin',
 ]
 CHANGES = 0x4 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800  # attrib, moved from/to, create, delete, delete/move self
-SETTLE_S = 0.3  # an install writes in bursts: sync once it's done
+SETTLE_S = 0.3
 
 libc = ctypes.CDLL('libc.so.6', use_errno=True)
 
 
 def heavy_tools():
-    """The tool names in the shim's own table, the one place that says what is heavy."""
+    """Tool names from the shim's TOOLS line."""
     with open(SHIM) as f:
         return set(re.search(r'^TOOLS="(.*)"$', f.read(), re.M).group(1).split())
 
@@ -60,7 +57,7 @@ def nearest_existing(path):
 
 
 def watch_tool_folders():
-    """An inotify handle on every tool folder, or on the folder where a missing one would be created."""
+    """inotify fd on every tool folder (or its nearest existing parent)."""
     fd = libc.inotify_init1(os.O_CLOEXEC)
     for folder in {nearest_existing(d) for d in TOOL_DIRS}:
         libc.inotify_add_watch(fd, folder.encode(), CHANGES)
@@ -71,7 +68,7 @@ def main():
     tools = heavy_tools()
     os.makedirs(SHIMS, exist_ok=True)
     while True:
-        fd = watch_tool_folders()  # watch first, so a change during the sync isn't missed
+        fd = watch_tool_folders()  # before the sync, so no change is missed
         sync(tools)
         os.read(fd, 65536)
         os.close(fd)

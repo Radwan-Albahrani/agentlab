@@ -9,7 +9,6 @@ import { Note, Text } from '../../ui/text';
 import { FlowBox, FlowEnd, OpenSignInStep, Step, Steps, Terminal } from './flow';
 import { useAccountAct } from './useAccountAct';
 
-/** One MCP connector: connect, sign in (one OAuth for both Claude and Codex), sign out. */
 export function ConnectorRow({ agent, c }: { agent: string; c: Connector }) {
   const run = useAccountAct(agent);
   const f = c.flow;
@@ -77,7 +76,6 @@ export function ConnectorRow({ agent, c }: { agent: string; c: Connector }) {
   );
 }
 
-/** Any remote MCP server by address. */
 export function AddConnector({ agent }: { agent: string }) {
   const run = useAccountAct(agent);
   const [server, setServer] = useState({ name: '', url: '' });

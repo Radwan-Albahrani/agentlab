@@ -1,19 +1,4 @@
-"""Template updates for companion checkouts: a companion's code is its agent's own git repo (seeded once from the
-repo's companion/), so improvements and security fixes to the template would never reach it on their own. On every
-apply (and so every `agentctl update`) each checkout gets them as a merge commit, as long as that can't hurt the
-agent's own work:
-
-- The checkout keeps a `template` branch of pure template snapshots (the seed commit is the first). A changed
-  companion/ becomes a new snapshot on it, written with git plumbing: the agent's working tree is never touched.
-- `template` is merged into the checked-out branch only when the tree is clean (an agent mid-edit is left alone) and
-  only when git merges it without conflicts; a conflict is aborted at once and recorded as "needs merging" for the
-  agent (or a person) to do by hand.
-- After a merge the companion restarts and must come back up; if it doesn't, exactly that merge commit is undone and
-  the companion restarted again.
-
-Git runs as the checkout's owner (the agent's uid), never as root, so nothing the agent put in its repo can make root
-read or write outside it. Results go to <data>/state/companions-template.json, to each companion's data folder (the
-hub reads template.json there) and to update.json."""
+"""Merge template changes into companion checkouts only when clean and conflict-free; git runs as the checkout's owner, never root."""
 
 import contextlib
 import datetime
@@ -29,7 +14,7 @@ from . import deploy, render
 from .util import AGENT_UID, REPO, agent_folder, is_root, load_json, run, say, warn
 
 BRANCH = 'template'
-SOURCE = os.path.join(REPO, 'companion')  # the template every checkout was seeded from
+SOURCE = os.path.join(REPO, 'companion')
 IGNORE = shutil.ignore_patterns('__pycache__', '*.pyc', '.pytest_cache', 'node_modules', '.git')
 START_TIMEOUT_S = 300  # a changed requirements.txt means a venv install before the bot starts
 SETTLE_S = 20  # running this long after the restart without failing counts as started
@@ -46,8 +31,7 @@ def _now():
 
 
 class Checkout:
-    """git in one companion checkout, run as the checkout's owner. Refuses a checkout that is a symlink or whose .git
-    isn't a real folder, so root never works on a path the agent redirected."""
+    """git in one companion checkout as its owner; refuses a symlinked checkout or .git."""
 
     def __init__(self, path):
         for p in (path, os.path.join(path, '.git')):
@@ -71,7 +55,6 @@ class Checkout:
         return out.strip() if rc == 0 else ''
 
     def ensure_branch(self):
-        """The template branch, created at the seed (root) commit for checkouts seeded before it existed."""
         if self.rev(f'refs/heads/{BRANCH}'):
             return False
         root = self.git('rev-list', '--max-parents=0', 'HEAD')[1].split()[-1]
@@ -79,8 +62,7 @@ class Checkout:
         return True
 
     def snapshot_tree(self, source, objects=None):
-        """Tree id of `source` (the repo's companion/) as git would store it. With `objects`, new objects go to that
-        folder only (a dry run writes nothing to the checkout)."""
+        """Tree id of `source` as git would store it; with `objects`, new objects go only there (dry run)."""
         with tempfile.TemporaryDirectory(prefix='agentlab-template-') as tmp:
             work = os.path.join(tmp, 'tree')
             shutil.copytree(source, work, ignore=IGNORE, symlinks=True)
@@ -96,7 +78,7 @@ class Checkout:
         return os.path.join(self.path, '.git', 'objects')
 
     def commit_snapshot(self, tree, label):
-        """A new commit on the template branch holding `tree`, made without touching HEAD or the working tree."""
+        """A new commit on the template branch, without touching HEAD or the working tree."""
         tip = self.rev(f'refs/heads/{BRANCH}')
         new = self.git('commit-tree', tree, '-p', tip, '-m', f'agentlab template {label}')[1].strip()
         self.git('update-ref', f'refs/heads/{BRANCH}', new, tip)
@@ -125,10 +107,8 @@ def short(sha):
     return sha[:7]
 
 
-# ---------------------------------------------------------------- the companion's own process
 def status(cfg, comp):
-    """The companion's status.json (written by its launcher into the agent's workspace), read without following
-    symlinks; None when unreadable."""
+    """The companion's status.json, read without following symlinks; None when unreadable."""
     agent = render.agent_of(cfg, comp)
     try:
         with agent_folder(f'{agent["path"]}/workspace', f'.companion/{comp["name"]}', create=False) as f:
@@ -169,10 +149,8 @@ def came_up(cfg, comp, since):
     return f'not up after {START_TIMEOUT_S} s (last state: {(last or {}).get("state", "unknown")})'
 
 
-# ---------------------------------------------------------------- one companion
 def update_one(cfg, comp, dry=False):
-    """-> {template_from, template_to, result, detail}; result is up-to-date, merged, conflict, skipped or reverted
-    (planned: would-update in a dry run)."""
+    """-> {template_from, template_to, result, detail}; result: up-to-date, merged, conflict, skipped, reverted or would-update."""
     name = comp['name']
     path = render.companion_checkout(cfg, comp)
     out = {'template_from': '', 'template_to': '', 'result': 'skipped', 'detail': ''}
@@ -202,7 +180,6 @@ def update_one(cfg, comp, dry=False):
     if co.rev(f'{tip}^{{tree}}') != tree:
         old, tip = co.commit_snapshot(tree, version())
         say(f'  {name}: template snapshot {short(old)} -> {short(tip)}')
-    # from: the newest template snapshot the checkout already has
     frm = co.git('merge-base', 'HEAD', BRANCH, check=False)[1].strip() or tip
     out |= {'template_from': short(frm), 'template_to': short(tip)}
     if _contains(co, tip):
@@ -255,10 +232,7 @@ def update_one(cfg, comp, dry=False):
 
 
 def _already_in_template(co, base, ours, files):
-    """The conflicted files whose template version already holds every change the checkout made to them since `base`
-    (the agent applied the same fix the template later shipped, next to other template changes: git calls that a
-    conflict). Checked by reverse-applying the agent's zero-context diff to the template's file: it only applies if
-    each changed line is there, at its place, as the agent wrote it."""
+    """Conflicted files whose template version already holds every change the checkout made since `base`."""
     found = []
     with tempfile.TemporaryDirectory(prefix='agentlab-merge-') as tmp:
         for f in files:
@@ -272,7 +246,7 @@ def _already_in_template(co, base, ours, files):
                 out.write(theirs + ('\n' if theirs and not theirs.endswith('\n') else ''))
             with open(os.path.join(tmp, 'patch'), 'w', newline='') as out:
                 out.write(patch + '\n')
-            # plain patch mode: a temp folder outside any repo, data only (nothing here runs the agent's code)
+            # outside any repo, so nothing here runs the agent's code
             check = subprocess.run(
                 ['git', 'apply', '-R', '--check', '--unidiff-zero', '-p1', '--directory=a', 'patch'],
                 cwd=tmp,
@@ -288,9 +262,7 @@ def _contains(co, rev):
     return co.git('merge-base', '--is-ancestor', rev, 'HEAD', check=False)[0] == 0
 
 
-# ---------------------------------------------------------------- all of them
 def update_all(cfg, plan):
-    """Every companion's template update; records and returns {name: result}."""
     results = {}
     for comp in cfg['companions']:
         try:

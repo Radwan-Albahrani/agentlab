@@ -1,7 +1,6 @@
 import { useLocation, useNavigate } from 'react-router';
 
-/** The open tab lives in the URL's #hash, so a link can open a tab and Back returns to the previous one. The first
- * tab has no hash. An unknown hash (a tab that is hidden now) opens the first tab. */
+/** The open tab in the URL's #hash; the first tab has none, and an unknown hash opens it. */
 export function useHashTab(tabs: string[]): [string, (tab: string) => void] {
   const { hash } = useLocation();
   const navigate = useNavigate();

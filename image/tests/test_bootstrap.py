@@ -1,6 +1,3 @@
-"""First-start downloads: they wait until Coolify's temporary network is gone, and none of them can hang for good
-(#18: a download begun on that network was stranded when agentlab detached it)."""
-
 import os
 import re
 import subprocess
@@ -11,7 +8,6 @@ TOOLS = os.path.join(IMAGE, 'tools.sh')
 
 
 def run(tmp_path, body, env=None):
-    """Run `body` in bash with tools.sh sourced, HOME in tmp_path and sleep a no-op."""
     script = f'source "{TOOLS}"; sleep() {{ :; }}; {body}'
     return subprocess.run(
         ['bash', '-c', script],
@@ -23,7 +19,7 @@ def run(tmp_path, body, env=None):
 
 
 def addresses(tmp_path, *rounds):
-    """An `ip` that reports each round's addresses in turn (the last one repeats)."""
+    """A fake `ip` reporting each round's addresses in turn (the last one repeats)."""
     for i, addrs in enumerate(rounds):
         (tmp_path / f'round{i}').write_text(
             ''.join(f'2: eth{n} inet {a}/24 brd x scope global eth{n}\n' for n, a in enumerate(addrs))
@@ -101,7 +97,6 @@ def test_every_installer_goes_through_attempt():
         'claude update',
     ):
         assert f'attempt "{name}"' in text
-    # no installer pipes curl into a shell without pipefail (a failed download would look like success)
     for line in text.splitlines():
         if re.search(r'curl .*\| *(ba)?sh', line) and 'NONINTERACTIVE' not in line:
             assert 'set -o pipefail' in line, line

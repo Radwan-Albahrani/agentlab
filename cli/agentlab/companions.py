@@ -1,8 +1,4 @@
-"""Companions belong to their agent, which creates, changes and removes them (the watcher runs `agentctl companion
-create | remove` when an agent drops a request file; an admin can run them too). The single source of truth is
-<data>/state/companions.json; a [[companions]] entry in cluster.toml only seeds it on the first apply that sees it,
-and its name is remembered so a companion its agent removed is not brought back. Only that companion's stack is
-deployed or removed."""
+"""Companions: <data>/state/companions.json is the source of truth; cluster.toml [[companions]] only seeds it once."""
 
 import datetime
 import json

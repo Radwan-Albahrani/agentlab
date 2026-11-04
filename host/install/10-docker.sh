@@ -1,6 +1,5 @@
 #!/bin/bash
-# Docker Engine + compose plugin from Docker's apt repository, the tools agentctl uses, and br_netfilter so the agent
-# firewall also sees traffic between containers on the same network.
+# Docker, agentctl's tools, and br_netfilter so the agent firewall sees traffic between containers on one network.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 if have docker && docker compose version >/dev/null 2>&1; then

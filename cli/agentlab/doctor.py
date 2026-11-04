@@ -1,5 +1,4 @@
-"""`agentctl doctor`: every check the cluster depends on, each with the exact fix (a command, or the manual step).
-Errors exit 1; warnings are things that work but shouldn't stay that way."""
+"""`agentctl doctor`: every check the cluster depends on, each with its fix."""
 
 import json
 import os
@@ -96,7 +95,7 @@ def host(cfg, c):
         'agentlab is built on Ubuntu 24.04 and runs on Ubuntu 22.04 and Debian 12 and 13; others may work',
         'warning',
     )
-    # Sysbox needs ID-mapped mounts (Linux 5.12+); 5.19+ also ID-maps overlayfs image layers, which it uses when it can.
+    # Sysbox needs ID-mapped mounts (Linux 5.12+).
     kernel = _kernel()
     c.add(
         'kernel',
@@ -147,7 +146,6 @@ def storage(cfg, c):
             f'{fs["used"] / 2**30:.0f} of {fs["size"] / 2**30:.0f} GiB used',
         )
         return
-    # Images are sparse: what they may still grow by must fit in what the host has free.
     allocated = sum(os.stat(u['image']).st_blocks * 512 for u in units if os.path.exists(u['image']))
     promised = sum(size_bytes(u['size']) for u in units)
     c.add(
@@ -206,7 +204,6 @@ def sysbox(c):
 def android(cfg, c):
     if not cfg['android']['enabled']:
         return
-    # Root (and the agents, through the udev rule) is what has to use it, not whoever runs doctor.
     kvm = os.path.exists('/dev/kvm') and (not is_root() or os.access('/dev/kvm', os.R_OK | os.W_OK))
     c.add(
         'kvm',
@@ -285,7 +282,7 @@ def _cloudflared(cfg, c):
         c.sudo('tunnel-token', f'tunnel token in {token}')
     else:
         c.add('tunnel-token', _private(token), f'tunnel token in {token}', 'agentctl cloudflare setup')
-    if not config.private_network(cfg):  # private mode runs the tunnel in agentlab-core (checked as core-cloudflared)
+    if not config.private_network(cfg):
         c.add(
             'cloudflared',
             bool(shutil.which('cloudflared')) and _active('cloudflared'),
@@ -296,10 +293,9 @@ def _cloudflared(cfg, c):
 
 
 def _cloudflare_token(cfg, c):
-    """The API token is valid and reaches every area `cloudflare setup` touches (read-only probes)."""
     try:
         probes = cloudflare.probe_token(cfg)
-    except Exception as e:  # reported as a check, not a crash
+    except Exception as e:
         c.add('cloudflare-token', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
         return
     if probes is None:
@@ -343,7 +339,7 @@ def _cloudflare_access(cfg, c):
         return
     try:
         idps = cloudflare.identity_providers(cfg)
-    except Exception as e:  # reported as a check, not a crash
+    except Exception as e:
         c.add('cloudflare-api', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
         return
     wanted = cfg['cloudflare'].get('login_method')
@@ -359,22 +355,20 @@ def _cloudflare_access(cfg, c):
     names = ', '.join(str(i.get('name', '')) for i in idps)
     c.add(
         'login-methods',
-        True,  # information only: any method works, the one-time PIN by email needs no setup
+        True,
         f'Zero Trust login methods offered: {names or "none listed (the one-time PIN by email still works)"}'
         + ('; [auth.cloudflare] login_method can pin people to one' if names else ''),
     )
 
 
 def _client_only(cfg, c):
-    """network = "private" or require_warp: the routes, the app and the organization settings it depends on (the
-    tunnel container and the edge it reaches are core checks)."""
     if not cloudflare.configured(cfg) or (
         not is_root() and not os.access(cfg['cloudflare']['api_token_file'], os.R_OK)
     ):
         return
     try:
         checks = cloudflare.client_only_checks(cfg)
-    except Exception as e:  # reported as a check, not a crash
+    except Exception as e:
         c.add('client-only', False, f'Cloudflare API: {e}', 'agentctl secret set cloudflare-api (a new token)')
         return
     for cid, ok, message, fix, severity in checks:
@@ -385,8 +379,7 @@ WINDOWS_TAILSCALE = '/mnt/c/Program Files/Tailscale/tailscale.exe'
 
 
 def tailscale_cli():
-    """The tailscale command for this host: Linux's own, or on WSL the Windows one (Tailscale usually runs on
-    Windows there; with mirrored networking its `tailscale serve` reaches the edge on WSL's loopback)."""
+    """The tailscale command: Linux's own, or on WSL the Windows one."""
     if shutil.which('tailscale'):
         return 'tailscale'
     if _wsl() and os.access(WINDOWS_TAILSCALE, os.X_OK):
@@ -474,7 +467,7 @@ def _tinyauth(cfg, c):
         req = urllib.request.Request(f'http://127.0.0.1:{render.INGRESS_PORT}/', headers={'Host': t['domain']})
         with urllib.request.urlopen(req, timeout=5):
             ok = True
-    except Exception:  # any failure means not reachable
+    except Exception:
         ok = False
     c.add('tinyauth', ok, f'tinyauth answers on {t["domain"]}', 'agentctl apply; then agentctl status')
 
@@ -488,7 +481,7 @@ def coolify_check(cfg, c):
     try:
         coolify.Api(cfg).call('GET', '/version')
         c.add('coolify', True, 'Coolify API reachable')
-    except Exception as e:  # reported as a check
+    except Exception as e:
         c.add(
             'coolify',
             False,
@@ -540,7 +533,6 @@ def cluster(cfg, c):
 
 
 def prerequisites(cfg, c):
-    """The same checks install runs first, so an unsupported host shows up before anything is installed."""
     blocked = preflight.problems(cfg)
     for cid, message, fix in blocked:
         c.add(cid, False, message, fix, 'warning' if cid == 'host-packages' and 'empty' in message else 'error')
@@ -563,7 +555,6 @@ def run_all(cfg):
 
 
 def updates(cfg, c):
-    """The last `agentctl update`: a failed nightly run is a warning, agents left for later are information."""
     from . import update  # noqa: PLC0415 - update imports apply, which doctor doesn't otherwise need
 
     if cfg['updates']['agentlab'] != 'daily':

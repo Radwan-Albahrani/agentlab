@@ -16,7 +16,6 @@ interface Props {
   onHistory: () => void;
 }
 
-/** One secret: its name with an ⓘ about how to get it, who uses it, and what you can do with it. */
 export function SecretRow({ s, onView, onEdit, onHistory }: Props) {
   const act = useAct();
   const title = s.label || s.name;

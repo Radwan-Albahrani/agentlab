@@ -1,5 +1,4 @@
-"""Private HTTPS sign-in end to end over real HTTP: the gate's /verify against a fake Access for SaaS OIDC provider
-(discovery, keys, token endpoint with PKCE). The browser is played by following the gate's redirects by hand."""
+"""Private HTTPS sign-in end to end against a fake Access for SaaS OIDC provider."""
 
 import base64
 import hashlib
@@ -37,12 +36,11 @@ class Oidc(Base):
             'jwks_uri': f'{ISSUER}/jwks',
             'token_endpoint_auth_methods_supported': ['client_secret_basic', 'client_secret_post'],
         }
-        self.codes = {}  # code -> what the provider remembers from the authorization request
+        self.codes = {}
         self.claims = {}  # overrides for the next ID token
         self.signing = (KEY1, 'k1')
         self.server.signin = SignIn(self.folder, Provider(fetch=self.idp_get, post=self.idp_post, gap=0))
 
-    # ---- the provider
     def idp_get(self, url):
         if url == f'{ISSUER}/.well-known/openid-configuration':
             return dict(self.discovery)
@@ -77,7 +75,6 @@ class Oidc(Base):
         return {'id_token': jwt.encode(claims, key, algorithm='RS256', headers={'kid': kid})}
 
     def authorize(self, location, email='sara@example.com'):
-        """Access signs the person in and sends the browser back with a code."""
         url = urllib.parse.urlsplit(location)
         self.assertEqual(f'{url.scheme}://{url.netloc}{url.path}', f'{ISSUER}/authorization')
         q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
@@ -87,7 +84,6 @@ class Oidc(Base):
         self.codes[code] = {**q, 'email': email}
         return f'/_agentlab/oidc/callback?code={code}&state={q["state"]}'
 
-    # ---- the browser
     def call(self, uri, cookies=None, host=DOMAIN, proto='https', navigate=True):
         headers = {'X-Forwarded-Host': host, 'X-Forwarded-Uri': uri, 'X-Forwarded-Proto': proto}
         if navigate:
@@ -121,21 +117,19 @@ class Oidc(Base):
         self.assertEqual(status, 302, headers)
         return self.jar(headers)[SESSION]
 
-    # ---- the tests
     def test_full_sign_in(self):
         (status, headers), _ = self.sign_in()
         self.assertEqual(status, 302)
-        # absolute, never relative: Traefik's forwardAuth made a relative one point at http://gate:8080/
         self.assertEqual(headers['Location'], f'https://{DOMAIN}/somewhere?x=1')
         cookies = headers.get_all('Set-Cookie')
         session = next(c for c in cookies if c.startswith(SESSION))
         for flag in ('HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/'):
             self.assertIn(flag, session)
-        self.assertIn(f'{PENDING}=;', ' '.join(cookies))  # the pending sign-in is cleared
+        self.assertIn(f'{PENDING}=;', ' '.join(cookies))
         status, headers = self.call('/', {SESSION: self.jar(headers)[SESSION]})
         self.assertEqual(status, 200)
         self.assertEqual((headers['X-Agentlab-User'], headers['X-Agentlab-Agent']), ('sara@example.com', 'sara'))
-        # the hub's check of the gate's answer (hub/access.py proof_ok)
+        # mirrors hub/access.py proof_ok
         exp, _, mac = headers['X-Agentlab-Proof'].partition('.')
         sub = hmac.new(bytes.fromhex('ab' * 32), b'agentlab proof v1', hashlib.sha256).digest()
         msg = f'sara@example.com\n0\nsara\n{exp}'.encode()
@@ -154,7 +148,7 @@ class Oidc(Base):
         callback = self.authorize(headers['Location'])
         forged = callback.replace('state=', 'state=x')
         self.assertEqual(self.call(forged, pending)[0], 403)
-        self.assertEqual(self.call(callback, {})[0], 403)  # no pending sign-in at all (another browser)
+        self.assertEqual(self.call(callback, {})[0], 403)
 
     def test_a_pending_sign_in_belongs_to_its_host(self):
         _, headers = self.call('/', host=HUB)
@@ -172,7 +166,7 @@ class Oidc(Base):
             ({}, (KEY2, 'k2')),  # a key the provider never published
             ({'exp': int(time.time()) - 600}, (KEY1, 'k1')),
             ({'aud': 'someone-else'}, (KEY1, 'k1')),
-            ({'iss': f'https://{TEAM}.cloudflareaccess.com'}, (KEY1, 'k1')),  # the self-hosted issuer, not this app's
+            ({'iss': f'https://{TEAM}.cloudflareaccess.com'}, (KEY1, 'k1')),  # the self-hosted issuer
             ({'email': None}, (KEY1, 'k1')),
             ({'nonce': None}, (KEY1, 'k1')),
         ):
@@ -185,9 +179,7 @@ class Oidc(Base):
         bad = good[:-6] + ('AAAAAA' if not good.endswith('AAAAAA') else 'BBBBBB')
         for value in (bad, 'x', '', base64.urlsafe_b64encode(b'{"e":"sara@example.com"}').decode()):
             self.assertEqual(self.call('/', {SESSION: value}, navigate=False)[0], 401, value)
-        # a session for one host is not one for the other
         self.assertEqual(self.call('/', {SESSION: good}, host=HUB, navigate=False)[0], 401)
-        # nor a cookie sealed with another cluster's key
         other = SignIn(self.folder)
         with open(os.path.join(self.folder, 'session.key'), 'w') as f:
             f.write('cd' * 32)
@@ -222,12 +214,12 @@ class Oidc(Base):
         self.assertEqual(self.call('/')[0], 503)
         self.discovery['token_endpoint'] = f'{ISSUER}/token'
         self.discovery['issuer'] = 'https://evil.example.com'
-        self.server.signin.provider._conf_for = None  # forget the cached document
+        self.server.signin.provider._conf_for = None
         self.assertEqual(self.call('/')[0], 503)
 
     def test_plain_http_keeps_accesss_token_until_live_then_redirects(self):
         status, headers = self.call('/x', proto='http', navigate=False)
-        self.assertEqual(status, 403)  # no token: plain HTTP is still Access's
+        self.assertEqual(status, 403)
         headers = {'X-Forwarded-Host': DOMAIN, 'X-Forwarded-Uri': '/x', 'X-Forwarded-Proto': 'http'}
         self.assertEqual(self.http('/verify', {**headers, 'Cf-Access-Jwt-Assertion': token()})[0], 200)
         with open(os.path.join(self.folder, 'https-live'), 'w') as f:

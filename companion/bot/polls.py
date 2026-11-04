@@ -1,9 +1,4 @@
-"""Polls the companion runs in a channel: one button per option, anyone can vote, and votes are public (each option shows its
-voters' pictures and names; the result lists them too). Single choice: pressing another option moves
-your vote, pressing yours again takes it back. Multiple choice: each press toggles that option. A live count on the
-message, and at the closing time (or the owner's "Close the poll now") the buttons go and the result is announced in
-the channel. Kept in state['polls'] (votes: user -> chosen option indexes), so a restart loses neither votes nor the
-close."""
+"""Public button polls the companion runs in a channel; state['polls'][id].votes: user -> chosen option indexes."""
 
 import re
 import secrets
@@ -16,11 +11,11 @@ from .state import lock, save, state
 from .text import clock
 
 BAR = 10  # characters of the longest bar
-AVATARS = 9  # a context row holds 10 elements: the pictures, then the names
+AVATARS = 9  # Slack context rows hold max 10 elements: pictures + one names element
 
 
 def describe(poll):
-    """The poll as text, for the owner's preview."""
+    """The poll as preview text."""
     when = clock(poll['closes'], date=True)
     return (
         f':bar_chart: **{poll["question"]}**\n'
@@ -31,7 +26,6 @@ def describe(poll):
 
 
 def counts(poll):
-    """Votes per option."""
     n = [0] * len(poll['options'])
     for chosen in poll['votes'].values():
         for i in chosen:
@@ -48,18 +42,18 @@ def _people(k):
 
 
 def who(poll, i):
-    """The people who picked option i, in the order they voted."""
+    """Voters for option i, in voting order."""
     return [u for u, chosen in poll['votes'].items() if i in chosen]
 
 
 def voter(poll, u):
-    """A voter's name; a vote the owner added for them says so, since the poll is public."""
+    """A voter's name, marked when the owner added the vote."""
     by = poll.get('added_by', {}).get(u)
     return slack.name(u) + (f' (added by {slack.name(by)})' if by else '')
 
 
 def _voters_line(poll, people):
-    """A context row under an option: up to AVATARS profile pictures, then the names. Votes are public."""
+    """Context row under an option: up to AVATARS pictures, then the names."""
     pics = [
         {'type': 'image', 'image_url': slack.avatar(u), 'alt_text': slack.name(u)} for u in people if slack.avatar(u)
     ][:AVATARS]
@@ -70,7 +64,6 @@ def _voters_line(poll, people):
 def _blocks(poll):
     n = counts(poll)
     top = max(n) or 1
-    # the deadline is the companion's to show (never in the agent's text), so moving it updates the whole message
     state_ = f'closes {clock(poll["closes"])}' if poll['open'] else 'closed'
     intro = (poll['text'] + '\n\n' if poll['text'] else '') + f':bar_chart: **{poll["question"]}** · {state_}'
     b = slack.blocks(intro)
@@ -92,7 +85,7 @@ def _blocks(poll):
 
 
 def start(post, task_key):
-    """Post the poll in its channel; returns it (with its message ts)."""
+    """Post the poll in its channel; returns it with its message ts."""
     poll = {
         'id': secrets.token_hex(4),
         'channel': post['channel'],
@@ -117,8 +110,7 @@ def _refresh(poll):
 
 
 def migrate():
-    """Polls from before multiple choice stored one index per person, and the owner asked (2026-10-29) for those polls
-    to become multiple choice too. Open ones are redrawn with the new wording; their votes stay."""
+    """Convert legacy single-index votes to multiple-choice lists."""
     for poll in state['polls'].values():
         if 'multiple' in poll:
             continue
@@ -137,7 +129,7 @@ def vote(poll, user, i):
     if i in mine:
         mine = [x for x in mine if x != i]
     elif poll.get('multiple'):
-        mine = [*mine, i]  # in the order picked, so a switch to single choice keeps the latest
+        mine = [*mine, i]  # keep pick order: switching to single choice keeps the latest
     else:
         mine = [i]
     if mine:
@@ -149,7 +141,7 @@ def vote(poll, user, i):
 
 
 def for_prompt(channel='', thread_ts=''):
-    """The open polls, for the agent: what the owner may ask to change, and the one this thread sits under."""
+    """The open polls as prompt text for the agent."""
     open_polls = [p for p in state['polls'].values() if p['open']]
     if not open_polls:
         return ''
@@ -164,15 +156,13 @@ def for_prompt(channel='', thread_ts=''):
 
 
 def _thread_for(poll):
-    """Where a change from the hub is reported: the thread the poll was made in, else the owner's DM."""
+    """The poll's task thread, else the owner's DM."""
     task = state['tasks'].get(poll['task'])
     return (task['channel'], task['thread_ts']) if task else (slack.dm_owner(), None)
 
 
 def change(c, task=None):
-    """The owner's change to an open poll: switch single / multiple choice, move the closing time, or close it now.
-    From their task's agent (poll-change.json) or from the hub (task None). Applied at once; one line in the
-    task's thread (or the poll's own) says what changed."""
+    """Apply a poll change from poll-change.json or the hub (task None): choice mode, closing time, close now."""
     poll = state['polls'].get(str(c.get('poll') or ''))
     if not poll:
         return
@@ -185,7 +175,7 @@ def change(c, task=None):
         return
     closes = None
     if c.get('closes'):
-        try:  # epoch seconds from the page, ISO 8601 from the agent
+        try:  # epoch from the hub, ISO 8601 from the agent
             closes = (
                 float(c['closes'])
                 if isinstance(c['closes'], int | float)
@@ -229,14 +219,13 @@ def change(c, task=None):
     line = f':bar_chart: Poll in {where} updated: ' + '; '.join(done) + ('' if task else ' (from the hub)')
     slack.note_only(ch, tts, line)
     if task:
-        task['posted'] = True  # that line is the answer; the agent's own wrap-up stays out of the thread
+        task['posted'] = True  # suppresses the agent's own answer in the thread
     COMP.event('settings', f'Poll changed: {" and ".join(done)}', task=poll['task'], to=where, detail=poll['question'])
     log('poll changed', poll['id'], done)
 
 
 def _vote_for(poll, v):
-    """The owner casts (or, with "remove", takes back) someone's vote. (line for "is now …", ok). The person is found
-    by the companion in the workspace, never taken from the agent's guess of an id."""
+    """Owner adds/removes someone's vote -> (line, ok); the person is looked up by name, never an agent-given id."""
     uid, problem = slack.find_user(str(v.get('for') or ''))
     if not uid:
         return problem, False
@@ -283,8 +272,7 @@ def result(poll):
 
 
 def close(poll, by=''):
-    """Close it: the buttons go, the result is announced under the poll (shown in the channel too) and the owner's
-    thread gets the same line."""
+    """Remove the buttons and announce the result."""
     if not poll['open']:
         return
     poll['open'] = False
@@ -311,7 +299,7 @@ def close(poll, by=''):
 
 
 def card(poll):
-    """What the hub shows about a poll (see companion.py)."""
+    """The hub's poll card (see companion.py)."""
     n = counts(poll)
     return {
         'id': poll['id'],
@@ -335,7 +323,6 @@ def card(poll):
 
 
 def summary(poll):
-    """One line for the hub while it runs."""
     when = clock(poll['closes'])
     return f'Poll open until {when} · {_people(voters(poll))} voted'
 
@@ -347,7 +334,6 @@ def tick():
             close(poll)
 
 
-# ---------------------------------------------------------------- buttons
 @slack.app.action(re.compile(r'^poll_vote_\d+$'))
 def on_vote(ack, body):
     ack()

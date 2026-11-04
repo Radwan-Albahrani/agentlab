@@ -8,5 +8,5 @@ Type=oneshot
 ExecStart=/usr/bin/python3 @REPO@/cli/agentctl --config @CONFIG@ update --scheduled
 Nice=10
 IOSchedulingClass=idle
-# waits for busy agents up to [updates] wait_hours, so give it the whole window plus the build
+# waits up to [updates] wait_hours for busy agents
 TimeoutStartSec=infinity

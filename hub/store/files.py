@@ -1,4 +1,4 @@
-"""Small file helpers shared by the stores: tolerant JSON reads, atomic JSON writes, kept versions."""
+"""File helpers shared by the stores."""
 
 import contextlib
 import json
@@ -31,7 +31,7 @@ def read_jsonl(path, limit):
 
 
 def write_json(path, data):
-    """Write through a temp file so a reader never sees half a file."""
+    """Atomic write through a temp file."""
     with open(f'{path}.tmp', 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1)
     os.replace(f'{path}.tmp', path)
@@ -39,7 +39,7 @@ def write_json(path, data):
 
 
 def write_in_place(path, text):
-    """Overwrite the same file (not a replacement inode), so containers that bind-mount it see the change."""
+    """Overwrite the same inode, so containers that bind-mount the file see the change."""
     with open(path, 'w', encoding='utf-8', newline='') as f:
         f.write(text)
 
@@ -53,7 +53,6 @@ def versions(folder):
 
 
 def keep_version(path, folder, keep):
-    """Copy `path` into `folder` as a new version, keeping only the newest `keep`."""
     if not os.path.isfile(path):
         return
     os.makedirs(folder, exist_ok=True)

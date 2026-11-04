@@ -1,9 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { agent } from './tokens.stylex';
 
-// Each agent's colour: the one chosen in cluster.toml (`color`, sent with the nav), else picked from its id so it
-// stays the same everywhere and across reloads. Its badge, companions
-// and domain cards wear it through the `agent.hue` token. (StyleX wants each theme as its own top-level constant.)
+// StyleX needs each theme as its own top-level constant.
 const green = stylex.createTheme(agent, { hue: '#10b981' });
 const pink = stylex.createTheme(agent, { hue: '#f0628f' });
 const violet = stylex.createTheme(agent, { hue: '#8b5cf6' });
@@ -16,7 +14,6 @@ const named = { green, pink, violet, amber, sky, red, teal, indigo };
 const themes = Object.values(named);
 let chosen: Record<string, string> = {};
 
-/** The colours cluster.toml chose, by agent id (from the nav); unknown names fall back to the picked colour. */
 export const setAgentColors = (colors: Record<string, string> | undefined) => {
   chosen = colors ?? {};
 };
@@ -27,7 +24,7 @@ const pick = (id: string) => {
   return themes[h % themes.length];
 };
 
-/** Spread into stylex.props(...) on an element to give it (and everything inside) an agent's colour. */
+/** Spread into stylex.props(...) to give an element and its children an agent's colour. */
 export const hueTheme = (profile: string | null | undefined) => {
   if (!profile) return undefined;
   const name = chosen[profile];

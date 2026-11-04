@@ -1,5 +1,4 @@
-"""A tiny block-style YAML writer for the files agentctl renders (compose files, Traefik's dynamic config).
-Strings that could be misread are written JSON-quoted, which YAML reads as the same double-quoted string."""
+"""A tiny block-style YAML writer; strings that could be misread are JSON-quoted."""
 
 import json
 import re

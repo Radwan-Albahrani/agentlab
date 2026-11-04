@@ -1,9 +1,5 @@
 #!/bin/bash
-# Coolify (deploy = "coolify"): installed by its official installer, which also creates the first (root) account from
-# ROOT_USERNAME / ROOT_USER_EMAIL / ROOT_USER_PASSWORD (documented: coolify.io/docs/knowledge-base/server/
-# create-root-user-with-environment-variables); the login is kept root-only in the secrets folder. Coolify makes API
-# tokens only in its UI, so that one step is the admin's: the message says where, and `agentctl secret set coolify`
-# saves it.
+# Coolify's official installer creates the root account from ROOT_USER_*; API tokens can only be made in its UI.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 [ "${AGENTLAB_DEPLOY}" = coolify ] || { ok "deploy is ${AGENTLAB_DEPLOY}: Coolify not needed"; exit 0; }

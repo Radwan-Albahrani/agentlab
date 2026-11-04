@@ -1,6 +1,3 @@
-"""The base image's launcher (base/run.py): not configured stays down quietly, the checkout's version, and when the
-checkout's requirements need a venv."""
-
 import json
 import os
 import sys
@@ -39,7 +36,7 @@ def test_version_is_the_checkouts_commit(launcher):
     git = launcher / 'app' / '.git'
     (git / 'refs' / 'heads').mkdir(parents=True)
     (git / 'HEAD').write_text('ref: refs/heads/main\n')
-    assert run.version() == ''  # no such ref yet
+    assert run.version() == ''
     (git / 'packed-refs').write_text('# pack-refs\n0123456789abcdef0123 refs/heads/main\n')
     assert run.version() == '0123456789ab'
     (git / 'refs' / 'heads' / 'main').write_text('fedcba9876543210fedc\n')

@@ -1,7 +1,7 @@
 import { useSearchParams } from 'react-router';
 import { isKind, type SecretFilter } from '../../lib/secretFilter';
 
-/** The Secrets screen's search and filters, kept in the URL (?q=&effect=&usedBy=) so a view can be linked or reloaded. */
+/** The Secrets screen's search and filters, kept in the URL query. */
 export function useSecretFilter(): [SecretFilter, (change: Partial<SecretFilter>) => void] {
   const [params, setParams] = useSearchParams();
   const effect = params.get('effect');

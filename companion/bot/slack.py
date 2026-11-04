@@ -1,5 +1,4 @@
-"""Talking to Slack: the bot client (posts as the companion) and the owner's read-only user client (sees their DMs and
-mentions, for errands), plus message layout and the conversation-to-text the agent reads."""
+"""Slack clients (bot, and the owner's read-only user token), message layout and transcripts for the agent."""
 
 import contextlib
 import os
@@ -21,8 +20,8 @@ try:
 except Exception:
     USER = None
 WORKSPACE = ''  # https://<workspace>.slack.com/, set at start
-_people = {'at': 0.0, 'list': [], 'by_id': {}}  # the workspace directory, from one paginated listing
-_others = {}  # id -> users_info record, for anyone the listing doesn't have yet (e.g. joined since)
+_people = {'at': 0.0, 'list': [], 'by_id': {}}  # cached workspace directory
+_others = {}  # id -> users_info record for people missing from _people
 _bot = []
 
 
@@ -45,8 +44,7 @@ def _refresh_people():
 
 
 def people():
-    """The workspace's active people (no bots). Names and pictures come from this same listing, refreshed every ten
-    minutes, so showing many people costs one call, not one per person."""
+    """The workspace's active people (no bots), cached ten minutes."""
     if time.time() - _people['at'] > 600:
         _refresh_people()
     return _people['list']
@@ -66,7 +64,6 @@ def _member(uid):
 
 
 def member_name(u):
-    """The name Slack shows for a member record."""
     return u.get('profile', {}).get('display_name') or u.get('real_name') or u.get('name') or u['id']
 
 
@@ -75,13 +72,12 @@ def name(uid):
 
 
 def avatar(uid):
-    """The person's profile picture URL (48 px), or '' if Slack doesn't give one."""
+    """48 px profile picture URL, or ''."""
     return _member(uid).get('profile', {}).get('image_48') or ''
 
 
 def find_user(text):
-    """(user id, '') for a name, @mention or id, matched against the workspace's people; (None, why) when nobody
-    or more than one person matches."""
+    """(user id, '') for a name, @mention or id; (None, why) when no one or several match."""
     text = text.strip()
     m = re.fullmatch(r'<?@?([UW][A-Z0-9]{6,})>?', text)
     if m:
@@ -121,7 +117,7 @@ def dm_owner():
 
 
 def channel_name(channel):
-    """'raqeeb_management' for a channel id; '' for DMs or without the channels:read / groups:read scopes."""
+    """A channel id's name; '' for DMs or without the read scopes."""
     if channel[:1] not in ('C', 'G'):
         return ''
     try:
@@ -135,8 +131,7 @@ _channels = {'at': 0.0, 'list': []}
 
 
 def channels():
-    """[{id, name, member}] of every public channel and the private ones the companion is in, sorted by name; member: The companion
-    is in it, so it can post there. Looked up every few minutes."""
+    """[{id, name, member}] of public channels and private ones the bot is in (member: bot can post), cached."""
     if time.time() - _channels['at'] > 300:
         found, cursor = [], None
         try:
@@ -172,13 +167,12 @@ def permalink(channel, ts, client=None):
 
 
 def link(channel, ts):
-    """A Slack link built locally (no API call), for the hub."""
+    """A message link built without an API call."""
     return f'{WORKSPACE}archives/{channel}/p{ts.replace(".", "")}' if WORKSPACE and channel and ts else ''
 
 
-# ---------------------------------------------------------------- text in, text out
 def readable(text):
-    """Slack markup -> plain text for the agent: <@U1> -> @name, <url|label> -> label (url)."""
+    """Slack markup -> plain text: <@U1> -> @name, <url|label> -> label (url)."""
     text = re.sub(r'<@([A-Z0-9]+)>', lambda m: '@' + name(m.group(1)), text or '')
     text = re.sub(r'<#[A-Z0-9]+\|([^>]+)>', r'#\1', text)
     text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2 (\1)', text)
@@ -187,11 +181,10 @@ def readable(text):
 
 
 def blocks(md=None, note=None, legacy=False):
-    """Block Kit layout: the body as a markdown block (renders the agent's own markdown: headings, lists,
-    code, links), and `note` as a small grey context line underneath, Slack's footer style."""
+    """Block Kit: `md` as a markdown block (mrkdwn sections if `legacy`), `note` as a grey context line."""
     b = []
     if md:
-        if legacy:  # older Slack clients/workspaces without markdown blocks
+        if legacy:
             t = to_slack(md, 11000)
             b += [
                 {'type': 'section', 'text': {'type': 'mrkdwn', 'text': t[i : i + 2900]}} for i in range(0, len(t), 2900)
@@ -232,7 +225,7 @@ def _send(call, md, note, **kw):
 
 
 def post(channel, thread_ts, text, md=None, note=None):
-    """text = the notification / fallback text; md and note = what the message shows."""
+    """text: notification/fallback text; md and note: what the message shows."""
     r = _send(
         app.client.chat_postMessage,
         md,
@@ -251,12 +244,12 @@ def update(channel, ts, text, md=None, note=None):
 
 
 def note_only(channel, thread_ts, line):
-    """Milestones and progress: one small grey line."""
+    """Post one small grey line."""
     return post(channel, thread_ts, re.sub(r':[a-z_]+:\s*', '', line), note=line)
 
 
 def react(channel, ts, emoji, remove=False):
-    with contextlib.suppress(Exception):  # already there / already gone
+    with contextlib.suppress(Exception):
         (app.client.reactions_remove if remove else app.client.reactions_add)(channel=channel, timestamp=ts, name=emoji)
 
 
@@ -269,9 +262,8 @@ def upload(channel, thread_ts, paths, comment=None):
     )
 
 
-# ---------------------------------------------------------------- conversations for the agent
 def download(files, folder):
-    """Slack attachments -> the agent's /workspace/.companion/<folder>/; returns agent-side paths."""
+    """Download Slack files into <folder>; returns the paths as the agent sees them."""
     out = []
     os.makedirs(os.path.join(FILES, folder), exist_ok=True)
     for f in files or []:
@@ -291,8 +283,7 @@ def download(files, folder):
 
 
 def transcript(msgs, folder=None):
-    """Slack messages -> '[Oct 28 12:30] Name: text' lines (The companion's own posts left out; other apps' messages kept,
-    they are often the context: reports, alerts). With a folder, their files are downloaded for the agent."""
+    """Messages -> ('[Oct 28 12:30] Name: text' lines, downloaded file paths), skipping the bot's own posts."""
     me, lines, files = bot_user(), [], []
     for m in msgs:
         if m.get('user') == me:
@@ -301,7 +292,7 @@ def transcript(msgs, folder=None):
         if m.get('bot_id'):
             who += ' (app)'
         text = m.get('text') or ''
-        for a in m.get('attachments') or []:  # legacy attachments carry many apps' content
+        for a in m.get('attachments') or []:
             text += '\n' + (a.get('text') or a.get('fallback') or '')
         when = datetime.fromtimestamp(float(m['ts'])).strftime('%b %d %H:%M')
         lines.append(f'[{when}] {who}: {readable(text.strip())}')
@@ -313,7 +304,7 @@ def transcript(msgs, folder=None):
 
 
 def thread_messages(channel, thread_ts, trigger_ts):
-    """The conversation a task came from: the whole thread, or recent channel history for a top-level tag."""
+    """The whole thread, or recent channel history for a top-level tag."""
     try:
         if thread_ts != trigger_ts:
             return app.client.conversations_replies(channel=channel, ts=thread_ts, limit=200)['messages']

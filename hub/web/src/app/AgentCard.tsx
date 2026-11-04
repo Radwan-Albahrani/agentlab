@@ -30,10 +30,7 @@ function Title({ a, note }: { a: Data; note: string }) {
   );
 }
 
-/**
- * One agent: readiness, memory, quick links, companions, sign-ins and connectors (both managed on its Accounts page).
- * `linked` adds an Open button to the agent's page; off on that page itself.
- */
+/** `linked` adds an Open button to the agent's page; off on that page itself. */
 export function AgentCard({ a, linked = true }: { a: Data; linked?: boolean }) {
   if (!a.online) {
     return (

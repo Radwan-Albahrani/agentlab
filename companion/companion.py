@@ -1,26 +1,25 @@
-"""The contract between a companion bot and the hub. Any bot that writes this folder shows up on the hub.
+"""Bot <-> hub contract. Folder <data>/companions/<name>/ (COMPANION_DATA), mounted into the hub:
 
-Folder <data>/companions/<name>/ (the bot's COMPANION_DATA), mounted into the hub:
-  companion.db  SQLite (WAL). The bot writes; the hub opens it read-only. Nothing is ever trimmed.
-    events(id, at, kind, title, task, "to", detail, ok)   append-only, one row per thing that happened
-    tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated)
-      one card per task, upserted and never deleted. kind: task | errand.
-      status: working | waiting (on the owner; "waiting" says for what) | done | failed | stopped
-    polls(id, task, open, closes, data, updated)   polls the bot runs, upserted; data is JSON: question, channel,
-      link, multiple, closed, options [{label, votes, voters [{name, avatar}]}]
-    pulls(id, repo, number, updated, data)   open pull requests its GitHub App can see, replaced whenever the bot
-      re-reads them; data is JSON: title, url, author, avatar, labels, additions, deletions, ci, review (its latest)
-    store(key, value, updated)   the bot's own working state as JSON; the page ignores it
-  heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "workspace", "channels", "github"},
-                        every few seconds; channels: [{"id", "name", "member"}] for the page's channel picker (member:
-                        the bot can post); github: {"ready", "bot", "accounts", "at", "error"} when it has an App
-  settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text", "options": [{"value", "label", "help"}], "default"}]
-  settings.json         written by the page; re-read on every setting() call, so a change applies without a restart
-  asks/<id>.json        written by the page, taken (and removed) by the bot with take_asks:
-                        {"type": "ask", "text", "channel" (an id or ""), "review" (bool), "at"}: do something
-                        {"type": "poll", "poll", "multiple"?, "closes"? (epoch), "close"?}: change one of its polls
-                        {"type": "pulls"}: re-read the open pull requests now
-                        {"type": "review", "repo", "number"}: review and QA that pull request"""
+companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
+  events(id, at, kind, title, task, "to", detail, ok)   append-only
+  tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated)
+    upserted, never deleted. kind: task | errand.
+    status: working | waiting ("waiting" says for what) | done | failed | stopped
+  polls(id, task, open, closes, data, updated)   upserted; data JSON: question, channel,
+    link, multiple, closed, options [{label, votes, voters [{name, avatar}]}]
+  pulls(id, repo, number, updated, data)   replaced on each re-read;
+    data JSON: title, url, author, avatar, labels, additions, deletions, ci, review (latest)
+  store(key, value, updated)   bot's own state as JSON; hub ignores it
+heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "workspace", "channels", "github"};
+                      channels: [{"id", "name", "member"}] (member: bot can post);
+                      github: {"ready", "bot", "accounts", "at", "error"}
+settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text", "options": [{"value", "label", "help"}], "default"}]
+settings.json         written by the hub; re-read on every setting() call
+asks/<id>.json        written by the hub, removed by take_asks:
+                      {"type": "ask", "text", "channel" (an id or ""), "review" (bool), "at"}
+                      {"type": "poll", "poll", "multiple"?, "closes"? (epoch), "close"?}
+                      {"type": "pulls"}: re-read open pull requests
+                      {"type": "review", "repo", "number"}: review and QA that pull request"""
 
 import json
 import os
@@ -61,7 +60,7 @@ class Companion:
         self.since = time.time()
         self.schema = list(schema)
         self._settings, self._mtime = {}, None
-        self._cards = {}  # id -> last card written, to skip unchanged ones
+        self._cards = {}  # id -> last card written
         self._lock = threading.Lock()
         self.asks_dir = os.path.join(folder, 'asks')
         os.makedirs(self.asks_dir, exist_ok=True)
@@ -76,9 +75,8 @@ class Companion:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, os.path.join(self.dir, fname))
 
-    # -------------------------------------------------------------- settings
     def setting(self, key):
-        """settings.json if the page set a valid value, else the schema default."""
+        """settings.json value if valid, else the schema default."""
         p = os.path.join(self.dir, 'settings.json')
         try:
             m = os.path.getmtime(p)
@@ -97,12 +95,11 @@ class Companion:
             return bool(value)
         return value
 
-    # -------------------------------------------------------------- asks from the page
     def take_asks(self):
-        """The asks the page dropped, oldest first; each file is removed as it is taken, so none runs twice."""
+        """The hub's asks, oldest first; each file is removed as taken."""
         out = []
         for name in sorted(os.listdir(self.asks_dir)):
-            if not name.endswith('.json'):  # the page's half-written .tmp
+            if not name.endswith('.json'):  # half-written .tmp
                 continue
             path = os.path.join(self.asks_dir, name)
             try:
@@ -113,7 +110,6 @@ class Companion:
             os.remove(path)
         return out
 
-    # -------------------------------------------------------------- what the page shows
     def heartbeat(self, **extra):
         self._write(
             'heartbeat.json',
@@ -121,7 +117,7 @@ class Companion:
         )
 
     def tasks(self, cards):
-        """Upsert task cards (only the ones that changed)."""
+        """Upsert changed task cards."""
         changed = [c for c in cards if self._cards.get(c['id']) != c]
         if not changed:
             return
@@ -136,7 +132,7 @@ class Companion:
         self._cards.update({c['id']: dict(c) for c in changed})
 
     def polls(self, polls):
-        """Upsert poll cards ({id, task, open, closes, ...rest as data}), only the ones that changed."""
+        """Upsert changed poll cards ({id, task, open, closes, ...rest as data})."""
         changed = [p for p in polls if self._cards.get('poll:' + p['id']) != p]
         if not changed:
             return
@@ -186,12 +182,10 @@ class Companion:
                 (time.time(), kind, str(title)[:200], task, to, str(detail or '')[:500], int(bool(ok))),
             )
 
-    # -------------------------------------------------------------- the bot's own state
     def store_all(self):
         return {k: json.loads(v) for k, v in self.db.execute('select key, value from store')}
 
     def store_put(self, items):
-        """Write {key: value} in one transaction."""
         if not items:
             return
         now = time.time()

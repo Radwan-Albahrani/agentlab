@@ -1,7 +1,5 @@
 #!/bin/bash
-# Close Chrome after BROWSER_IDLE_MINUTES (10) without real CPU use; turn the display off DISPLAY_OFF_MINUTES (2)
-# after Chrome is gone (a forgotten browser holds ~1 GB). Both come back on the agent's next browser action. The display
-# stays on while the Android emulator runs on it.
+# Closes idle Chrome after BROWSER_IDLE_MINUTES, then turns the display off DISPLAY_OFF_MINUTES after it's gone.
 IDLE_MINUTES=${BROWSER_IDLE_MINUTES:-10}
 DISPLAY_OFF_MINUTES=${DISPLAY_OFF_MINUTES:-2}
 BUSY_TICKS=200                                  # >2 s of Chrome CPU in a minute = in use

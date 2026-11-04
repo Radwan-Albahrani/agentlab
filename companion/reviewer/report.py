@@ -1,8 +1,4 @@
-"""review.json (what the lead chat hands over) -> the review GitHub gets. Findings are headed the same way every
-time (title · blocking or not · the lane that found it), blocking ones first. A finding sits on its lines as an
-inline comment (a range when it spans several, with a one-click suggestion when the fix is small) whenever those
-lines are on the PR side of one diff hunk. GitHub refuses comments elsewhere, so the rest go in the review body
-with a permalink to the exact lines at the reviewed commit, which GitHub renders as a highlighted snippet."""
+"""review.json -> GitHub review; findings outside the PR side of a diff hunk go in the body (GitHub refuses them inline)."""
 
 import re
 
@@ -27,7 +23,7 @@ def header(f):
 
 
 def clean(raw):
-    """The findings worth keeping from review.json, normalised; malformed ones are dropped."""
+    """Normalised findings from review.json; malformed ones dropped."""
     out = []
     for f in (raw or [])[:MAX_FINDINGS]:
         if not isinstance(f, dict) or not str(f.get('title') or '').strip() or not str(f.get('body') or '').strip():
@@ -80,8 +76,7 @@ def build(findings, files, repo, head, extra=''):
 
 
 def _mention(name):
-    """A screenshot named as a local file, not yet a GitHub link: ![alt](/tmp/name.png), `/tmp/name.png`, or an
-    <img src="name.png" ...> tag (sized images)."""
+    """A local screenshot reference: ![alt](/tmp/name.png), `/tmp/name.png`, or <img src="name.png" ...>."""
     n = re.escape(name)
     return re.compile(
         r'!\[(?P<alt>[^\]]*)\]\((?:[^)\s:]*/)?' + n + r'\)'
@@ -95,8 +90,7 @@ def mentions(text, name):
 
 
 def qa_body(text, urls, missing=()):
-    """The QA report for GitHub: each screenshot it names as a local file becomes its uploaded copy ({file name: url}),
-    keeping an <img> tag's size; one that could not be uploaded says so instead of showing a broken image."""
+    """The QA report with local screenshots replaced by their uploaded urls ({file name: url}), or marked not attached."""
     for name, url in urls.items():
         text = _mention(name).sub(lambda m, n=name, u=url: _linked(m, n, u), text)
     for name in missing:
@@ -115,8 +109,7 @@ def _alt(name):
 
 
 def closing(findings, limitation, verdict, qa_url):
-    """What follows the findings in the review body. A review with no findings is posted only to say what was not
-    checked, so it opens with that verdict; without it the author saw a lone caveat and had to guess the result."""
+    """What follows the findings in the review body."""
     lines = []
     if not findings and limitation:
         lines.append('**No problems found in what was checked, but part of this PR was not checked.**')
@@ -128,7 +121,7 @@ def closing(findings, limitation, verdict, qa_url):
 
 
 def summary(findings, qa):
-    """'2 findings (1 blocking) · QA: verified' style line for the dashboard and Slack."""
+    """'2 findings (1 blocking) · QA verified' style line."""
     n = len(findings)
     blocking = sum(f['severity'] == 'blocking' for f in findings)
     out = (
@@ -143,8 +136,7 @@ def summary(findings, qa):
 
 
 def counts_of(summary):
-    """The counts behind a summary line written before reviews kept them ("3 findings (3 blocking) · QA found
-    problems"), or None when it is not one."""
+    """Counts parsed from a legacy summary line ("3 findings (3 blocking) · ..."), or None."""
     m = re.match(r'(no findings|(\d+) findings?(?: \((\d+) blocking\))?)', summary or '')
     if not m:
         return None

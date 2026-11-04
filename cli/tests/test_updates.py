@@ -1,6 +1,3 @@
-"""Self-maintenance: [updates] config, apply redeploying on a newer image (but never mid-turn), `agentctl update`'s
-fast-forward-only pull, and how it waits for busy agents, defers them, or restarts and resumes their chats."""
-
 import contextlib
 import io
 import os
@@ -82,8 +79,6 @@ class Config(unittest.TestCase):
 
 
 class Stack(unittest.TestCase):
-    """A rendered, deployed agent stack in a throwaway data dir, with Docker faked."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -95,7 +90,7 @@ class Stack(unittest.TestCase):
         with open(deploy.compose_file(self.cfg, self.stack), 'w') as f:
             f.write(self.text)
         deploy.mark_deployed(self.cfg, self.stack, self.text)
-        # times as Docker prints them; the container was created at 16:00 UTC, the image rebuilt at 16:47:59 UTC
+        # the container was created at 16:00 UTC, the image rebuilt at 16:47:59 UTC
         self.image_now = '2026-11-02T19:47:59.480512677+03:00'
         self.enterContext(mock.patch('agentlab.deploy.run', self.docker))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
@@ -117,7 +112,6 @@ class ImageRedeploy(Stack):
         self.assertEqual((reason, skip), ('newer image: agentlab/agent:latest', ''))
 
     def test_same_image_changes_nothing(self):
-        # a cached rebuild keeps the image's old creation time, whatever ids the image store reports
         self.image_now = '2026-11-02T18:59:00+03:00'
         self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
 
@@ -241,7 +235,7 @@ class Waiting(Stack):
         self.assertGreaterEqual(self.clock.t - 1_000_000.0, 4 * 3600)
         self.assertNotIn('agentlab-agent-omar', self.deployed)
 
-    def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(self):  # T3 resumes them itself on start
+    def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(self):
         runs_db(self.sara, [])
         rows = [('r1', 't1', 'running'), ('r2', 't2', 'running'), ('r3', 't3', 'completed'), ('r4', 't1', 'running')]
         runs_db(self.omar, rows)
@@ -251,7 +245,7 @@ class Waiting(Stack):
         self.assertEqual(resumed, {'omar': ['t1', 't2']})
         self.assertEqual(self.deployed, ['agentlab-agent-sara', 'agentlab-agent-omar'])
 
-    def test_resume_now_does_not_wait(self):  # agentctl update --resume
+    def test_resume_now_does_not_wait(self):
         runs_db(self.sara, [])
         runs_db(self.omar, [('r2', 't2', 'running')])
         slept = []
@@ -262,8 +256,6 @@ class Waiting(Stack):
 
 
 class HostServices(unittest.TestCase):
-    """apply restarts a host service that started before its code last changed, whichever update changed it."""
-
     def restarts(self, changed):
         calls = []
 
@@ -292,8 +284,6 @@ class HostServices(unittest.TestCase):
 
 class OncePerRun(Waiting):
     def test_a_stack_apply_deployed_is_not_deployed_again(self):
-        # the home lab saw two concurrent Coolify deploys per agent: apply's, then the wait loop's while the first was
-        # still recreating (old containers still looked out of date)
         deploy.DEPLOYED.add('agentlab-agent-sara')
         runs_db(self.sara, [])
         runs_db(self.omar, [])
@@ -316,8 +306,6 @@ services:
 
 
 class Settle(unittest.TestCase):
-    """After a deploy, every service runs in a container from this render, or the deploy fails loudly."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -349,7 +337,6 @@ class Settle(unittest.TestCase):
             deploy.settle(self.cfg, 'agentlab-agent-sara', kind, AGENT_TEXT, timeout_s, sleep, lambda: self.t)
 
     def test_a_container_docker_could_not_start_fails_at_once_with_its_error(self):
-        # #22: the edge stayed Created because its port was taken; that never resolves by waiting
         self.views = [
             self.rows(
                 ('agent-x', 'created', 'Created', 'agent', 'abc123'), ('files-x', 'running', 'Up', 'files', 'abc123')

@@ -1,27 +1,23 @@
-"""Tuning for the agents' heavy-job throttle: the one place to change headroom, waiting and estimates. The budgets
-themselves come from cluster.json: the pool is agentlab.slice (limits.total_memory) and each agent's room is its own
-container's mem_limit, both read live from the cgroups. The agents' shim gets MAX_WAIT_S through the spool."""
+"""Tuning for the heavy-job throttle; memory budgets are read live from the cgroups."""
 
 import cluster
 
 _cfg = cluster.load()
 DATA = cluster.data_dir(_cfg)
 
-# Budgets. A job is admitted only if its expected peak fits both its agent and the shared pool.
-POOL_HEADROOM_MB = 2048  # admit up to the slice's MemoryHigh, where the kernel starts slowing every agent
-AGENT_HEADROOM_MB = 1024  # room for the agent's own T3, chats and MCP servers to grow between checks
+POOL_HEADROOM_MB = 2048  # keeps admissions below the slice's MemoryHigh
+AGENT_HEADROOM_MB = 1024  # room for the agent's own T3, chats and MCP servers
 SWAP_CAP_MB = 1024  # admit nothing new while more swap than this is in use
 
-# Disk. The disk holds the agents' work and T3's SQLite alike: a congested disk stalls every chat.
 IO_PRESSURE_MAX = (_cfg.get('limits') or {}).get('throttle', {}).get('io_psi_max', 25)  # PSI io "some" avg10, %
-ADMIT_GAP_S = 10  # space starts so disk pressure (a 10 s average) shows a new job's load before the next
+ADMIT_GAP_S = 10  # PSI avg10 needs this long to show a new job's load
 
-MAX_WAIT_S = 480  # a job waits at most this long, then runs anyway, so agents' tool calls never time out
+MAX_WAIT_S = 480  # then the job runs anyway, so agents' tool calls never time out
 STALE_S = 45  # a job whose shim stopped reporting this long ago is gone
 POLL_S = 0.5
 
-PEAK_HISTORY = 5  # an estimate is the largest of a job's last few measured peaks...
-PEAK_MARGIN = 1.15  # ...plus this margin
+PEAK_HISTORY = 5
+PEAK_MARGIN = 1.15
 DEFAULT_MB = {  # first-run estimates, by tool
     'npm': 1500,
     'pnpm': 1500,
@@ -53,7 +49,7 @@ DEFAULT_MB = {  # first-run estimates, by tool
 }
 DEFAULT_OTHER_MB = 1500
 
-SPOOL = '.local/state/agent-throttle'  # inside each agent's home; the shim sees the same folder as ~/<SPOOL>
+SPOOL = '.local/state/agent-throttle'  # relative to each agent's home; the shim uses the same path
 STATE_DIR = f'{DATA}/hub/throttle'
 POOL_CGROUP = '/sys/fs/cgroup/agentlab.slice'
 AGENT_UID = 1000

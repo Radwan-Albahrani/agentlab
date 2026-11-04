@@ -5,7 +5,6 @@ import { ApiError } from '../api/client';
 import { Card } from '../ui/Card';
 import { Empty, Loading, PageHead } from '../ui/page';
 
-/** A screen's states: loading, not found (hidden or unknown), failed, or the screen itself. */
 export function Screen<T>({
   title,
   query,

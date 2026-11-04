@@ -1,5 +1,4 @@
-"""What the install steps need from this host, checked before any of them changes anything: a half-installed cluster
-is worse than a clear "unsupported host" up front. doctor shows the same checks."""
+"""Host checks the install steps need, run before any change (doctor shows them too)."""
 
 import glob
 import os
@@ -10,7 +9,7 @@ import subprocess
 
 # The packages host/install/*.sh install from the distro (Docker and cloudflared come from their own repositories).
 BASE = ['ca-certificates', 'curl', 'gnupg', 'nftables', 'jq', 'sqlite3', 'e2fsprogs', 'git']
-# Android's command-line tools need Java 17+; newest LTS first. Keep in step with host/install/65-android-sdk.sh.
+# Java 17+ for Android tools, newest first; keep in step with host/install/65-android-sdk.sh.
 JRES = ['openjdk-21-jre-headless', 'openjdk-25-jre-headless', 'openjdk-17-jre-headless']
 SYSBOX_ARCH = {'x86_64', 'aarch64'}
 
@@ -20,7 +19,6 @@ def lists_empty():
 
 
 def candidate(package, run=subprocess.run):
-    """True when apt can install the package (it has a candidate version)."""
     p = run(['apt-cache', 'policy', package], capture_output=True, text=True, check=False)
     m = re.search(r'Candidate:\s*(\S+)', p.stdout or '')
     return bool(m) and m.group(1) != '(none)'
@@ -44,8 +42,7 @@ def wsl():
 
 
 def problems(cfg, refresh=False, run=subprocess.run):
-    """[(id, message, fix)] that would stop an install step on this host. `refresh` lets it update apt's package
-    lists first (setup and install run as root; doctor doesn't change the host)."""
+    """[(id, message, fix)] that would stop an install step; `refresh` updates apt's lists first."""
     out = []
     if not shutil.which('apt-get') or not shutil.which('dpkg'):
         return [

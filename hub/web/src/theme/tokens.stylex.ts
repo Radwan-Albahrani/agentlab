@@ -1,11 +1,11 @@
 import * as stylex from '@stylexjs/stylex';
 
-/** Every colour on the page as light-dark(light, dark): the document's color-scheme picks one (theme/mode.ts). */
+/** light-dark(light, dark): the document's color-scheme (theme/mode.ts) picks one. */
 export const colors = stylex.defineVars({
   bg: 'light-dark(#f6f6f3, #0d0e10)',
   panel: 'light-dark(#ffffff, #15161a)',
   sunk: 'light-dark(#f1f1ed, #101114)',
-  hover: 'light-dark(#ecece7, #1e1f25)', // under the pointer: darker in light, lighter in dark
+  hover: 'light-dark(#ecece7, #1e1f25)',
   fg: 'light-dark(#16171a, #ececef)',
   muted: 'light-dark(#62636b, #a3a4ab)',
   faint: 'light-dark(#8e8f96, #7a7b83)',
@@ -21,8 +21,8 @@ export const colors = stylex.defineVars({
   bad: 'light-dark(#c42b2b, #f87171)',
   badSoft: 'light-dark(#fbe7e6, #2d1414)',
   idleSoft: 'light-dark(#efefeb, #1d1e23)',
-  onFill: '#ffffff', // text and knobs on a coloured fill (badges, counts, the error toast, switches)
-  paper: '#ffffff', // stays white in dark mode too (QR codes must scan)
+  onFill: '#ffffff', // text on a coloured fill
+  paper: '#ffffff', // white in dark mode too, so QR codes scan
   shadow:
     'inset 0 1px 0 light-dark(transparent, rgba(255,255,255,.035)), 0 1px 2px light-dark(rgba(18,18,28,.04), rgba(0,0,0,.35)), 0 8px 24px light-dark(rgba(18,18,28,.05), rgba(0,0,0,.3))',
   liftShadow: '0 1px 2px light-dark(rgba(0,0,0,.12), rgba(0,0,0,.45))',
@@ -30,7 +30,6 @@ export const colors = stylex.defineVars({
   overlay: 'light-dark(rgba(10,10,14,.45), rgba(0,0,0,.6))',
 });
 
-/** Distinct colours for the parts of one bar (the storage breakdown), in order. */
 export const chart = stylex.defineVars({
   c1: '#3b82f6',
   c2: '#10b981',
@@ -42,12 +41,11 @@ export const chart = stylex.defineVars({
   c8: '#64748b',
 });
 
-/** The agent whose domain an element belongs to; set per agent with hueTheme() (theme/hues.ts). */
+/** Set per agent with hueTheme() (theme/hues.ts). */
 export const agent = stylex.defineVars({
   hue: '#64748b',
 });
 
-/** Every gap, padding and margin comes from this scale. */
 export const space = stylex.defineVars({
   xxxs: '2px',
   xxs: '4px',
@@ -61,7 +59,6 @@ export const space = stylex.defineVars({
   huge: '24px',
 });
 
-/** Font sizes: body is the page default. */
 export const text = stylex.defineVars({
   xxs: '11px',
   xs: '12px',
@@ -85,7 +82,6 @@ export const radius = stylex.defineVars({
   pill: '99px',
 });
 
-/** Layout breakpoints: below `nav` the sidebar becomes a pill bar; below `phone` rows and tables stack. */
 export const media = stylex.defineConsts({
   nav: '@media (max-width: 900px)',
   narrow: '@media (max-width: 760px)',

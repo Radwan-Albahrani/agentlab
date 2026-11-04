@@ -1,12 +1,4 @@
-"""Product-update drafts: an agent (e.g. the Sunday T3 scheduled task) writes one into
-/workspace/.companion/product-updates/<id>/:
-  update.md   the message, standard markdown        *.png/*.jpg   screenshots, in order
-  ready.json  written LAST: {"title": "...", "images": ["a.png", ...], "revision": 1}
-The companion DMs the owner the preview exactly as it will be posted, with Post / Discard buttons. Replies in that DM
-thread start a revision chat; a newer ready.json brings a fresh preview. Nothing reaches the channel without
-the owner's tap. The channel is a setting on the hub.
-After posting, replies in the same DM thread still revise it: the new preview's button edits the posted message in
-place (its text; the screenshots stay as posted) instead of posting again."""
+"""Product-update drafts (product-updates/<id>/: update.md, images, ready.json written last), previewed to the owner."""
 
 import json
 import os
@@ -29,13 +21,12 @@ def _files(d, meta):
     )
     with open(os.path.join(d, 'update.md'), encoding='utf-8') as f:
         text = f.read()
-    text = re.sub(r'\n{3,}', '\n\n', IMAGE_REF.sub('', text)).strip()  # the screenshots go up as files instead
+    text = re.sub(r'\n{3,}', '\n\n', IMAGE_REF.sub('', text)).strip()
     return text, [os.path.join(d, f) for f in imgs if os.path.isfile(os.path.join(d, f))]
 
 
 def _send(channel, text_md, images, thread_ts=None):
-    """Post the update the way it will look in the channel: text plus screenshots in one message.
-    Returns where it landed, for a later edit."""
+    """Post text plus screenshots as one message; returns where it landed."""
     if images:
         since = time.time() - 5
         slack.app.client.files_upload_v2(
@@ -49,20 +40,19 @@ def _send(channel, text_md, images, thread_ts=None):
 
 
 def _find_upload(channel, since, tries=5):
-    """An upload doesn't return its message: The companion's newest message with files in the channel since `since`."""
+    """The ts of the bot's newest message with files since `since` (uploads don't return it)."""
     for i in range(tries):
         msgs = slack.app.client.conversations_history(channel=channel, oldest=f'{since:.6f}', limit=50)['messages']
-        for m in msgs:  # newest first
+        for m in msgs:
             if m.get('files') and m.get('user') == slack.bot_user():
                 return m['ts']
         if i < tries - 1:
-            time.sleep(1)  # Slack shares the files a moment after the upload returns
+            time.sleep(1)  # the message appears shortly after the upload returns
     return None
 
 
 def _edit(st, text_md):
-    """The posted message, rewritten in place. Posts from before the companion kept their place are looked up once, from
-    when the draft's DM thread began (always before the post; a revision's mtime is after it)."""
+    """Rewrite the posted message in place."""
     p = st.get('posted') or {'channel': publish_channel(), 'ts': None, 'files': True}
     if not p['ts']:
         p['ts'] = _find_upload(p['channel'], float(st['thread']), tries=1)
@@ -102,21 +92,21 @@ def tick():
                 meta = json.load(f)
             mtime = os.path.getmtime(ready)
         except (OSError, ValueError):
-            continue  # not finished yet
+            continue
         rev = int(meta.get('revision', 1))
         st = state['drafts'].get(key)
         if st and mtime <= st.get('mtime', 0):
-            continue  # nothing new written
+            continue
         if st and st['status'] == 'posted' and st.get('revising'):
-            st['status'] = 'editing'  # the owner asked to change what's already in the channel
+            st['status'] = 'editing'
         elif st and st['status'] not in ('pending', 'editing'):  # a new run into a posted/discarded folder
-            state['drafts'].pop(key)  # (same day): a fresh draft, new DM thread
+            state['drafts'].pop(key)
             st = None
         if st and rev <= st['revision']:
-            rev = st['revision'] + 1  # rewritten without bumping: still a revision
+            rev = st['revision'] + 1
         text_md, images = _files(d, meta)
         dm = slack.dm_owner()
-        if not st:  # first preview: its own DM thread
+        if not st:
             head = slack.post(
                 dm,
                 None,
@@ -128,7 +118,7 @@ def tick():
         else:
             slack.post(dm, st['thread'], 'Revised draft', note=f':pencil2: Revision {rev}')
         _send(dm, text_md, images, st['thread'])
-        if st.get('buttons'):  # older revision's buttons: retire them
+        if st.get('buttons'):
             slack.update(
                 dm,
                 st['buttons'],
@@ -155,7 +145,7 @@ def for_thread(ch, tts):
 
 
 def revise(key, st, text, ts):
-    """Owner feedback on a draft -> a T3 chat that rewrites the draft files (The companion previews the result)."""
+    """Owner feedback on a draft -> a T3 chat that rewrites the draft files."""
     if st['status'] == 'discarded':
         slack.post(st['dm'], st['thread'], 'Discarded', note='This draft was discarded, so there is nothing to change.')
         return

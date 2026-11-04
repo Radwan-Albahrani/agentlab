@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Stops orphaned leftovers in an agent container: processes re-parented to init that used no CPU for
-JANITOR_IDLE_MINUTES, except supervisord's own programs. Without it, killed sessions leave dev servers and browsers
-running for days. Memory limits are the kernel's job (container and agentlab.slice limits, zram swap); this only cleans
-up. Log: ~/logs/janitor.log"""
+"""Stops orphans (re-parented to init, not supervisord's) that used no CPU for JANITOR_IDLE_MINUTES."""
 
 import contextlib
 import os
@@ -19,19 +16,18 @@ def log(msg):
 
 
 def read_proc(pid):
-    """(parent pid, start time, cpu ticks, command line) of a process, or None if it is gone or a kernel thread."""
+    """-> (parent pid, start time, cpu ticks, command line), or None for a kernel thread."""
     with open(f'/proc/{pid}/stat') as f:
         stat = f.read()
     fields = stat[stat.rindex(')') + 2 :].split()
     with open(f'/proc/{pid}/cmdline', 'rb') as f:
         cmd = f.read().replace(b'\0', b' ').decode(errors='replace').strip()
-    if not cmd:  # kernel threads have no command line
+    if not cmd:
         return None
     return int(fields[1]), int(fields[19]), int(fields[11]) + int(fields[12]), cmd
 
 
 def orphans():
-    """pid -> (start, cpu ticks, command) for every process whose parent is init."""
     out = {}
     for name in filter(str.isdigit, os.listdir('/proc')):
         try:
@@ -68,7 +64,7 @@ def main():
             if pid in keep:
                 continue
             prev = seen.get(pid)
-            if not prev or prev[:2] != (start, cpu):  # new, or it used CPU since the last look
+            if not prev or prev[:2] != (start, cpu):
                 seen[pid] = (start, cpu, now)
             elif now - prev[2] >= IDLE_S:
                 stop(pid, cmd)

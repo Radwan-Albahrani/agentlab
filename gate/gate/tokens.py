@@ -1,6 +1,4 @@
-"""Cloudflare Access JWT checks. Access already let the person in at Cloudflare's edge; checking the token again here
-means a request that reaches the server some other way (LAN, a misrouted tunnel, another container) gets nothing.
-RS256 only: accepting `none` or HS* would let anyone forge a token (HS256 "signed" with the public key)."""
+"""Cloudflare Access JWT checks; RS256 only, since `none` or HS* would let anyone forge a token."""
 
 import json
 import logging
@@ -25,8 +23,7 @@ def fetch_keys(team):
 
 
 class Keys:
-    """The team's signing keys, cached. Cloudflare rotates them, so an unknown kid triggers a refetch, at most one per
-    `gap` seconds so a stream of junk tokens can't make us hammer Cloudflare."""
+    """Cached signing keys; an unknown kid refetches at most once per `gap` s so junk tokens can't hammer Cloudflare."""
 
     max_age = 3600
 
@@ -68,7 +65,6 @@ class Keys:
 
 
 def email_of(token, team, audience, keys):
-    """The lowercased email in a valid Access token for this team and application, or TokenError."""
     if not token:
         raise TokenError('no token')
     if not team or not audience:
@@ -94,5 +90,5 @@ def email_of(token, team, audience, keys):
         raise TokenError(type(e).__name__) from e
     email = claims.get('email')
     if not isinstance(email, str) or '@' not in email:
-        raise TokenError('no email in token')  # e.g. an Access service token: never a person
+        raise TokenError('no email in token')  # e.g. an Access service token
     return email.strip().lower()

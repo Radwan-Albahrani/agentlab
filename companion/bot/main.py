@@ -1,7 +1,4 @@
-"""Start the companion: Slack Socket Mode (connects out, nothing is exposed) plus one poller that, every few seconds,
-moves every task forward, picks up the agents' outbox files and drafts, starts
-queued pull request reviews, closes polls that are due, and refreshes what the hub shows. Asks from the hub get a
-quicker check of their own."""
+"""Start-up: Slack Socket Mode, the main poller and the faster asks poller."""
 
 import os
 import threading
@@ -39,7 +36,7 @@ def poll():
         time.sleep(POLL)
         for task in list(state['tasks'].values()):
             with lock:
-                _guarded(f'tick {task.get("thread")}', outbox.tick, task)  # files first, then the answer
+                _guarded(f'tick {task.get("thread")}', outbox.tick, task)  # must run before tasks.tick
                 _guarded(f'tick {task.get("thread")}', tasks.tick, task)
         with lock:
             _guarded('reviews', reviews.tick)
@@ -50,14 +47,13 @@ def poll():
         _guarded('invites', requests.invite_tick)
         if time.time() >= state.get('_drafts_retry', 0):
             with lock:
-                if not _guarded('drafts', drafts.tick):  # e.g. a missing scope: retry in 5 min
+                if not _guarded('drafts', drafts.tick):
                     state['_drafts_retry'] = time.time() + 300
         save()
         _guarded('publish', publish.tick)
 
 
 def watch_asks():
-    """The page's asks (refresh, review, an ask) are clicks someone is watching: check often, apart from the tasks."""
     while True:
         time.sleep(ASKS_POLL)
         _guarded('asks', asks.tick)
@@ -69,7 +65,7 @@ def run():
     prepare_for_start()
     polls.migrate()
     log(f'{NAME} for {AGENT}: owner {OWNER}, bridge {BRIDGE}, {len(state["tasks"])} known threads, mode {mode()}')
-    slack.WORKSPACE = slack.app.client.auth_test()['url']  # also verifies the bot token: a bad one stops here
+    slack.WORKSPACE = slack.app.client.auth_test()['url']  # also verifies the bot token
     COMP.event('live', f'{NAME} started', detail=f'mode: {mode()}')
     threading.Thread(target=poll, daemon=True).start()
     threading.Thread(target=watch_asks, daemon=True).start()

@@ -1,6 +1,4 @@
-"""/api/page: everything the hub shows for this agent's sign-ins, connectors, devices and env vars, including
-live sign-in flows (link, code, terminal), so the web app can render it and poll while a flow runs. /api/act: its
-buttons."""
+"""/api/page (everything the hub's Accounts page shows) and /api/act (its buttons)."""
 
 import connectors
 import envfile
@@ -54,7 +52,7 @@ def page():
 
 
 def act(body):
-    """One button on the page -> '' (done) or a message to show. Unknown actions raise ValueError."""
+    """-> '' (done) or a message to show; unknown actions raise ValueError."""
     action, target = body.get('action', ''), body.get('p', '')
 
     def text(key):

@@ -1,5 +1,4 @@
-"""A GitHub App: its id and private key make a JWT; the JWT lists installations and mints installation tokens
-(an hour each, cached until shortly before they expire). Calls go to api.github.com over HTTPS, out only."""
+"""GitHub App client: JWT from id + key, cached installation tokens, REST calls."""
 
 import json
 import time
@@ -25,7 +24,6 @@ class App:
         self._installs = (0.0, [])
         self._slug = ''
 
-    # -------------------------------------------------------------- identity
     def _jwt(self):
         now = int(time.time())
         return jwt.encode({'iat': now - 60, 'exp': now + 540, 'iss': self.app_id}, self.key, algorithm='RS256')
@@ -37,7 +35,7 @@ class App:
         return self._slug
 
     def installations(self):
-        """[{id, account}] where the App is installed, re-read every 10 minutes."""
+        """[{id, account}] where the App is installed (cached 10 minutes)."""
         at, cached = self._installs
         if time.time() - at > 600:
             found = self.call('GET', '/app/installations?per_page=100', auth=f'Bearer {self._jwt()}')
@@ -59,9 +57,8 @@ class App:
         owner = repo.split('/', 1)[0].lower()
         return next((i['id'] for i in self.installations() if i['account'].lower() == owner), None)
 
-    # -------------------------------------------------------------- calls
     def call(self, method, path, body=None, auth=None, installation=None):
-        """One REST call. `installation` signs it with that installation's token."""
+        """One REST call, signed with `installation`'s token when given."""
         if installation is not None:
             auth = f'token {self.token(installation)}'
         req = urllib.request.Request(

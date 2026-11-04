@@ -44,7 +44,7 @@ const styles = stylex.create({
   divided: { borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: colors.line },
 });
 
-/** A white (dark: raised) panel. `accent` adds a coloured left edge for things that need you. `overflow` lets popovers out. */
+/** `accent` adds a coloured left edge; `overflow` lets popovers out. */
 export function Card({
   accent,
   agentTop,
@@ -71,15 +71,12 @@ export function Card({
   );
 }
 
-/** Padded content inside a card. */
 export const CardBody = ({ roomy, divided, children }: { roomy?: boolean; divided?: boolean; children: ReactNode }) => (
   <div {...stylex.props(styles.body, roomy && styles.bodyRoomy, divided && styles.divided)}>{children}</div>
 );
 
-/** The tinted header of an agent's domain card. */
 export const DomainHead = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.domHead)}>{children}</div>;
 
-/** A card that links somewhere, with its agent's colour down the left edge (companions). */
 export const AgentLinkCard = ({ profile, to, children }: { profile: string; to: string; children: ReactNode }) => (
   <Link {...stylex.props(hueTheme(profile), styles.card, styles.agentLeft)} to={to}>
     {children}

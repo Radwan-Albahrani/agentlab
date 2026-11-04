@@ -7,8 +7,6 @@ import { colors, radius, space, text } from '../theme/tokens.stylex';
 import { ConfirmDialog } from './Dialog';
 import { Icon } from './Icon';
 
-// Toasts, confirms, and the one way buttons change things (useAct): POST, toast the result, refresh every screen's data.
-
 interface Feedback {
   toast: (msg: string, bad?: boolean) => void;
   confirm: (text: string) => Promise<boolean>;
@@ -55,7 +53,7 @@ const styles = stylex.create({
     color: colors.ok,
   },
   markBad: { backgroundColor: colors.badSoft, color: colors.bad },
-  // Base UI renders the title as a heading: reset it to body text
+  // Base UI renders the title as a heading
   title: {
     flexGrow: 1,
     minWidth: 0,
@@ -78,7 +76,6 @@ const styles = stylex.create({
   },
 });
 
-/** Bottom right, on the page's own surface: a check or alert mark, the message, and a close button. */
 function Toasts() {
   const { toasts } = Toast.useToastManager();
   return (
@@ -88,8 +85,6 @@ function Toasts() {
           <Toast.Root
             key={t.id}
             toast={t}
-            // A status message, not a dialog: a native <output>. Base UI stamps role="dialog" on the toast root, so the
-            // otherwise implicit role has to be spelled out to win (checked in jsdom).
             // oxlint-disable-next-line jsx-a11y/no-redundant-roles -- required: overrides Base UI's role="dialog"
             render={<output role="status" />}
             className={(s) =>
@@ -116,7 +111,7 @@ function Provider({ children }: { children: ReactNode }) {
   const [ask, setAsk] = useState<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   const toast = useCallback(
     (msg: string, bad = false) => {
-      manager.add({ title: msg, type: bad ? 'error' : 'info', timeout: bad ? 6000 : 3200 }); // errors take longer to read
+      manager.add({ title: msg, type: bad ? 'error' : 'info', timeout: bad ? 6000 : 3200 });
     },
     [manager],
   );
@@ -155,7 +150,7 @@ export function useFeedback(): Feedback {
   return f;
 }
 
-/** POST an action with optional confirm; toasts the result and refreshes data. Resolves true when it went through. */
+/** POST with optional confirm, toast the result, refresh all data; resolves true on success. */
 export function useAct() {
   const { toast, confirm } = useFeedback();
   const qc = useQueryClient();

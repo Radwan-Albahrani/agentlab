@@ -1,5 +1,4 @@
-"""cluster.toml -> the resolved cluster (the dict written to <data>/rendered/cluster.json). Validation is strict and
-names the exact key: a typo that silently fell back to a default could expose an agent or size a disk wrong."""
+"""cluster.toml -> the resolved cluster (cluster.json); validation is strict and names the exact key."""
 
 import ipaddress
 import json
@@ -14,11 +13,10 @@ ID = re.compile(r'^[a-z][a-z0-9-]{0,30}[a-z0-9]$|^[a-z]$')
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 DOMAIN = re.compile(r'^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$')
 TIME = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
-RESERVED = {'edge', 'gate', 'hub', 'coolify', 'core', 'tinyauth'}  # names the cluster itself uses
+RESERVED = {'edge', 'gate', 'hub', 'coolify', 'core', 'tinyauth'}
 SUBNET = '10.207.{n}.0/24'  # agent n's network; 10.207.0.0/24 is the edge's
-TINYAUTH_IMAGE = 'ghcr.io/tinyauthapp/tinyauth:v5.1.3'  # >= 5.1.2 fixes CVE-2026-77560, 5.1.3 GHSA-r27r-rr9v-vv37
+TINYAUTH_IMAGE = 'ghcr.io/tinyauthapp/tinyauth:v5.1.3'  # >= 5.1.3 for CVE-2026-77560 and GHSA-r27r-rr9v-vv37
 
-# Each sign-in mode, its default ingress and the ingresses it can work with.
 MODES = {
     'cloudflare-access': ('cloudflared', {'cloudflared'}),
     'tailscale': ('tailscale', {'tailscale'}),
@@ -44,8 +42,8 @@ SCHEMA = {  # section -> {key: default}; None = required
         'extra_stacks': [],
         'bark_url': '',
         'bark_public': '',
-        'extra_secrets': '',  # a host folder of other secrets to show (admins only) on the Secrets screen
-        'extra_secrets_map': '',  # its secrets-map (same format as hub/secrets-map.json), optional
+        'extra_secrets': '',
+        'extra_secrets_map': '',
         'extra_secrets_label': 'Other secrets',
     },
     'auth': {
@@ -57,18 +55,13 @@ SCHEMA = {  # section -> {key: default}; None = required
         'cloudflare': {},
         'tinyauth': {},
     },
-    # network: "private" = reachable only through the Cloudflare One (WARP) client over the tunnel (no public DNS);
-    # "public" = public hostnames behind an Access sign-in page; require_warp adds a device check to "public"
     'auth.cloudflare': {
         'team': '',
         'audience': '',
         'login_method': '',
         'network': 'private',
         'require_warp': False,
-        # how long a Cloudflare One Client session signs people in; set on the account only while it has none
         'client_session': '24h',
-        # private only: the edge serves the names over HTTPS (a Let's Encrypt certificate) and the gate signs people
-        # in through Access as an OIDC provider; false keeps plain HTTP inside the tunnel with Access's own token
         'https': False,
     },
     'auth.tinyauth': {
@@ -82,13 +75,9 @@ SCHEMA = {  # section -> {key: default}; None = required
     'limits': {'total_memory': '96g', 'throttle_io_psi_max': 25},
     'android': {'enabled': False, 'system_image': 'system-images;android-35;google_apis;x86_64'},
     'backups': {'enabled': True, 'keep_days': 14, 'time': '03:30'},
-    # acme_token_file: what the edge gets its certificate with (DNS edit on the zone is enough); default: api_token_file
     'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': '', 'acme_token_file': ''},
     'coolify': {'url': 'http://127.0.0.1:8000', 'token_file': '', 'project': 'agentlab'},
     'images': {'registry': '', 'tag': 'latest'},
-    # agentlab: the nightly `agentctl update`; agent_tools_hours: agents refresh T3/Claude/Codex themselves (0 = never);
-    # a busy agent is waited for up to wait_hours, then on_busy decides: "defer" (next night) or "resume" (restart it
-    # and tell each interrupted chat to carry on)
     'updates': {
         'agentlab': 'off',
         'time': '04:30',
@@ -100,12 +89,12 @@ SCHEMA = {  # section -> {key: default}; None = required
     'companion_policy': {'self_service': True, 'max_per_agent': 0},  # 0 = no cap
 }
 AGENT_KEYS = {'id', 'owner', 'memory', 'cpus', 'publish', 'hostname', 'image', 'color'}
-# The hub's agent colours (hub/web/src/theme/hues.ts); unset = picked from the id.
+# Must match hub/web/src/theme/hues.ts.
 COLORS = ('green', 'pink', 'violet', 'amber', 'sky', 'red', 'teal', 'indigo')
 PUBLISHABLE = ('t3', 'accounts', 'browser', 'terminal', 'files')
 COMPANION_KEYS = {'name', 'agent', 'kind', 'display_name'}
 COMPANION_KINDS = {'slack'}
-AGENT_COMPANION = re.compile(r'^[a-z0-9][a-z0-9-]{0,28}[a-z0-9]$')  # names agents pick: 2-30 characters
+AGENT_COMPANION = re.compile(r'^[a-z0-9][a-z0-9-]{0,28}[a-z0-9]$')
 PROJECT = re.compile(r'^[a-z0-9][a-z0-9_-]*$')  # what Docker Compose accepts as a project name
 PRIVATE = ('cloudflare', 'coolify', 'images', 'tinyauth', 'person_sizes', 'seed', 'bark')
 
@@ -120,7 +109,6 @@ def load(path=DEFAULT_PATH):
 
 
 def loads(text, where='cluster.toml'):
-    """Resolve config text, keeping each agent's subnet from the last apply."""
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -142,12 +130,11 @@ def load_state(data):
 
 
 def state_file(data):
-    """Companions the agents created themselves; cluster.toml stays the admin's."""
     return os.path.join(data, 'state', 'companions.json')
 
 
 def previous_subnets(cluster_json):
-    """{agent id: n} from the last cluster.json, so an agent keeps its subnet (and the firewall its address)."""
+    """{agent id: n} from the last cluster.json, so an agent keeps its subnet."""
     out = {}
     for a in cluster_json.get('agents') or []:
         m = re.match(r'^10\.207\.(\d+)\.0/24$', str(a.get('subnet', '')))
@@ -193,8 +180,7 @@ LABEL = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 
 
 def _hostname(value, where, problems, required=True, local=False):
-    """A DNS name. `local`: also a single-label name (a LAN or MagicDNS short name) or an IP address, which is how
-    tailscale and none setups reached on plain ports are usually addressed; Cloudflare and tinyauth need real DNS."""
+    """A DNS name; `local` also allows a single-label name or an IP (tailscale/none setups)."""
     value = str(value or '').lower()
     if not value and not required:
         return value
@@ -244,7 +230,7 @@ def _port(value, where, problems):
 
 
 def _publish(value, where, problems):
-    """{tool: host port} an agent's tools are also published on (one-person setups that predate the edge)."""
+    """{tool: host port} an agent's tools are also published on."""
     if not isinstance(value, dict):
         problems.append(f'{where} must be a table like {{ t3 = 7101 }}')
         return {}
@@ -253,8 +239,7 @@ def _publish(value, where, problems):
 
 
 def from_state(entries, agent_ids):
-    """The valid companions in the state file. One whose agent is gone (or that is otherwise broken) is left out with
-    a warning, never an error: what an agent did must not be able to break the admin's apply."""
+    """Valid companions from the state file; broken ones are skipped with a warning, never an error."""
     out, taken = [], set()
     for e in entries:
         name = str(e.get('name', '')) if isinstance(e, dict) else ''
@@ -315,7 +300,6 @@ def _auth(raw, problems):
             '[auth] allow_domains works with cloudflare-access and tinyauth (Tailscale: use the tailnet ACL)'
         )
     a['allow_domains'] = sorted({d.lower() for d in domains})
-    # team may stay empty: `agentctl cloudflare setup` reads it from the account and writes it here
     if cf['network'] not in ('private', 'public'):
         problems.append('[auth.cloudflare] network must be "private" (WARP client only) or "public" (sign-in page)')
     if not isinstance(cf['require_warp'], bool):
@@ -342,8 +326,7 @@ def _auth(raw, problems):
 
 
 def resolve(raw, previous=None, state=None):
-    """The validated, defaulted config in the shape of docs/architecture.md (cluster.json) plus agentctl's own keys.
-    Raises Failed listing every problem at once."""
+    """The validated, defaulted config (cluster.json shape plus agentctl's own keys); raises Failed listing every problem."""
     problems = []
     unknown = set(raw) - {
         'cluster',
@@ -411,7 +394,7 @@ def resolve(raw, previous=None, state=None):
     images['registry'] = str(images['registry']).rstrip('/')
     mode = auth['mode']
 
-    local = mode in ('tailscale', 'none')  # reached inside a tailnet or LAN, often by a bare name or an IP
+    local = mode in ('tailscale', 'none')
     c['domain'] = _hostname(c.get('domain'), '[cluster] domain', problems, local=local)
     if mode == 'tailscale':
         c['hub_domain'] = _hostname(c['hub_domain'] or c['domain'], '[cluster] hub_domain', problems, local=True)
@@ -419,7 +402,7 @@ def resolve(raw, previous=None, state=None):
         c['hub_domain'] = _hostname(c['hub_domain'], '[cluster] hub_domain', problems, local=local)
     c['coolify_domain'] = _hostname(c['coolify_domain'], '[cluster] coolify_domain', problems, required=False)
     hosts = [c['domain'], c['coolify_domain'], auth_ta['domain'] if mode == 'tinyauth' else '']
-    if mode != 'tailscale':  # tailscale serves the hub on the same name, on its own port
+    if mode != 'tailscale':
         hosts.append(c['hub_domain'])
     hosts = [h for h in hosts if h]
     if len(set(hosts)) != len(hosts):
@@ -489,7 +472,7 @@ def resolve(raw, previous=None, state=None):
                 'image': str(a.get('image') or ''),
                 'publish': _publish(a.get('publish', {}), f'{where} publish', problems),
                 'path': path,
-                'storage_unit': unit,  # the mounted image this agent's files live on; '' = the host's filesystem
+                'storage_unit': unit,  # '' = the host's filesystem
                 'subnet': '',
                 'pair_host': pair_host,
                 'color': color,
@@ -551,8 +534,6 @@ def resolve(raw, previous=None, state=None):
         )
     names = [x['name'] for x in companions]
     problems += [f'companion {x!r} is defined twice' for x in sorted({x for x in names if names.count(x) > 1})]
-    # The state file is the truth (agents create, change and remove their companions); a [[companions]] entry only
-    # seeds it once, so one its agent removed stays removed.
     state = state or {'companions': [], 'seeded': []}
     live = from_state(state['companions'], seen)
     have, seeded = {c['name'] for c in live}, set(state['seeded'])
@@ -568,8 +549,6 @@ def resolve(raw, previous=None, state=None):
     psi = limits['throttle_io_psi_max']
     if not isinstance(psi, int | float) or not 0 < psi <= 100:
         problems.append('[limits] throttle_io_psi_max must be a percentage')
-    # Secrets live at fixed places under <data>/secrets unless the config points elsewhere (`agentctl secret set`
-    # writes them there).
     secrets = f'{c["data"]}/secrets'
     cloudflare['api_token_file'] = str(cloudflare['api_token_file'] or f'{secrets}/cloudflare-api.token')
     cloudflare['acme_token_file'] = str(cloudflare['acme_token_file'] or cloudflare['api_token_file'])
@@ -631,10 +610,10 @@ def resolve(raw, previous=None, state=None):
         'android': {'enabled': bool(android['enabled']), 'system_image': android['system_image']},
         'backups': {'enabled': backups['enabled'], 'keep_days': backups['keep_days'], 'time': backups['time']},
         'companions': companions,
-        'seed': [c['name'] for c in seeds],  # cluster.toml entries apply records in the state file
+        'seed': [c['name'] for c in seeds],
         'companion_policy': policy,
         'updates': updates,
-        # Below: only agentctl's (file paths, never secrets themselves); left out of cluster.json.
+        # Below: agentctl-only keys (file paths, never secrets), left out of cluster.json.
         'cloudflare': {
             **cloudflare,
             'login_method': str(auth_cf['login_method']),
@@ -657,20 +636,15 @@ def to_json(cfg):
 
 
 def private_network(cfg):
-    """Cloudflare with network = "private": the names exist only for devices on the Cloudflare One (WARP) client,
-    which Gateway sends over the tunnel; there are no public DNS records or public hostnames."""
     return cfg['auth']['mode'] == 'cloudflare-access' and cfg['auth']['cloudflare']['network'] == 'private'
 
 
 def private_https(cfg):
-    """Private network over HTTPS: the edge holds a Let's Encrypt certificate for the private names and the gate
-    signs people in through Access as an OIDC provider. No Gateway TLS decryption, nothing installed on devices."""
     return private_network(cfg) and cfg['auth']['cloudflare']['https']
 
 
 def ports_only(cfg):
-    """Whether people reach everything on published ports (the hub and every agent's T3): a one-person setup that
-    keeps its own network as the way in, so `tailscale serve`, tailnet HTTPS and the edge's ingress aren't used."""
+    """One-person setup reached on published ports, not through tailscale serve or the edge's ingress."""
     agents = cfg['agents']
     return bool(cfg['hub']['publish']) and bool(agents) and all('t3' in a['publish'] for a in agents)
 

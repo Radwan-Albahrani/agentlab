@@ -1,5 +1,4 @@
-"""The hub backend against the example data (fixtures.py) and a fake agent (fake_agent.py).
-Run from hub/: python3 -m unittest discover -s tests"""
+"""Hub backend tests; run from hub/: python3 -m unittest discover -s tests"""
 
 import base64
 import hashlib
@@ -50,7 +49,6 @@ import screens  # noqa: E402
 import store  # noqa: E402
 
 
-# ------------------------------------------------------------------ a throwaway RSA key and Access tokens
 def _prime(bits):
     while True:
         n = secrets.randbits(bits) | (1 << (bits - 1)) | 1
@@ -92,7 +90,6 @@ def token(claims=None, head=None, key=(N, D)):
 
 
 def use_access(mode='cloudflare-access'):
-    """Switch the example cluster's sign-in (cluster.json is re-read on change)."""
     path = f'{ROOT}/cluster.json'
     conf = json.loads(Path(path).read_text())
     conf['auth'].update(mode=mode, cloudflare={'team': 'example', 'audience': 'aud-example'})
@@ -102,7 +99,6 @@ def use_access(mode='cloudflare-access'):
 
 
 def signed(email='admin@example.com', **claims):
-    """The headers a request has after the edge: who the gate let in, and (Cloudflare) the Access token."""
     return {'X-Agentlab-User': email, 'Cf-Access-Jwt-Assertion': token({'email': email, **claims})}
 
 
@@ -159,7 +155,6 @@ class Access(unittest.TestCase):
                 access.viewer(headers)
 
     def test_https_takes_the_gates_proof_instead_of_a_token(self):
-        # private HTTPS: Access adds no token, the gate signs its answer with a key derived from its session key
         path = f'{ROOT}/cluster.json'
         conf = json.loads(Path(path).read_text())
         conf['auth']['cloudflare']['https'] = True
@@ -183,7 +178,7 @@ class Access(unittest.TestCase):
 
         with mock.patch.object(access, 'GATE_KEY', str(key)):
             self.assertEqual(access.viewer(proved()).email, 'sara@example.com')
-            self.assertTrue(access.viewer(signed()).admin)  # plain HTTP still carries Access's token
+            self.assertTrue(access.viewer(signed()).admin)
             for why, headers in {
                 'someone else': proved('admin@example.com', mac_user='sara@example.com'),
                 'expired': proved(exp=int(time.time()) - 1),
@@ -198,13 +193,13 @@ class Access(unittest.TestCase):
     def test_published_port_one_owner(self):
         os.environ['HUB_PUBLISHED_OWNER'] = 'Sara@example.com'
         try:
-            who = access.viewer({})  # no headers: straight to the published port
+            who = access.viewer({})
             self.assertEqual((who.email, who.admin, who.agents), ('sara@example.com', True, {'sara', 'lab'}))
-            with self.assertRaises(access.DeniedError):  # with headers, the normal checks still apply
+            with self.assertRaises(access.DeniedError):
                 access.viewer({'X-Agentlab-User': 'sara@example.com'})
         finally:
             del os.environ['HUB_PUBLISHED_OWNER']
-        with self.assertRaises(access.DeniedError):  # never inferred without the setting
+        with self.assertRaises(access.DeniedError):
             access.viewer({})
 
     def test_none_needs_the_switch(self):
@@ -247,23 +242,20 @@ class Access(unittest.TestCase):
 
 
 def as_person(email):
-    """Run the next calls as this person (what hub.py does per request)."""
     scope.use(scope.of(email))
 
 
 class Scope(unittest.TestCase):
-    """A person sees their own agent and companions only; nothing of anyone else's is sent or reachable."""
-
     def tearDown(self):
         scope.use(scope.ADMIN)
 
     def test_screens_leave_others_out(self):
         as_person('sara@example.com')
         nav = screens.nav()
-        self.assertEqual([a['name'] for a in nav['agents']], ['sara', 'lab'])  # both of hers
+        self.assertEqual([a['name'] for a in nav['agents']], ['sara', 'lab'])
         self.assertEqual([c['name'] for c in nav['agents'][0]['companions']], ['helper'])
-        self.assertEqual([s['key'] for s in nav['system']], ['storage'])  # cluster screens are for admins
-        self.assertEqual(nav['colors'], {'sara': 'green'})  # chosen colours, only for agents this person sees
+        self.assertEqual([s['key'] for s in nav['system']], ['storage'])
+        self.assertEqual(nav['colors'], {'sara': 'green'})
         self.assertEqual([a['name'] for a in screens.agents('')['agents']], ['sara', 'lab'])
         seen = json.dumps([screens.overview(), screens.storage(), nav])
         for other in ('scout', 'Scout', 'agent-admin', 'agentlab-core', 'admin@example.com', '"admin"'):
@@ -322,7 +314,7 @@ class Scope(unittest.TestCase):
                 items = {s['name']: s for s in screens.secrets()['items']}
                 extra = items['extra/jellyfin-api-key.txt']
                 self.assertEqual((extra['group'], extra['label']), ('Homelab', 'Jellyfin API key'))
-                self.assertEqual(items['extra/map.json']['group'], 'Homelab')  # the map itself is a file there too
+                self.assertEqual(items['extra/map.json']['group'], 'Homelab')
                 self.assertTrue(sec.save('extra/jellyfin-api-key.txt', 'k2'))
                 self.assertEqual(Path(d, 'jellyfin-api-key.txt').read_text(), 'k2')
                 self.assertEqual(len(sec.secret_versions('extra/jellyfin-api-key.txt')), 1)
@@ -332,7 +324,6 @@ class Scope(unittest.TestCase):
                 for table, path in ((routes.GET, '/api/secrets'), (routes.POST, '/api/secrets/save')):
                     with self.subTest(path), self.assertRaises(routes.ForbiddenError):
                         routes.resolve(table, path)
-                # A companion owner's secret calls can only name their own companion's folder, never extra/.
                 with self.assertRaises((ValueError, routes.ForbiddenError)):
                     actions.companion('helper', 'secret', {'file': '../../extra/jellyfin-api-key.txt', 'value': 'x'})
 
@@ -353,7 +344,7 @@ class Scope(unittest.TestCase):
                 json.dumps(handler(groups, {}, ''))
         files = {s['file']: s['set'] for s in screens.companion_secrets('helper')['items']}
         self.assertTrue(files['owner.txt'])
-        self.assertFalse(files['bot-token.txt'])  # listed so it can be set, value never sent
+        self.assertFalse(files['bot-token.txt'])
 
     def test_onboarding_and_pairing(self):
         as_person('sara@example.com')
@@ -421,7 +412,7 @@ class Screens(unittest.TestCase):
             card['links']['files'], 'https://agents.example.com/_agentlab/view/admin?next=/_agentlab/files/'
         )
         self.assertIn('/_agentlab/view/admin?next=/_agentlab/accounts/browser', card['links']['browser'])
-        self.assertIsNone(screens.agents('')['agents'][1]['links']['browser'])  # sara has no browser open
+        self.assertIsNone(screens.agents('')['agents'][1]['links']['browser'])
 
     def test_published_tools_link_straight_to_their_ports(self):
         ports = {'t3': 7101, 'terminal': 7104, 'files': 7105, 'browser': 7103}
@@ -438,7 +429,7 @@ class Screens(unittest.TestCase):
         self.assertTrue(links['browser'].startswith('http://homebox.tail.ts.net:7103/vnc.html'))
         self.assertEqual(links['accounts'], '/agents/admin/accounts')
         self.assertTrue(other['chat'].startswith('https://agents.example.com/_agentlab/view/sara'))
-        for odd in ('[::1]:7190', 'a b', 'x/y'):  # never put an odd Host header into a link
+        for odd in ('[::1]:7190', 'a b', 'x/y'):
             cluster.use_host(odd)
             self.assertEqual(cluster.request_host(), '')
         cluster.use_host('')
@@ -449,10 +440,10 @@ class Screens(unittest.TestCase):
         self.assertEqual(domains.domain_of('agentlab-agent-nobody'), (None, None))
         services = screens.services()
         self.assertEqual([d['profile'] for d in services['domains']], ['admin', 'sara', 'lab'])
-        self.assertEqual([s['id'] for s in services['other']], ['agentlab-core', 'media'])  # not the stray one
+        self.assertEqual([s['id'] for s in services['other']], ['agentlab-core', 'media'])
         self.assertIn('media-jellyfin-1', store.watch.container_names())
         self.assertNotIn('stray-1', store.watch.container_names())
-        self.assertNotIn('media', [s['id'] for s in store.stacks.stacks()])  # no config or deploy for it
+        self.assertNotIn('media', [s['id'] for s in store.stacks.stacks()])
 
     def test_storage_per_person_disk(self):
         people = {p['email']: p for p in screens.storage()['people']}
@@ -490,7 +481,7 @@ class Screens(unittest.TestCase):
         t = screens.companion('scout')['templateUpdate']
         self.assertEqual((t['state'], t['from'], t['to']), ('conflict', 'a1b2c3d', 'e4f5a6b'))
         self.assertIn('bot/prompts.py', t['detail'])
-        self.assertEqual(screens.companion('helper')['templateUpdate'], {})  # never checked yet
+        self.assertEqual(screens.companion('helper')['templateUpdate'], {})
 
     def test_pulls_and_polls(self):
         c = screens.companion('scout')

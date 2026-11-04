@@ -1,6 +1,3 @@
-"""The guided setup (answers from flags, questions or defaults; the config it writes; the order it runs things and
-where it stops for a person), `agentctl secret set`, and Cloudflare finding the account, zone and team itself."""
-
 import contextlib
 import io
 import os
@@ -48,7 +45,7 @@ class Answers(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual((a['reach'], a['domain'], [i for _, i in a['agents']]), ('me', 'box', ['main']))
         cfg = resolve(setup.toml_text(a), tempfile.gettempdir())
-        self.assertEqual(cfg['auth']['mode'], 'none')  # no Tailscale here: the LAN decides who gets in
+        self.assertEqual(cfg['auth']['mode'], 'none')
         self.assertEqual(
             cfg['agents'][0]['publish'],
             {'t3': 7101, 'accounts': 7102, 'browser': 7103, 'terminal': 7104, 'files': 7105},
@@ -65,7 +62,7 @@ class Answers(unittest.TestCase):
 
     def test_shared_setups_say_what_is_missing(self):
         _, missing = self.ask({'reach': 'cloudflare'})
-        self.assertEqual(missing, ['--admin', '--domain', '--people'])  # people default to the admin
+        self.assertEqual(missing, ['--admin', '--domain', '--people'])
 
     def test_cloudflare_answers_make_a_valid_config(self):
         a, missing = self.ask(
@@ -81,7 +78,7 @@ class Answers(unittest.TestCase):
         cfg = resolve(setup.toml_text(a), tempfile.gettempdir())
         self.assertEqual(cfg['auth']['mode'], 'cloudflare-access')
         self.assertEqual(cfg['hub_domain'], 'agents-hub.example.com')
-        self.assertEqual(cfg['storage']['mode'], 'per-person')  # several people: one can't fill the disk for all
+        self.assertEqual(cfg['storage']['mode'], 'per-person')
         self.assertEqual([x['id'] for x in cfg['agents']], ['boss', 'sara', 'sara-2'])
         self.assertEqual(cfg['auth']['allow_domains'], ['example.com'])
         self.assertEqual(cfg['deploy'], 'compose')
@@ -114,7 +111,7 @@ class Answers(unittest.TestCase):
             (a['reach'], a['domain'], a['hub_domain']), ('cloudflare', 'agents.example.com', 'agents-hub.example.com')
         )
         self.assertEqual([i for _, i in a['agents']], ['boss', 'sara'])
-        self.assertEqual(a['network'], 'private')  # the default: only the Cloudflare One client reaches it
+        self.assertEqual(a['network'], 'private')
 
     def test_a_bad_reply_is_asked_again(self):
         replies = ['1', 'nope', 'me@example.com', '', '']
@@ -131,8 +128,6 @@ class Answers(unittest.TestCase):
 
 
 class Run(unittest.TestCase):
-    """setup() end to end with every heavy step faked."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -175,7 +170,7 @@ class Run(unittest.TestCase):
         with open(f'{self.tmp.name}/secrets/cloudflare-api.token', 'w') as f:
             f.write('t')
         self.ran.clear()
-        self.run_setup({})  # a re-run keeps the config it wrote and picks up from there
+        self.run_setup({})
         self.assertEqual(self.ran, ['init', 'install', 'cloudflare', 'apply'])
 
     def test_missing_answers_without_a_terminal(self):
@@ -281,12 +276,10 @@ agent = "b"
 
 
 class FakeAccount:
-    """A token that sees one zone (example.com) in one account, with Zero Trust team 'acme'."""
-
     def __init__(self, idps=None, org_status=0):
         self.calls = []
         self.idps = idps if idps is not None else [{'id': 'o1', 'name': 'One-time PIN'}]
-        self.org_status = org_status  # an HTTP status the organization read fails with (0 = it works)
+        self.org_status = org_status  # HTTP status the organization read fails with (0 = it works)
 
     def call(self, method, path, body=None):
         self.calls.append((method, path))
@@ -382,8 +375,6 @@ if __name__ == '__main__':
 
 
 class FreshCode(unittest.TestCase):
-    """Setup is what people re-run after a fix, so it pulls the latest agentlab first and re-runs on it."""
-
     def run_setup(self, *extra, pull=('aaa', 'aaa')):
         from agentlab import main, update  # noqa: PLC0415 - main pulls in every command
 
@@ -423,8 +414,6 @@ class FreshCode(unittest.TestCase):
 
 
 class TunnelFirst(unittest.TestCase):
-    """The cloudflared step never stops for a person when agentctl can create the tunnel itself."""
-
     def setUp(self):
         from agentlab import install  # noqa: PLC0415
 

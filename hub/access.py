@@ -1,14 +1,4 @@
-"""Who is asking. The edge (pass 2) names the signed-in person in X-Agentlab-User; with Cloudflare Access the hub also
-verifies the Access JWT itself, so a routing mistake alone can't make someone else.
-
-Private HTTPS has no Access JWT on the request (Access can't add one without TLS decryption; the gate signs people in
-itself), so there the gate's own signature stands in for it: X-Agentlab-Proof, an HMAC over the gate's answer with a
-key derived from the gate's session key, valid for two minutes. Only the gate (and root on the host) holds that key;
-the hub reads it from the secrets folder it already mounts. Either check passing is enough.
-
-RS256 only, checked against the team's published keys (cached, re-fetched once for an unknown key id), with the
-Access application's audience, the team issuer, and the token's lifetime. Standard library only: the signature
-check is plain RSA (PKCS#1 v1.5 over SHA-256)."""
+"""Who is asking: the edge's X-Agentlab-User, backed by the Access JWT or the gate's HMAC proof (X-Agentlab-Proof)."""
 
 import base64
 import hashlib
@@ -23,7 +13,7 @@ import cluster
 import scope
 
 CERTS_URL = os.environ.get('HUB_ACCESS_CERTS_URL', 'https://{team}.cloudflareaccess.com/cdn-cgi/access/certs')
-GATE_KEY = os.environ.get('HUB_GATE_KEY', '/secrets/gate/session.key')  # private HTTPS: see proof_ok
+GATE_KEY = os.environ.get('HUB_GATE_KEY', '/secrets/gate/session.key')
 KEYS_FOR = 3600  # s before the team's keys are fetched again
 LEEWAY = 60  # s of clock difference allowed on exp / nbf
 MODES = ('cloudflare-access', 'tailscale', 'tinyauth')
@@ -127,7 +117,6 @@ def proof_ok(headers, user, now=None):
 
 
 def token_of(headers):
-    """The JWT Access adds as a header, or its cookie (browsers send it on every request)."""
     token = headers.get('Cf-Access-Jwt-Assertion')
     if token:
         return token
@@ -139,21 +128,18 @@ def token_of(headers):
 
 
 def viewer(headers):
-    """Who is asking (scope.Viewer), or raises DeniedError. The edge's second pass sets X-Agentlab-User after the
-    gate checked the sign-in, and the first pass strips any client copy, so the header is trusted; with Cloudflare
-    Access the token is verified here as well and must name the same person."""
+    """Who is asking (scope.Viewer), or raises DeniedError; the edge strips client copies of X-Agentlab-User."""
     conf = cluster.auth()
     mode = conf.get('mode')
     user = (headers.get('X-Agentlab-User') or '').strip().lower()
     published = os.environ.get('HUB_PUBLISHED_OWNER', '').strip().lower()
     if not user and published:
-        # A one-person cluster with the hub on a host port (tailscale / none): requests come straight here, past the
-        # edge, so they carry no identity headers. agentctl sets this only then; the one owner is also the admin.
+        # Hub on a host port (one-person cluster): no edge, so no identity headers; agentctl sets this only then.
         return scope.of(published, admin=True)
     if mode == 'none':
         if os.environ.get('HUB_ALLOW_NONE') != '1':
             raise DeniedError('auth.mode is "none" but HUB_ALLOW_NONE is not set')
-        return scope.of(user) if user else scope.ADMIN  # tests act as someone by sending the header
+        return scope.of(user) if user else scope.ADMIN
     if mode not in MODES:
         raise DeniedError('sign-in is not configured')
     if not user:
@@ -161,7 +147,7 @@ def viewer(headers):
     if mode == 'cloudflare-access':
         cf = conf.get('cloudflare') or {}
         if cf.get('https') is True and proof_ok(headers, user):
-            pass  # the gate signed this answer: an HTTPS sign-in, which carries no Access JWT
+            pass  # gate-signed HTTPS sign-in: carries no Access JWT
         elif not cf.get('team') or not cf.get('audience'):
             raise DeniedError('Cloudflare Access is not configured')
         else:

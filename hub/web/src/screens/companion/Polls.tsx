@@ -44,7 +44,6 @@ const CHOICES: { value: Choice; label: string; icon: string }[] = [
   { value: 'multiple', label: 'Multiple choice', icon: 'multiple' },
 ];
 
-/** The polls a companion runs: one summary line each, opening to live results, voters and the owner's controls. */
 export function Polls({ name, polls }: { name: string; polls: Poll[] }) {
   if (!polls.length) return null;
   return (
@@ -118,7 +117,6 @@ function Results({ p }: { p: Poll }) {
   );
 }
 
-/** Choice as an icon toggle, the closing time saved with Enter, Slack and an off button: no words needed. */
 function Controls({ name, p }: { name: string; p: Poll }) {
   const act = useAct();
   const [closes, setCloses] = useState(toLocalInput(p.closes));

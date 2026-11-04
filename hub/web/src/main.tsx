@@ -11,7 +11,6 @@ import './theme/global.css';
 
 applyScheme();
 
-// Every screen keeps itself current: data refreshes in the background every 15 s and when the tab comes back.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

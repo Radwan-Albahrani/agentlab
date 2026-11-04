@@ -16,7 +16,7 @@ const HINT = {
   new: 'Saved to the secrets folder (companions/<name>/<file> for a companion). Map it in hub/secrets-map.json to have it applied anywhere.',
 };
 
-/** View, edit or create a secret. The value is fetched when the dialog opens and never cached. */
+/** The value is fetched when the dialog opens and never cached. */
 export function SecretDialog({ opened, onClose }: { opened: Opened | null; onClose: () => void }) {
   const name = opened && opened.mode !== 'new' ? opened.name : null;
   const { data, error } = useSecretValue(name);

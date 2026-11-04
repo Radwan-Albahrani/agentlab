@@ -1,6 +1,5 @@
 import type { Nav } from '../api/types';
 
-/** What leads a menu entry: an icon, an agent's badge, or (for a companion) a bot in its agent's colour. */
 type Mark = { icon: string } | { agent: string } | { companionOf: string };
 
 export interface MenuItem {
@@ -9,7 +8,7 @@ export interface MenuItem {
   short?: string; // the phone bar's label
   mark: Mark;
   exact?: boolean;
-  count?: number; // something needs you here
+  count?: number;
   dot?: boolean; // up / down
   note?: string;
 }
@@ -28,7 +27,6 @@ const SYSTEM_ICONS: Record<string, string> = {
   notifications: 'bell',
 };
 
-/** The menu the server allows right now: agents with their companions nested under them, then system screens. */
 export function buildMenu(nav: Nav): Menu {
   const agents: MenuItem[] = [];
   if (nav.allAgents) agents.push({ to: '/agents', label: 'All agents', short: 'Agents', exact: true, mark: { icon: 'agents' } });

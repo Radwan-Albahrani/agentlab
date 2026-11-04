@@ -16,7 +16,6 @@ import { SecretRow } from './SecretRow';
 import { useSecretFilter } from './useSecretFilter';
 import { VersionsDialog } from './VersionsDialog';
 
-/** The cluster's own secrets first, then each extra folder ([hub] extra_secrets) as its own section. */
 function groups(shown: Secret[], all: Secret[]): [string, Secret[], number][] {
   const names = [...new Set(['', ...all.map((s) => s.group)])];
   return names.map((g) => [g, shown.filter((s) => s.group === g), all.filter((s) => s.group === g).length]);

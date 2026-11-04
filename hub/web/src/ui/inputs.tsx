@@ -23,7 +23,7 @@ const styles = stylex.create({
   },
   grow: { flexGrow: '1', flexShrink: '1', flexBasis: '160px' },
   short: { flexGrow: '0', flexShrink: '1', flexBasis: '180px' },
-  datetime: { flexGrow: '0', flexShrink: '1', flexBasis: '250px' }, // room for the date, time and AM / PM
+  datetime: { flexGrow: '0', flexShrink: '1', flexBasis: '250px' },
   number: { width: 84, flex: 'none' },
   mono: { fontFamily: font.mono, fontSize: text.sm },
   area: { fontFamily: font.mono, fontSize: text.sm, minHeight: 150, resize: 'vertical' },
@@ -55,12 +55,12 @@ interface InputProps {
   min?: number;
   max?: number;
   title?: string;
-  onEnter?: () => unknown; // Enter saves, without a form (date pickers don't submit one)
+  onEnter?: () => unknown; // date pickers don't submit a form
 }
 
 const typing = (el: Element | null) => !!el && (el.matches('input, textarea, select') || (el as HTMLElement).isContentEditable);
 
-/** A search field: "/" focuses it from anywhere on the page, Escape clears it. */
+/** "/" focuses it from anywhere; Escape clears it. */
 export function SearchInput({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -137,7 +137,7 @@ export function TextArea({
   placeholder?: string;
   readOnly?: boolean;
   editor?: boolean;
-  prose?: boolean; // plain writing, not code
+  prose?: boolean;
   onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
   areaRef?: React.Ref<HTMLTextAreaElement>;
 }) {
@@ -156,7 +156,6 @@ export function TextArea({
   );
 }
 
-/** A labelled field inside a dialog or form. */
 export const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   <label {...stylex.props(styles.field)}>
     {label}
@@ -164,7 +163,6 @@ export const Field = ({ label, children }: { label: string; children: ReactNode 
   </label>
 );
 
-/** Inputs and a submit button on one line; Enter submits. */
 export function InlineForm({ onSubmit, children }: { onSubmit: () => unknown; children: ReactNode }) {
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -177,7 +175,7 @@ export function InlineForm({ onSubmit, children }: { onSubmit: () => unknown; ch
   );
 }
 
-/** One text field with its button: sends the value, then clears it unless `keep`. */
+/** Clears the value after sending unless `keep`. */
 export function SubmitField({
   placeholder,
   button,

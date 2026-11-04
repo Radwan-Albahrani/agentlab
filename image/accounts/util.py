@@ -24,8 +24,7 @@ PATHS = {
 
 
 def published(app):
-    """The host port app is published on (one-person setups reached over their own network), or ''.
-    AGENTLAB_PUBLISHED is 't3=7101,accounts=7102,...'; the hub's is AGENTLAB_PUBLISHED_HUB."""
+    """The host port app is published on, or ''."""
     if app == 'hub':
         port = os.environ.get('AGENTLAB_PUBLISHED_HUB', '')
     else:
@@ -35,17 +34,14 @@ def published(app):
 
 
 def hostname(host):
-    """The bare host name of a Host header ('box:7102' -> 'box'); '' for anything else (IPv6 included)."""
+    """Bare host name of a Host header ('box:7102' -> 'box'); '' for anything else, IPv6 included."""
     name = (host or '').strip().lower().rsplit(':', 1)[0]
     ok = name and all(c.isalnum() or c in '.-' for c in name) and not name.startswith(('.', '-'))
     return name if ok else ''
 
 
 def public_url(app, host='', proto='https'):
-    """The public address of app (t3, accounts, browser, terminal, hub) as people reach it through the edge: everyone's
-    own agent lives on the cluster domain (AGENTLAB_DOMAIN, the edge picks the agent by who signed in), the hub on
-    AGENTLAB_HUB_DOMAIN. Without the env, the host the page was opened on stands in for the domain; '' if unknown.
-    A published app is http://<the host the page was opened on>:<its port> instead (the terminal keeps its path)."""
+    """The address people reach app at (via the edge, or a published port); '' if unknown."""
     port, name = published(app), hostname(host)
     if port and name:
         return f'http://{name}:{port}' + (PATHS[app] if app == 'terminal' else '')
@@ -61,7 +57,7 @@ def public_url(app, host='', proto='https'):
 
 def run(cmd, timeout=20):
     """Run in a login shell -> (exit code, combined output); 124 on timeout."""
-    # Own process group so a timeout kills the CLI too (killing only bash left orphans piling up).
+    # Own process group so a timeout kills the CLI too, not just bash.
     p = subprocess.Popen(
         ['bash', '-lc', cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
     )
@@ -97,7 +93,7 @@ def screen(flow):
 
 
 def start_session(flow, cmd):
-    """Run cmd in a fresh tmux session; it stays open after finishing so the page can read the result."""
+    """Run cmd in a fresh tmux session that stays open after it finishes, so the page can read the result."""
     tmux('kill-session', '-t', session(flow))
     tmux(
         'new-session',
@@ -124,7 +120,7 @@ def type_into(flow, text):
 
 
 def open_callback(url):
-    """A sign-in's redirect to localhost (unreachable from the owner's browser) is opened inside the container."""
+    """Open a sign-in's localhost redirect inside the container (the owner's browser can't reach it)."""
     if not url.startswith('http'):
         url = 'http://' + url
     subprocess.run(['curl', '-s', '-o', '/dev/null', '--max-time', '20', url], capture_output=True, check=False)
@@ -143,7 +139,6 @@ def http(url, headers=None, data=None, timeout=15):
 
 
 def browser_up():
-    """The live browser view (noVNC) runs only while an agent has a browser open."""
     try:
         socket.create_connection(('127.0.0.1', NOVNC_PORT), timeout=1).close()
     except OSError:
@@ -152,7 +147,7 @@ def browser_up():
 
 
 def flash(msg=None):
-    """Set (msg) or take (no argument) the message shown once at the top of the page."""
+    """Set (msg) or take (no argument) the one-shot message shown atop the page."""
     if msg is not None:
         with open(FLASH, 'w') as f:
             f.write(msg)

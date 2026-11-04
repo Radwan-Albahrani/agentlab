@@ -22,17 +22,14 @@ FLOWS = {
         'logout': 'codex logout',
         'hint': 'Open the link, sign in with ChatGPT and enter the code shown here.',
     },
-    # GH_PROMPT_DISABLED skips gh's questions; git credentials are wired up after sign-in.
     'github': {
         'name': 'GitHub',
         'login': 'GH_PROMPT_DISABLED=1 gh auth login --hostname github.com --git-protocol https '
         '--web --scopes workflow --skip-ssh-key --insecure-storage',
         'logout': 'gh auth logout --hostname github.com </dev/null',
         'hint': 'Open the link and enter the code. This signs in git, the gh CLI and the GitHub MCP server.',
-        'link': 'https://github.com/login/device',  # gh also prints announcement links before it
+        'link': 'https://github.com/login/device',  # gh prints other links before it
     },
-    # EAS builds, submits and updates Expo apps. --device: a link and a code, like GitHub; when the browser shows a
-    # number, eas lists the choices and the person picks the same one with the arrow keys.
     'expo': {
         'name': 'Expo',
         'login': 'eas login --device',
@@ -43,7 +40,7 @@ FLOWS = {
 }
 AI_FLOWS = ('claude', 'codex')
 TOOL_FLOWS = ('expo',)
-CODE_FLOWS = ('codex', 'github', 'expo')  # sign-ins that show a device code to type on the provider's page
+CODE_FLOWS = ('codex', 'github', 'expo')
 CODEX_BROWSER_LOGIN = 'codex login'  # for workspaces with device-code login turned off
 CODEX_CALLBACK_RE = re.compile(r'^(https?://)?(localhost|127\.0\.0\.1):1455/\S+$')  # Safari drops "http://"
 URL_RE = re.compile(r'https://\S+')
@@ -51,9 +48,9 @@ DEVICE_CODE_RE = re.compile(r'\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b')
 KEYS = {'Enter': 'Enter', '↑': 'Up', '↓': 'Down', 'Esc': 'Escape'}
 GH_WIRED = '/tmp/gh-post-done'
 
-# The last known status, refreshed in the background: under load `codex login status` can take minutes.
+# Cached and refreshed in the background: `codex login status` can take minutes under load.
 STATUS_TTL = 60
-_status = {}  # flow -> (at, signed_in, detail)
+_status = {}
 _busy = set()
 _lock = threading.Lock()
 
@@ -128,7 +125,6 @@ def after_github_login():
 
 
 def state(flow):
-    """Everything the page shows for one sign-in, including a live flow's link, code and terminal."""
     signed_in, detail = status(flow)
     scr = screen(flow) if active(flow) else ''
     urls = [u.rstrip('.,)') for u in URL_RE.findall(scr)]
@@ -136,7 +132,7 @@ def state(flow):
     done = signed_in and (
         bool(re.search(r'success|logged in|signed in|authentication complete', scr, re.I)) or flow == 'github'
     )
-    if flow == 'github' and signed_in and not os.path.exists(GH_WIRED):  # once per container run, however it signed in
+    if flow == 'github' and signed_in and not os.path.exists(GH_WIRED):  # once per container run
         open(GH_WIRED, 'w').close()
         if 'github' not in connectors.load() or not run('git config --global --get-regexp credential')[1]:
             after_github_login()

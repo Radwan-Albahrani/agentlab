@@ -1,5 +1,4 @@
-"""The agent behind the companion: actions go through the agent's Accounts-app bridge (`t3 thread ...` over HTTP, locked
-with a shared key); progress is read straight from the agent's T3 database, read-only."""
+"""The agent's T3: actions via the Accounts bridge over HTTP, progress read from its database (read-only)."""
 
 import json
 import sqlite3
@@ -49,10 +48,8 @@ def query(sql, args=(), one=False):
         con.close()
 
 
-# ---------------------------------------------------------------- actions
 def start_thread(project, title, message):
-    """Start a chat. T3 can be slow to answer `thread start` (busy event loop) even though the chat was created,
-    so a missing answer is followed by a look for the chat by its title. Returns (thread_id, error)."""
+    """Start a chat -> (thread_id, error); on no answer, looks the chat up by title (T3 may have created it)."""
     asked_at = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S')
     res = bridge('/api/t3/start', {'project': project, 'title': title, 'message': message})
     tid = (res.get('result') or {}).get('threadId')
@@ -78,7 +75,7 @@ def send(thread, message):
 
 
 def answer(thread, message):
-    """Answer the chat's open question box (instead of queueing a message behind it)."""
+    """Answer the chat's open question box."""
     return bridge('/api/t3/respond', {'thread': thread, 'message': message})
 
 
@@ -87,20 +84,18 @@ def stop(thread):
 
 
 def triage(prompt):
-    """One quick model call on the agent's own provider (whatever it is signed in to)."""
+    """One quick model call on the agent's own provider."""
     return bridge('/api/t3/triage', {'message': prompt})
 
 
-# ---------------------------------------------------------------- reading progress
 def snapshot(tid, since_iso):
-    """Everything the Slack thread needs about a chat (and its workers) right now."""
+    """A chat's current state: runs, new answers, pending questions, workers, PRs."""
     with db() as con:
         q = con.execute
         open_run = q(
             'select 1 from orchestration_v2_projection_runs where thread_id = ? and completed_at is null', (tid,)
         ).fetchone()
-        # the run that ENDED last decides the outcome: a message sent while a run is busy gets folded into
-        # that run and its own run is marked cancelled (earlier), so "newest started" would say "stopped"
+        # by completion, not start: a message sent mid-run leaves its own run cancelled
         last_run = q(
             """select status, completed_at from orchestration_v2_projection_runs where thread_id = ?
                         order by completed_at is null desc, completed_at desc limit 1""",
@@ -137,7 +132,7 @@ def snapshot(tid, since_iso):
         ).fetchall()
         row = q('select payload_json from orchestration_v2_projection_threads where thread_id = ?', (tid,)).fetchone()
         prs = list(json.loads(row[0]).get('pullRequests') or []) if row else []
-        for w_tid, _, _ in workers:  # PRs opened by its workers count too
+        for w_tid, _, _ in workers:
             wr = q(
                 'select payload_json from orchestration_v2_projection_threads where thread_id = ?', (w_tid,)
             ).fetchone()
@@ -158,7 +153,7 @@ def snapshot(tid, since_iso):
 
 
 def busy(tid):
-    s = snapshot(tid, '9999')  # no messages needed, just the state
+    s = snapshot(tid, '9999')  # skip messages
     return s['running'] or any(r for _, _, r in s['workers'])
 
 
@@ -207,7 +202,7 @@ def waiting_question(tid):
 
 
 def run_error(tid):
-    """The text of the chat's latest error item (T3 keeps provider failures as an `error` turn item)."""
+    """The chat's latest `error` turn item."""
     row = query(
         """select payload_json from orchestration_v2_projection_turn_items where thread_id = ?
                    and type = 'error' order by ordinal desc limit 1""",

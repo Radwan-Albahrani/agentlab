@@ -1,13 +1,10 @@
-# One image for every agent. Fast-moving CLIs (Claude Code, Codex, T3, ...) are installed into the agent's home by the
-# entrypoint, so this image rarely needs rebuilding. Build: image/build.sh
 # Node >= 24.22.1 carries the CA list without the distrusted emSign root (see the CA step below).
 FROM node:26.13.0-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TTYD_VERSION=1.7.7
 
-# Base and dev tools, gh, the browser stack (Xvfb + localhost-only VNC + noVNC, Google Chrome) and the libraries the
-# Android emulator needs at run time (the SDK itself is shared from the host, see android-emulator).
+# Base and dev tools, gh, the browser stack, and the Android emulator's runtime libraries (SDK comes from the host).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git tmux jq ripgrep curl ca-certificates gnupg python3 python3-venv supervisor \
@@ -29,12 +26,7 @@ RUN apt-get update \
  && curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
  && chmod 755 /usr/local/bin/ttyd
 
-# Each agent has its own Docker engine, so the container stays unprivileged and can't see the host's Docker:
-#  - sysbox: a normal dockerd as root (agent-dockerd-root, via one sudo rule). Sysbox gives each container a fixed
-#    65536-id user namespace, too small to nest rootless Docker in, and container root is already an unprivileged
-#    host user there. The engine socket is root:docker 0660 and the agent is in group docker.
-#  - unconfined (WSL, where Sysbox can't run): rootless Docker; the compose file turns off seccomp/AppArmor and
-#    passes /dev/fuse and /dev/net/tun, which its user namespaces need.
+# Per-agent Docker engine: root via sudo under Sysbox, rootless when unconfined (see agent-dockerd).
 RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
  && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
       > /etc/apt/sources.list.d/docker.list \
@@ -52,9 +44,7 @@ RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/* \
  && sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt$|!mozilla/emSign_ECC_Root_CA_-_G3.crt|' /etc/ca-certificates.conf \
  && update-ca-certificates --fresh >/dev/null
 
-# The agent user, its rootless-Docker id ranges, Docker group and sudo rule (sysbox), and runtime dir; Homebrew is
-# installed into /home/linuxbrew by the entrypoint. Every bash loads the agent env: login shells via profile.d,
-# interactive via bash.bashrc, others BASH_ENV.
+# Agent user, rootless-Docker id ranges, docker group, sudo rule, runtime dir; interactive bash loads load-env.sh.
 RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
  && install -d -o agent -g agent /workspace /home/linuxbrew /usr/local/lib/agent-shims \
  && install -d -m 755 /etc/agent /opt/android-sdk \
@@ -85,15 +75,14 @@ RUN chmod -R u=rwX,go=rX /opt/accounts /usr/local/lib/agent-throttle /etc/agent/
 USER agent
 ENV HOME=/home/agent \
     DISPLAY=:99 \
-    # non-interactive bash (agents' commands) loads the env vars set on the Accounts page
     BASH_ENV=/etc/agent/load-env.sh \
     EDITOR=nano \
     VISUAL=nano \
     XDG_RUNTIME_DIR=/run/user/1000 \
     DOCKER_HOST=unix:///run/user/1000/docker.sock \
-    # docker.sock is the on-demand proxy; Ryuk (Testcontainers' cleaner) mounts the engine's own socket
+    # Ryuk must mount the engine's own socket, not the on-demand proxy
     TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/dockerd.sock \
-    # the agent's engine publishes container ports on this container's localhost, rootless or not
+    # the engine publishes container ports on this container's localhost
     TESTCONTAINERS_HOST_OVERRIDE=localhost \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     ANDROID_SDK_ROOT=/opt/android-sdk \

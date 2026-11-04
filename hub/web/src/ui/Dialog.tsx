@@ -34,7 +34,6 @@ const styles = stylex.create({
   actions: { display: 'flex', justifyContent: 'flex-end', gap: space.sm, flexWrap: 'wrap', alignItems: 'center' },
 });
 
-/** A modal: open while `open`; Escape, the backdrop or a Close button call onClose. */
 export function Dialog({
   open,
   onClose,
@@ -69,7 +68,6 @@ export function Dialog({
   );
 }
 
-/** "Are you sure?" with Cancel / Continue; answers through onAnswer. */
 export function ConfirmDialog({ text, onAnswer }: { text: string | null; onAnswer: (ok: boolean) => void }) {
   return (
     <AlertDialog.Root
@@ -104,5 +102,4 @@ export function ConfirmDialog({ text, onAnswer }: { text: string | null; onAnswe
   );
 }
 
-/** The buttons along a dialog's bottom edge. */
 export const DialogActions = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.actions)}>{children}</div>;

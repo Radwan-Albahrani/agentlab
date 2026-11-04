@@ -83,7 +83,6 @@ function ConfigsView({ d }: { d: Data }) {
   );
 }
 
-/** An agent alone is one line with its Edit button; with companions, each stack gets its own line. */
 function DomainConfigs({ profile, stacks }: { profile: string; stacks: ConfigRow[] }) {
   const [only] = stacks;
   if (stacks.length === 1 && only)
@@ -137,7 +136,7 @@ export function ConfigEdit() {
   );
 }
 
-/** A rendered compose file, read-only: agentctl writes it from cluster.toml, so a change goes there. */
+/** Read-only: agentctl renders it from cluster.toml. */
 function Viewer({ d }: { d: ConfigFile }) {
   const act = useAct();
   const { confirm } = useFeedback();

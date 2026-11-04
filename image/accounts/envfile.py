@@ -1,5 +1,4 @@
-"""The owner's environment variables for this agent. Sourced by every agent bash via /etc/agent/load-env.sh,
-so a change applies to the next command."""
+"""The owner's env vars for this agent, sourced by every agent bash via /etc/agent/load-env.sh."""
 
 import os
 import re
@@ -60,7 +59,7 @@ def save(env):
 
 
 def check(key):
-    """'' if the name may be set here, else why not."""
+    """-> '' if the name may be set, else why not."""
     if not KEY_RE.match(key):
         return f'"{key}" is not a valid name (letters, digits, underscore; not starting with a digit).'
     if key.upper() in PROTECTED:
@@ -69,7 +68,7 @@ def check(key):
 
 
 def parse(text):
-    """KEY=value lines from a pasted .env (comments, `export`, quotes allowed) -> (dict, errors)."""
+    """Pasted .env text -> (dict, errors)."""
     out, errors = {}, []
     for raw in text.splitlines():
         line = raw.strip()
@@ -94,13 +93,13 @@ def masked():
 
 
 def apply(action, body):
-    """set {key, value} / delete {key} / import {text} -> (ok, errors, count). A rejected `set` changes nothing."""
+    """set {key, value} / delete {key} / import {text} -> (ok, errors, count)."""
     env = load()
     key = str(body.get('key') or '').strip()
     if action == 'set':
         if err := check(key):
             return False, [err], len(env)
-        env[key] = str(body.get('value') or '')  # kept exactly as typed
+        env[key] = str(body.get('value') or '')
         errors = []
     elif action == 'delete':
         env.pop(key, None)

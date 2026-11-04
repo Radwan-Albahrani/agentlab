@@ -1,5 +1,3 @@
-"""Which Docker engine an agent gets: root dockerd through one sudo rule under Sysbox, rootless otherwise."""
-
 import os
 import re
 import subprocess

@@ -1,5 +1,4 @@
-"""Example data for the hub's tests and its throwaway instance: a two-agent cluster with one companion, as the host
-watcher, agentctl and the companion would leave it on disk. Run: python3 fixtures.py <folder> (wipes and refills it)."""
+"""Example on-disk data for the hub's tests and throwaway instance: python3 fixtures.py <folder> (wipes it first)."""
 
 import json
 import os
@@ -9,8 +8,8 @@ import sys
 import time
 
 AGENTS = ('admin', 'sara', 'lab')
-OWNER = {'admin': 'admin@example.com', 'sara': 'sara@example.com', 'lab': 'sara@example.com'}  # sara owns two
-COMPANION = 'scout'  # admin's companion; sara has 'helper', so each person has one the other must not see
+OWNER = {'admin': 'admin@example.com', 'sara': 'sara@example.com', 'lab': 'sara@example.com'}
+COMPANION = 'scout'  # admin's; OTHER is sara's
 OTHER = 'helper'
 GB = 2**30
 NOW = time.time()
@@ -265,7 +264,7 @@ def companion(root):
         {
             'name': COMPANION,
             'agent': 'admin',
-            'at': time.time() + 10**6,  # stays "live" for as long as the throwaway instance runs
+            'at': time.time() + 10**6,  # stays "live" while the throwaway instance runs
             'since': NOW - 86400,
             'connected': True,
             'mode': 'review',

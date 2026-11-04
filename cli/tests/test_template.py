@@ -1,5 +1,3 @@
-"""Template updates merged into companion checkouts, against real git repos in a temp folder (Docker faked)."""
-
 import contextlib
 import io
 import json
@@ -31,7 +29,6 @@ def write(path, text):
 
 
 def tree_bytes(folder):
-    """Every file under the checkout (not .git) with its content: 'byte-identical' means this is unchanged."""
     out = {}
     for root, dirs, files in os.walk(folder):
         dirs[:] = [d for d in dirs if d != '.git']
@@ -81,7 +78,6 @@ class Template(unittest.TestCase):
             sh(self.co, 'branch', 'template')
 
     def fake_restart(self, _cfg, comp):
-        """Docker restarting the companion: its launcher writes a fresh status.json."""
         self.restarts.append(sh(self.co, 'rev-parse', 'HEAD'))
         state = self.comes_up_as if len(self.restarts) == 1 else 'running'
         write(
@@ -111,19 +107,18 @@ class Template(unittest.TestCase):
         self.assertEqual(r['result'], 'merged', r)
         self.assertIn('restarted and running', r['detail'])
         with open(f'{self.co}/bot/main.py') as f:
-            self.assertEqual(f.read(), 'print("hello from sara")\n')  # the agent's change stays
+            self.assertEqual(f.read(), 'print("hello from sara")\n')
         with open(f'{self.co}/requirements.txt') as f:
-            self.assertIn('slack-bolt==1.30.0', f.read())  # the template's arrives
+            self.assertIn('slack-bolt==1.30.0', f.read())
         log = sh(self.co, 'log', '-1', '--format=%s%n%an%n%P')
         subject, author, parents = log.splitlines()
         self.assertTrue(subject.startswith('chore: merge agentlab template '))
         self.assertEqual(author, 'agentlab')
         self.assertEqual(len(parents.split()), 2)
         self.assertEqual(len(self.restarts), 1)
-        self.assertEqual(self.run_update()['result'], 'up-to-date')  # and only once
+        self.assertEqual(self.run_update()['result'], 'up-to-date')
 
     def test_an_agent_change_identical_to_the_template_merges_cleanly(self):
-        # the live case: the agent already bumped PyJWT exactly as the template later did, next to other bumps
         self.agent_commits('requirements.txt', 'slack-bolt==1.29.0\nPyJWT==2.15.1\ncryptography==44.0.0\n', 'fix: jwt')
         write(f'{self.src}/requirements.txt', 'slack-bolt==1.30.0\nPyJWT==2.15.1\ncryptography==50.0.2\n')
         r = self.run_update()
@@ -151,7 +146,6 @@ class Template(unittest.TestCase):
         self.assertEqual(tree_bytes(self.co), files)
         self.assertEqual(sh(self.co, 'status', '--porcelain'), '')
         self.assertEqual(self.restarts, [])
-        # the snapshot waits on the template branch for whoever merges by hand
         self.assertIn('agentlab template test', sh(self.co, 'log', '-1', '--format=%s', 'template'))
 
     def test_uncommitted_work_is_left_alone(self):
@@ -163,7 +157,7 @@ class Template(unittest.TestCase):
         with open(f'{self.co}/bot/main.py') as f:
             self.assertEqual(f.read(), 'print("half done")\n')
         sh(self.co, 'commit', '-q', '-am', 'feat: done')
-        self.assertEqual(self.run_update()['result'], 'merged')  # picked up once committed
+        self.assertEqual(self.run_update()['result'], 'merged')
 
     def test_a_companion_that_fails_to_start_gets_exactly_that_merge_undone(self):
         self.agent_commits('bot/main.py', 'print("mine")\n', 'feat: mine')
@@ -174,7 +168,7 @@ class Template(unittest.TestCase):
         self.assertEqual(r['result'], 'reverted')
         self.assertIn('boom', r['detail'])
         self.assertEqual(sh(self.co, 'rev-parse', 'HEAD'), mine)
-        self.assertEqual(len(self.restarts), 2)  # restarted onto the merge, then back onto the agent's code
+        self.assertEqual(len(self.restarts), 2)
 
     def test_a_checkout_from_before_the_template_branch_gets_one_at_the_seed(self):
         shutil.rmtree(self.co)

@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from 'react';
 
-/** Dark or light. Until the user picks one the page follows the system; every colour token follows it through light-dark(). */
 export type Scheme = 'dark' | 'light';
 
 const KEY = 'hub-theme';
@@ -13,7 +12,7 @@ function stored(): Scheme | null {
     const v = localStorage.getItem(KEY);
     return v === 'dark' || v === 'light' ? v : null;
   } catch {
-    return null; // storage blocked (private window): just follow the system
+    return null;
   }
 }
 
@@ -32,14 +31,13 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** Switches to the opposite of what is shown now and remembers it. */
 function toggle() {
   chosen = shown() === 'dark' ? 'light' : 'dark';
   applyScheme();
   try {
     localStorage.setItem(KEY, chosen);
   } catch {
-    /* not remembered; still applied for this visit */
+    /* storage blocked */
   }
   listeners.forEach((l) => {
     l();

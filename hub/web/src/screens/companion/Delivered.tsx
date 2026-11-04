@@ -8,7 +8,6 @@ import { When } from '../../ui/When';
 
 const PAGE = 6;
 
-/** Messages, files and logins the companion sent for the owner, and to whom, a page at a time. */
 export function Delivered({ events }: { events: Event[] }) {
   const pages = usePages(events, PAGE);
   return (

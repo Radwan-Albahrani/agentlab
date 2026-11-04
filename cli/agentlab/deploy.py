@@ -1,6 +1,4 @@
-"""Getting rendered stacks running: networks, deploys (plain Compose or Coolify), and the edge and hub joining every
-agent's network. A stack is redeployed when its compose file changed since its last deploy, or when a newer local
-image exists for a running container (after `images build`); an agent waits for that until no T3 turn is running."""
+"""Networks and stack deploys (plain Compose or Coolify)."""
 
 import datetime
 import hashlib
@@ -55,8 +53,7 @@ def networks(cfg):
 
 
 def ensure_networks(cfg, plan):
-    """Fixed subnets, so each agent keeps the address the firewall rules name. Others joining an agent's network
-    get addresses from the upper half; the agent is always .2."""
+    """Fixed subnets (the firewall names each agent's address); the agent is always .2."""
     for name, bridge, subnet in networks(cfg):
         rc, out = run(
             ['docker', 'network', 'inspect', '-f', '{{range .IPAM.Config}}{{.Subnet}} {{end}}', name], check=False
@@ -91,7 +88,6 @@ def ensure_networks(cfg, plan):
 
 
 def project(cfg, stack):
-    """The Compose project name Docker labels the stack's containers with (Coolify uses its service uuid)."""
     if cfg['deploy'] == 'coolify':
         return coolify.stack_uuid(stack_folder(cfg, stack)) or stack
     return stack
@@ -107,12 +103,7 @@ def containers(cfg, stack, service=None, all_states=False):
 
 
 def stale_images(cfg, stack):
-    """Image tags whose local image is newer than what the stack's running containers use (an `images build` or
-    pull since the last deploy). Stopped containers don't count: redeploying would start them.
-
-    Compared by time, not id: with Docker's containerd image store a container reports its platform manifest's digest
-    while the tag reports the image index's, so ids never match. An image built after the container was created is
-    newer; a rebuild Docker served from cache keeps its old creation time, so it isn't."""
+    """Image tags newer than what running containers use; compared by creation time, since ids never match under containerd."""
     out = set()
     for cid in containers(cfg, stack):
         rc, info = run(['docker', 'inspect', '-f', '{{.Config.Image}} {{.Created}}', cid], check=False)
@@ -126,26 +117,24 @@ def stale_images(cfg, stack):
 
 
 def _when(stamp):
-    """Docker's RFC 3339 times (nanoseconds, Z or an offset) as a comparable UTC datetime."""
     m = re.fullmatch(r'([\d-]+T[\d:]+)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)', stamp.strip())
     if not m:
-        return datetime.datetime.min.replace(tzinfo=datetime.UTC)  # unreadable: never counts as newer
+        return datetime.datetime.min.replace(tzinfo=datetime.UTC)
     head, frac, zone = m.groups()
     zone = '+00:00' if zone == 'Z' else zone
     return datetime.datetime.fromisoformat(f'{head}.{(frac or "0")[:6].ljust(6, "0")}{zone}')
 
 
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')  # any other T3 run status is a turn in progress
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')
 
 
 def agent_busy(agent):
-    """A T3 turn is in progress in this agent (read on the host, read-only). An unreadable database counts as busy:
-    better a redeploy on the next apply than a turn cut off."""
+    """Whether a T3 turn is in progress in this agent; an unreadable database counts as busy."""
     import sqlite3  # noqa: PLC0415 - only apply needs it
 
     db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
     if not os.path.exists(db):
-        return False  # a new agent: nothing to cut off
+        return False
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
             marks = ','.join('?' * len(SETTLED))
@@ -160,14 +149,12 @@ def agent_of(cfg, stack):
 
 
 def why_deploy(cfg, stack, text, force=False):
-    """(reason to deploy or '', skip message or ''). A changed image restarts an agent only while it is idle;
-    --force skips that check."""
+    """(reason to deploy or '', skip message or ''); a changed image restarts an agent only while idle, unless --force."""
     if force:
         return 'asked for', ''
     if changed_since_deploy(cfg, stack, text):
         return 'its file changed', ''
-    # Stopped containers count as deployed: a companion down on purpose (not configured yet, or stopped by its agent)
-    # must not be started again by every apply.
+    # Stopped containers count as deployed, so apply never restarts a companion stopped on purpose.
     if not containers(cfg, stack, all_states=True):
         return 'not running', ''
     stale = stale_images(cfg, stack)
@@ -203,14 +190,12 @@ def deploy(cfg, stack, kind, key, plan, force=False):
         mark_deployed(cfg, stack, text)
         settle(cfg, stack, kind, text)
         agent = agent_of(cfg, stack)
-        if agent:  # at once: the new container waits for this before its first downloads
+        if agent:  # the new container waits for this before its first downloads
             isolate(cfg, plan, [agent])
     return True
 
 
-# Stacks deployed by this run of agentctl. Coolify deploys in the background, so until it finishes the old
-# containers still look out of date: a second deploy then would race the first (two recreates, a name conflict,
-# containers left in "created").
+# Stacks deployed this run: a second Coolify deploy while the first still runs would race it.
 DEPLOYED = set()
 SETTLE_S = 15 * 60
 LEFTOVER = re.compile(r'^[0-9a-f]{12}_')
@@ -221,8 +206,7 @@ def deployed_this_run(stack):
 
 
 def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
-    """Wait until every service of the stack runs in a container from this render. Fails with the containers'
-    states, and Coolify's view of the service, when it doesn't happen."""
+    """Wait until every service runs in a container from this render; fail with their states otherwise."""
     import time  # noqa: PLC0415 - patched in tests through the arguments
 
     sleep, clock = sleep or time.sleep, clock or time.time
@@ -239,7 +223,6 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
                     f'{stack}: containers left by an earlier, interrupted deploy: {", ".join(leftovers)} (docker rm them)'
                 )
             return
-        # Docker gave up on a container (a port already taken, a missing mount): waiting won't change that
         broken = [(r['name'], err) for r in ours if r['service'] not in up and (err := docker_error(r['name']))]
         if broken or clock() >= deadline:
             break
@@ -256,13 +239,11 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
 
 
 def docker_error(name):
-    """The error Docker recorded starting a container (State.Error), '' when there is none."""
     rc, out = run(['docker', 'inspect', '-f', '{{.State.Error}}', name], check=False)
     return out.strip() if rc == 0 else ''
 
 
 def _up(row, kind):
-    # a companion without its Slack tokens exits 0 on purpose ("not configured") and waits for them
     return row['state'] == 'running' or (kind == 'companion' and row['status'].startswith('Exited (0)'))
 
 
@@ -303,8 +284,7 @@ def coolify_status(cfg, stack):
 
 
 def connect(cfg, plan):
-    """The edge, gate and hub must reach every agent. `docker network connect` is lost when Coolify or Compose
-    recreates them, so this runs after every apply (and the watcher repeats it)."""
+    """Connect the edge, gate and hub to every agent network; recreates drop this, so it reruns every apply."""
     for service, alias in (('edge', None), ('gate', 'gate'), ('hub', 'hub')):
         for cid in containers(cfg, 'agentlab-core', service):
             joined = json.loads(run(['docker', 'inspect', '-f', '{{json .NetworkSettings.Networks}}', cid])[1] or '{}')
@@ -316,9 +296,7 @@ def connect(cfg, plan):
 
 
 def isolate(cfg, plan, agents=None):
-    """An agent container stays on its own network only. Coolify connects every container it deploys to a network
-    of its own; the firewall knows the agent only by its address on agentlab-<id>, so another network would be a way
-    around it. The watcher repeats this whenever Coolify recreates a container."""
+    """Keep each agent container on its own network only (Coolify adds one; the firewall knows only agentlab-<id>)."""
     for a in cfg['agents'] if agents is None else agents:
         for cid in containers(cfg, f'agentlab-agent-{a["id"]}', 'agent'):
             joined = json.loads(run(['docker', 'inspect', '-f', '{{json .NetworkSettings.Networks}}', cid])[1] or '{}')
@@ -343,7 +321,7 @@ def start(cfg, stack, plan):
 
 
 def remove(cfg, stack, plan):
-    """Stop and delete a stack's containers (never its data: volumes are bind mounts on the agent's disk)."""
+    """Stop and delete a stack's containers (never its data)."""
     folder = stack_folder(cfg, stack)
     uuid = coolify.stack_uuid(folder) if cfg['deploy'] == 'coolify' else None
     if uuid:

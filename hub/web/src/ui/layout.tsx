@@ -41,13 +41,12 @@ export const Inline = ({
   gap?: Gap;
   nowrap?: boolean;
   end?: boolean;
-  top?: boolean; // align to the top instead of the middle (a tall item beside text)
+  top?: boolean;
   children: ReactNode;
 }) => (
   <div {...stylex.props(styles.inline, gaps[gap], nowrap && styles.nowrap, end && styles.end, top && styles.top)}>{children}</div>
 );
 
-/** Two ends of a line: title on the left, actions or a number on the right. */
 export const Split = ({ baseline, children }: { baseline?: boolean; children: ReactNode }) => (
   <div {...stylex.props(styles.split, baseline && styles.baseline)}>{children}</div>
 );
@@ -56,5 +55,4 @@ export const Grid2 = ({ children }: { children: ReactNode }) => <div {...stylex.
 export const StatGrid = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.stats)}>{children}</div>;
 export const Grow = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.grow)}>{children}</div>;
 export const HScroll = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.scroll)}>{children}</div>;
-/** Pushes what follows to the end of a row. */
 export const Spacer = () => <span {...stylex.props(styles.grow)} />;

@@ -3,11 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, post } from './client';
 import type { AccountsPage } from './types';
 
-/** While `on` (a change the companion is about to make: a fresh PR list, a review starting), its page is refetched
- * every second instead of every 15 s; `giveUp` runs after 30 s so a lost change can't keep it polling. */
+/** Refetches the companion's page every second while `on`; `giveUp` runs after 30 s. */
 export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) {
   const qc = useQueryClient();
-  const latest = useRef(giveUp); // the newest callback, without restarting the timers on every render
+  const latest = useRef(giveUp);
   useEffect(() => {
     latest.current = giveUp;
   });
@@ -26,11 +25,10 @@ export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) 
   }, [on, qc, name]);
 }
 
-/** Asks a companion to re-read its pull requests from GitHub (on open, and on demand: never on a timer) and
- * refetches its page every second until the new list is in, or 30 s pass. `at`: when its list was last read. */
+/** Asks a companion to re-read its PRs, then polls until a list newer than `at` arrives (max 30 s); never on a timer. */
 export function usePullsRefresh(name: string, at: number): [boolean, () => void] {
   const [opened] = useState(at);
-  const [waiting, setWaiting] = useState<number | null>(null); // the list time a fresher list must beat
+  const [waiting, setWaiting] = useState<number | null>(null);
   const ask = useCallback(
     (before: number) => {
       post(`/api/companions/${name}/pulls`).then(
@@ -76,13 +74,12 @@ export const useSecrets = () => useQuery({ queryKey: ['secrets'], queryFn: api.s
 export const useNotifications = () => useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
 export const useDisplay = () => useQuery({ queryKey: ['display'], queryFn: api.display });
 
-/** The compose file being edited never refreshes underneath you. */
+/** Never refetches, so an open edit isn't overwritten. */
 export const useConfigFile = (id: string) =>
   useQuery({ queryKey: ['config', id], queryFn: () => api.config(id), refetchInterval: false });
 
 const signingIn = (p: AccountsPage) => [...p.ai, p.github].some((f) => f.active) || p.connectors.some((c) => c.flow?.active);
 
-/** Live sign-ins refresh every 2 s. */
 export const useAccounts = (name: string) =>
   useQuery({
     queryKey: ['accounts', name],
@@ -90,7 +87,7 @@ export const useAccounts = (name: string) =>
     refetchInterval: (q) => (q.state.data && signingIn(q.state.data) ? 2000 : 15_000),
   });
 
-// Values revealed on request: fetched only while shown, never kept in the cache afterwards.
+// Revealed secret values are never kept in the cache.
 const revealed = { refetchInterval: false, staleTime: 0, gcTime: 0 } as const;
 
 export const useSecretValue = (name: string | null) =>
@@ -102,7 +99,7 @@ export const useSecretVersions = (name: string | null) =>
 export const useEnvValue = (agent: string, key: string, shown: boolean) =>
   useQuery({ queryKey: ['env', agent, key], queryFn: () => api.envValue(agent, key), enabled: shown, ...revealed });
 
-/** A container's log tail, polled each second until the watcher has written one newer than `since`. */
+/** Polls a container's log tail each second until one newer than `since` arrives. */
 export const useLogsTail = (name: string | null, since: number) =>
   useQuery({
     queryKey: ['logs', name, since],
@@ -112,7 +109,7 @@ export const useLogsTail = (name: string | null, since: number) =>
     gcTime: 0,
   });
 
-/** Turns presenting on or off and refreshes everything; resolves to whether the Display screen is still reachable. */
+/** Toggles presenting; resolves to whether the Display screen is still reachable. */
 export function useTogglePresenting() {
   const qc = useQueryClient();
   return useCallback(async () => {

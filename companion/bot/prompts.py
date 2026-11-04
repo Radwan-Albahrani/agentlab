@@ -1,5 +1,4 @@
-"""Every message the companion writes for the agent (or the triage model), in one place so the wording is easy to
-review."""
+"""Every message the companion writes for the agent or the triage model."""
 
 from datetime import datetime
 
@@ -11,7 +10,7 @@ def outbox(folder):
 
 
 def task(ask, owner, where, lines, files, folder, channel, channels, open_polls):
-    """A task the owner gave the companion in Slack (channel: the channel it came from, '' for a DM)."""
+    """A task the owner gave in Slack (channel: '' for a DM)."""
     p = ask + f'\n\n---\nThe Slack thread this came from ({owner} asked in {where}), complete:\n'
     p += '\n'.join(lines[-60:]) or '(no other messages)'
     if files:
@@ -32,7 +31,7 @@ def task(ask, owner, where, lines, files, folder, channel, channels, open_polls)
 
 
 def posting(box, owner, channels, default, then, open_polls):
-    """How the agent hands the companion a message or poll for a channel (it posts it; see bot/posts.py)."""
+    """How to hand over a message or poll for a channel (post.json, see posts.py)."""
     known = '\n'.join(f'- #{c["name"]} (id {c["id"]})' for c in channels) or f'(none: {NAME} has to be invited first)'
     now = datetime.now().astimezone().isoformat(timespec='minutes')
     return (
@@ -59,7 +58,7 @@ def posting(box, owner, channels, default, then, open_polls):
 
 
 def poll_changes(box, owner, open_polls):
-    """How to change an open poll; also added to a later message about a poll, for chats started before polls."""
+    """How to change an open poll (poll-change.json)."""
     return (
         f'{open_polls}'
         f'\nTo change an open poll when {owner} asks (switch single / multiple choice, move the closing time), write'
@@ -73,7 +72,7 @@ def poll_changes(box, owner, open_polls):
 
 
 def ask(text, owner, channel, channels, folder, review, open_polls):
-    """The owner typed this on the hub: something for a Slack channel (an announcement, a poll, …)."""
+    """An ask the owner typed on the hub."""
     default = (
         f'It goes to channel {channel}.'
         if channel
@@ -93,7 +92,7 @@ def ask(text, owner, channel, channels, folder, review, open_polls):
 
 
 def errand(who, how, owner, asked, lines, files, folder):
-    """Someone asked the owner for something; the agent handles it as them."""
+    """An errand: someone asked the owner for something; the agent handles it as them."""
     return (
         f'{who} {how} in Slack, asking:\n\n{asked}\n\n---\nThe conversation around it:\n'
         + ('\n'.join(lines[-40:]) or '(nothing else)')
@@ -110,7 +109,6 @@ def errand(who, how, owner, asked, lines, files, folder):
     )
 
 
-# Connected tools (MCP) are exact and audited; the browser is the fallback.
 TOOL_CHOICE = (
     '\n\nTools: check which connected (MCP) tools this chat has before opening the browser, and use a matching one'
     ' for lookups and approved changes alike. Use the browser only when no tool covers it or the tool is down,'
@@ -120,8 +118,7 @@ TOOL_CHOICE = (
 
 
 def work_accounts(owner, folder):
-    """How the agent hands files and logins back through the gate, plus whatever work tools the owner set up
-    (the optional work-tools.md secret, e.g. read-only mail search or a password vault CLI)."""
+    """How to hand files and logins back through the gate, plus the owner's work tools."""
     box = outbox(folder)
     tools = work_tools()
     return (
@@ -159,7 +156,7 @@ def approvals(folder, who, owner):
 
 
 def triage(owner, who, convo, texts):
-    """Team mode: what does a colleague's message to the owner need? Errand is the strict one."""
+    """Team-mode triage of a colleague's message to the owner."""
     return (
         f'You triage Slack messages for {owner} (works at {org()}) and their assistant. The assistant can use'
         f" {owner}'s connected work tools, their browser logins and the codebase"

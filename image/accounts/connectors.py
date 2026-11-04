@@ -1,6 +1,4 @@
-"""MCP connectors, registered for both Claude Code and Codex. OAuth servers share ONE sign-in: both CLIs run
-them through mcp-remote, whose token in ~/.mcp-auth (keyed by the URL's md5) they share. GitHub's server uses gh's
-token instead (see signin.after_github_login)."""
+"""MCP connectors for Claude Code and Codex; OAuth servers run through mcp-remote so both share one token."""
 
 import glob
 import hashlib
@@ -12,7 +10,7 @@ from urllib.parse import urlparse
 
 from util import HOME, active, http, run, screen, sh_quote, start_session, stop_session
 
-STORE = os.path.join(HOME, '.config', 'agent', 'mcp.json')  # {name: {url, shared} | {url, header, who}}
+STORE = os.path.join(HOME, '.config', 'agent', 'mcp.json')
 MCP_REMOTE = os.path.join(HOME, '.npm-global', 'bin', 'mcp-remote')
 MCP_REMOTE_CLIENT = os.path.join(HOME, '.npm-global', 'bin', 'mcp-remote-client')
 MCP_AUTH = os.path.join(HOME, '.mcp-auth')
@@ -48,7 +46,6 @@ def save(d):
 
 
 def write_codex_block(d):
-    """Codex reads MCP servers from config.toml; ours live in one managed block."""
     cfg = os.path.join(HOME, '.codex', 'config.toml')
     text = pathlib.Path(cfg).read_text() if os.path.exists(cfg) else ''
     text = re.sub(r'\n?# BEGIN agent-connections.*?# END agent-connections\n?', '\n', text, flags=re.S)
@@ -79,7 +76,6 @@ def _claude_add(name, cfg):
 
 
 def register_token(name, url, header, who):
-    """A server that takes a bearer token (GitHub)."""
     d = load()
     d[name] = {'url': url, 'header': header, 'who': who}
     save(d)
@@ -101,7 +97,6 @@ def add_shared(name, url):
 
 
 def token_works(url, header):
-    """True if the MCP server accepts the credential (initialize handshake)."""
     body = json.dumps(
         {
             'jsonrpc': '2.0',
@@ -150,7 +145,6 @@ def login_state(name):
 
 
 def remove(name):
-    """Sign out (drop the shared token) and unregister."""
     stop_session(flow(name))
     s = load().get(name)
     for f in _token_files(s['url']) if s else []:
@@ -159,7 +153,6 @@ def remove(name):
 
 
 def servers():
-    """Catalog entries plus any server added by URL, in page order: {key: {name, url, what, added}}."""
     d = load()
     out = {k: {**v, 'added': k in d} for k, v in CATALOG.items()}
     for k, v in d.items():
@@ -169,7 +162,7 @@ def servers():
 
 
 def add_custom(name, url):
-    """-> error message, or '' after adding and starting its sign-in."""
+    """-> error message, or '' on success."""
     if not NAME_RE.match(name) or name in RESERVED or name in CATALOG:
         return 'Name: 2-31 lowercase letters, digits or dashes, starting with a letter (not playwright/github).'
     if not re.match(r'^https://\S+$', url):
@@ -182,7 +175,7 @@ def add_custom(name, url):
 
 
 def migrate():
-    """Connectors added before the shared sign-in (separate Claude/Codex logins) become shared."""
+    """Converts connectors from before the shared sign-in to shared ones."""
     for name, s in list(load().items()):
         if s.get('oauth') and not s.get('shared'):
             run(f'claude mcp logout {name}')

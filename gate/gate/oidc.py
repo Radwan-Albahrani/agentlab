@@ -1,14 +1,4 @@
-"""Private HTTPS sign-in: the gate as an OpenID Connect client of Cloudflare Access.
-
-Without Gateway TLS decryption Access can't add its token to HTTPS requests (and decryption would mean installing a
-Cloudflare root certificate on every device), so the gate asks Access for one itself. agentctl creates an "Access for
-SaaS" OIDC application that admits the same people; the gate runs the authorization code flow with PKCE, state and
-nonce, checks the ID token against that application's published keys, then keeps its own session cookie per host
-(encrypted and signed, HttpOnly, Secure). Devices on the Cloudflare One client sign in with their client session, so
-after the first time a sign-in is a few redirects nobody sees.
-
-The secrets are files agentctl writes into a folder only the gate's uid reads: the client id and secret, and a
-random session key. Its derived keys also sign X-Agentlab-Proof, the gate's answer as the hub checks it."""
+"""Private HTTPS sign-in: the gate as an OIDC client (code flow + PKCE) of an Access for SaaS application."""
 
 import base64
 import hashlib
@@ -29,12 +19,12 @@ from cryptography.fernet import Fernet, InvalidToken
 log = logging.getLogger('gate')
 CALLBACK, LOGOUT = '/_agentlab/oidc/callback', '/_agentlab/oidc/logout'
 SESSION, PENDING = '__Host-agentlab_session', '__Host-agentlab_oidc'  # __Host-: Secure, Path=/, this host only
-SESSION_TTL = 12 * 3600  # a working day; signing in again is silent while the client session lasts
-PENDING_TTL = 600  # a sign-in has ten minutes to come back
+SESSION_TTL = 12 * 3600
+PENDING_TTL = 600
 PROOF_TTL = 120
 LEEWAY = 30
 FILES = {'client_id': 'oidc-client-id', 'client_secret': 'oidc-client-secret', 'key': 'session.key'}
-LIVE = 'https-live'  # written by agentctl once Access covers port 443: from then on plain HTTP is redirected
+LIVE = 'https-live'  # agentctl writes it once Access covers 443; plain HTTP is then redirected
 
 
 class SignInError(Exception):
@@ -46,7 +36,7 @@ def _b64(raw):
 
 
 def derive(key, label):
-    """A separate key per use from the one session key, so a cookie key can never verify a proof or the reverse."""
+    """A separate key per use, so a cookie key can never verify a proof or the reverse."""
     return hmac.new(key, label.encode(), hashlib.sha256).digest()
 
 
@@ -59,7 +49,7 @@ def key_bytes(text):
 
 
 def proof(key, user, admin, agent, now=None):
-    """X-Agentlab-Proof: '<expiry>.<HMAC of user, admin, agent and expiry>', checked by the hub."""
+    """X-Agentlab-Proof '<expiry>.<HMAC>'; the hub checks it, so keep the format in sync."""
     exp = int(now if now is not None else time.time()) + PROOF_TTL
     msg = f'{user}\n{admin}\n{agent}\n{exp}'.encode()
     return f'{exp}.{_b64(hmac.new(derive(key, "agentlab proof v1"), msg, hashlib.sha256).digest())}'
@@ -81,7 +71,7 @@ def post_form(url, form, headers):
 
 
 class Secrets:
-    """The folder's files, re-read when they change (agentctl may rotate the client secret)."""
+    """The secrets folder's files, re-read when they change."""
 
     def __init__(self, folder):
         self.folder = folder
@@ -112,8 +102,7 @@ class Secrets:
 
 
 class Provider:
-    """One Access for SaaS application: its discovery document and signing keys, cached. Endpoints must stay on the
-    team's own Cloudflare Access domain, whatever the document says."""
+    """Cached discovery document and keys; endpoints must stay on the team's Access domain whatever it says."""
 
     max_age = 3600
 
@@ -229,8 +218,6 @@ class Provider:
 
 
 class SignIn:
-    """Cookies and the steps of a sign-in, for one gate."""
-
     def __init__(self, folder, provider=None):
         self.secrets = Secrets(folder)
         self.provider = provider or Provider()

@@ -1,6 +1,4 @@
-"""Onboarding: a new agent's owner signs in to Claude Code and/or Codex (their own accounts), adds connectors and
-optionally GitHub, then finishes. The gate keeps T3 closed until `done`, so it needs at least one AI sign-in AND the
-owner's explicit finish (~/.config/agent/onboarded); the hub draws the steps from GET /api/onboarding."""
+"""Onboarding state; the gate keeps T3 closed until `done` (one AI sign-in plus the owner's explicit finish)."""
 
 import contextlib
 import os
@@ -27,7 +25,6 @@ def state():
         {'id': 'connectors', 'done': any(connectors.signed_in(k) for k in connectors.load()), 'optional': True},
         {'id': 'github', 'done': _signed_in('github'), 'optional': True},
     ]
-    # claude and codex aren't optional, but one of the two is enough: `ready` says whether finishing is allowed.
     return {'done': ready and os.path.exists(MARK), 'ready': ready, 'steps': steps}
 
 

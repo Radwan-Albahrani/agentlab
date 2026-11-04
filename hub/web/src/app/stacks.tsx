@@ -14,8 +14,6 @@ import { Mono, Text } from '../ui/text';
 import { useLogs } from './logs';
 import { useCanSee } from './useCanSee';
 
-// Stacks the way Coolify groups them: an agent's domain card holds its own stack and its companions' stacks.
-
 const styles = stylex.create({
   head: {
     display: 'flex',
@@ -52,7 +50,6 @@ export const WATCHER_PENDING = {
 };
 export const WatcherPending = () => <EmptyCard {...WATCHER_PENDING} />;
 
-/** The face of a stack: agent badge, companion avatar (in the agent's colour), or a plain stack icon. */
 export function StackLead({ stack }: { stack: { profile: string | null; role: string | null } }) {
   if (stack.profile && isCompanion(stack)) return <CompanionAvatar profile={stack.profile} size="sm" />;
   if (stack.profile) return <Badge name={stack.profile} size="sm" />;
@@ -84,7 +81,6 @@ const Status = ({ c }: { c: Container }) => (
   </span>
 );
 
-/** A stack's line inside a domain card: who it is, a detail line, and its actions. */
 export function StackHead({
   stack,
   detail,
@@ -136,7 +132,6 @@ export function ConfigLink({ stack }: { stack: { id: string } }) {
   return <LinkButton label="Config" icon="sliders" variant="quiet" small to={`/config/${stack.id}`} />;
 }
 
-/** One stack inside a domain card: a single container is one line; bigger stacks list their containers. */
 export function StackBlock({ stack }: { stack: Stack }) {
   const only = stack.containers.length === 1 ? stack.containers[0] : undefined;
   return (
@@ -178,7 +173,6 @@ export function ContainerRows({ stack }: { stack: Stack }) {
   );
 }
 
-/** An agent's domain: tinted header with its badge, then its stacks. */
 export function DomainCard({
   profile,
   sub,
@@ -211,7 +205,7 @@ export function DomainCard({
 
 export const domainSub = (stacks: number) => (stacks > 1 ? `agent + ${plural(stacks - 1, 'companion')}` : 'agent');
 
-/** An agent's domain on the Services screen. Alone (one stack, one container) the header carries its actions. */
+/** With one stack of one container, the header carries its actions. */
 export function DomainServices({ profile, stacks }: { profile: string; stacks: Stack[] }) {
   const [alone] = stacks;
   const [c] = alone?.containers ?? [];

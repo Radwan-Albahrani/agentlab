@@ -1,20 +1,4 @@
-"""`agentctl update`: agentlab keeping itself current, by hand or nightly (agentlab-update.timer, [updates]).
-
-1. git pull, fast-forward only (local changes or a diverged branch stop it: nothing is merged or thrown away), then
-   the rest runs again with the new code.
-2. Build (or pull) the images; Docker's cache makes an unchanged image a no-op.
-3. `apply`: every stack whose file or image changed is redeployed. The core and companions go straight away; an
-   agent in the middle of a T3 turn is not restarted.
-4. Busy agents are waited for: checked every few minutes for up to [updates] wait_hours, each updated the moment it is
-   idle (an idle agent never waits for a busy one). At the end of the window, on_busy decides: "defer" leaves it for
-   the next run, "resume" restarts it anyway; T3 resumes the turns that cut off by itself.
-   `--resume` skips the wait: busy agents are resumed at once (when something waiting on the update can't wait).
-5. (inside apply) Each companion checkout gets template changes merged in when it's clean and they don't conflict
-   (template.py).
-6. (inside apply) The host's always-on services (watcher, throttle) restart when their code changed since they
-   started.
-
-The outcome goes to <data>/state/update.json, which `status` and `doctor` show."""
+"""`agentctl update`: fast-forward pull, images, apply, then wait for busy agents ([updates] on_busy)."""
 
 import datetime
 import json
@@ -47,7 +31,6 @@ def record(cfg, **result):
     return result
 
 
-# ---------------------------------------------------------------- the code
 def git(*args, check=True):
     return run(['git', '-C', REPO, *args], check=check)
 
@@ -70,7 +53,6 @@ def pull(branch):
     return before, head()
 
 
-# ---------------------------------------------------------------- agents
 def inflight(agent):
     """[(run id, thread id)] of T3 turns in progress, read on the host."""
     db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
@@ -84,8 +66,7 @@ def inflight(agent):
 
 
 def resume(cfg, agent, kind, key, plan):
-    """Restart a busy agent anyway. T3 picks the turns it cut off back up by itself when it starts again ("T3 Code
-    restarted and resumed this turn"), so nothing is sent to them. -> the chats that were mid-turn"""
+    """Restart a busy agent anyway (T3 resumes the cut-off turns itself). -> the chats that were mid-turn"""
     running = sorted({thread for _, thread in inflight(agent)})
     deploy.deploy(cfg, f'agentlab-agent-{agent["id"]}', kind, key, plan, force=True)
     return running
@@ -97,7 +78,7 @@ def pending_agents(cfg):
     for a in cfg['agents']:
         stack = f'agentlab-agent-{a["id"]}'
         path = deploy.compose_file(cfg, stack)
-        if not os.path.isfile(path) or deploy.deployed_this_run(stack):  # apply already brought it up to date
+        if not os.path.isfile(path) or deploy.deployed_this_run(stack):
             continue
         with open(path) as f:
             text = f.read()
@@ -135,11 +116,10 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
             say(f'  {a["id"]} still busy after {wait_hours:g} h: its update waits for the next run')
             deferred.append(a['id'])
     if updated:
-        deploy.isolate(cfg, plan)  # Coolify puts recreated containers on its own network too
+        deploy.isolate(cfg, plan)
     return updated, deferred, resumed
 
 
-# ---------------------------------------------------------------- the command
 def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=False):
     need_root('agentctl update')
     u = cfg['updates']

@@ -1,7 +1,6 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 
-// Click-through of every screen over the example data (hub/tests/fixtures.py). Anything that would change the
-// cluster is intercepted; only reads, a logs request, and display settings reach the server.
+// Only reads, a logs request and display settings may reach the server; intercept anything else.
 
 const SCREENS = [
   '/',
@@ -101,7 +100,7 @@ test('tell the companion: pick a channel by typing, write, send (intercepted)', 
   await expect.poll(() => sent).toMatchObject({ text: 'Make a poll: pizza or sushi, ends at 2pm', review: true });
   expect((sent as Record<string, unknown> | null)?.channel).toMatch(/^C/);
   const toast = page.getByRole('status').filter({ hasText: '(test) not sent' });
-  await expect(toast).toBeVisible(); // the result, as a toast in the bottom-right corner
+  await expect(toast).toBeVisible();
   const at = await toast.boundingBox();
   const view = page.viewportSize();
   expect(at && view && view.width - (at.x + at.width)).toBeLessThan(40);
@@ -121,10 +120,10 @@ test('companion polls: results with voters, and the open ones can be changed (in
   await page.goto('/agents/admin/scout#polls');
   await settled(page);
   const polls = page.locator('#polls');
-  await expect(polls.getByText(/people? voted|No votes yet/).first()).toBeVisible(); // the summary line, collapsed
+  await expect(polls.getByText(/people? voted|No votes yet/).first()).toBeVisible();
   await expect(polls.getByRole('button', { name: 'Close the poll now' })).toHaveCount(0);
-  await polls.locator('[aria-expanded="false"]').first().click(); // expand the first poll
-  const choice = polls.getByRole('button', { name: 'Single choice' }).first(); // an icon toggle; the name is its label
+  await polls.locator('[aria-expanded="false"]').first().click();
+  const choice = polls.getByRole('button', { name: 'Single choice' }).first();
   if (await choice.count()) {
     const multiple = await polls.getByRole('button', { name: 'Multiple choice', pressed: true }).count();
     await polls
@@ -135,7 +134,7 @@ test('companion polls: results with voters, and the open ones can be changed (in
     expect(sent[0]).toMatchObject({ multiple: !multiple });
     const closes = polls.locator('input[type="datetime-local"]').first();
     await closes.fill('2030-01-01T12:00');
-    await closes.press('Enter'); // Enter saves; there is no button
+    await closes.press('Enter');
     await expect.poll(() => sent.length).toBe(2);
     expect(sent[1].closes).toBe(new Date('2030-01-01T12:00').getTime() / 1000);
   }
@@ -154,7 +153,7 @@ const PULL = {
   review: null,
 };
 
-/** The companion page as if its GitHub App listed these pull requests (or had no App, with `github: null`). */
+/** `github: null` stands for a companion without a GitHub App. */
 async function withPulls(page: Page, github: Record<string, unknown>, items: Record<string, unknown>[]) {
   await page.route(/\/api\/companions\/scout$/, async (route) => {
     const response = await route.fetch();
@@ -207,20 +206,20 @@ test('pull requests: mine first, searchable, and Review sends the agent (interce
   await page.goto('/agents/admin/scout#pulls');
   await settled(page);
   const section = page.locator('#pulls');
-  await expect.poll(() => refreshed).toBeGreaterThan(0); // opening the page asks for a fresh list; nothing polls
+  await expect.poll(() => refreshed).toBeGreaterThan(0);
   const rows = section.getByTestId('pull');
   await expect(rows).toHaveCount(2);
-  await expect(rows.first()).toContainText('#5922'); // Authored comes first
+  await expect(rows.first()).toContainText('#5922');
   await expect(section.getByText('Authored')).toBeVisible();
-  await expect(rows.nth(1)).toContainText('1 blocking'); // at a glance: chips, the sentence is the tooltip
+  await expect(rows.nth(1)).toContainText('1 blocking');
   await expect(rows.nth(1)).toContainText('QA ✗');
   await expect(rows.nth(1).getByTitle('2 findings (1 blocking) · QA found problems')).toBeVisible();
-  await expect(rows.nth(1).getByText('new commits', { exact: true })).toBeVisible(); // reviewed an older head
+  await expect(rows.nth(1).getByText('new commits', { exact: true })).toBeVisible();
   await section.getByRole('searchbox').fill('label:green');
   await expect(rows).toHaveCount(1);
   await rows.first().getByRole('button', { name: 'Review' }).click();
   await expect.poll(() => asked).toEqual([{ pr: 'example/app#5922' }]);
-  await expect(rows.first().getByText('Starting…')).toBeVisible(); // at once, until the companion has queued it
+  await expect(rows.first().getByText('Starting…')).toBeVisible();
   await page.unrouteAll({ behavior: 'ignoreErrors' }); // the page keeps polling while it starts
 });
 
@@ -361,7 +360,7 @@ test('phone layout never scrolls sideways @phone', async ({ page }, info) => {
   }
 });
 
-// The token colours as the browser computes them; a broken token silently turns pills and hovers colourless.
+// A broken token silently turns pills and hovers colourless.
 const PALETTE = {
   dark: {
     bg: 'rgb(13, 14, 16)',
@@ -427,7 +426,7 @@ test('secrets: search and filters narrow the list and live in the URL', async ({
     .getByRole('button', { name: /^Restarts a service/ })
     .click();
   await expect(page).toHaveURL(/effect=restart/);
-  // the router applies URL changes in a transition: the list re-renders a moment after the URL
+  // the list re-renders a moment after the URL changes (router transition)
   await expect(rows).not.toHaveCount(total);
   const restarts = await rows.count();
   expect(restarts).toBeGreaterThan(0);
@@ -513,7 +512,7 @@ test('pair the T3 app: a QR code and link, or why it cannot (intercepted)', asyn
   await page.goto('/agents/admin');
   await settled(page);
   const devices = page.getByRole('region', { name: 'Devices' }).or(page.locator('section', { hasText: 'Pair the T3 app' }));
-  await expect(devices.getByText('iPhone').first()).toBeVisible(); // the paired one
+  await expect(devices.getByText('iPhone').first()).toBeVisible();
   await devices.getByPlaceholder('Device name, e.g. iPhone').fill('Laptop');
   await devices.getByRole('button', { name: 'Pair the T3 app' }).click();
   await expect(devices.getByRole('img', { name: 'Pairing code for the T3 app' })).toBeVisible();

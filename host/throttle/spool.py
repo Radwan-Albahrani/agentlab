@@ -1,8 +1,4 @@
-"""The file handshake between an agent's shim and the host broker, in a folder of the agent's home.
-No network service: the shim drops <id>.job, the broker answers <id>.go, the running job keeps <id>.run fresh,
-and <id>.done carries the measured peak back. pid-<n> marks a running job's process, so commands it starts aren't
-gated twice. The broker also leaves broker.alive, settings.json and status.json. The folder belongs to the agent,
-so the broker (root) touches it only through safe.Folder: no symlink or FIFO there can redirect it."""
+"""File handshake with the agent's shim (.job -> .go -> .run -> .done); agent-owned, so only via safe.Folder."""
 
 import os
 import time
@@ -22,7 +18,7 @@ class Job:
     tool: str
     label: str
     created: float
-    seen: float  # last sign of life from the shim
+    seen: float
     admitted: bool
     rss_mb: int = 0
     estimate_mb: int = 0
@@ -30,12 +26,11 @@ class Job:
 
 
 def homes():
-    """{agent id: its home on the host}, from cluster.json (re-read each call, so new agents join without a restart)."""
+    """{agent id: home}; re-reads cluster.json each call so new agents join without a restart."""
     return {a['id']: os.path.join(a['path'], 'home') for a in cluster.load().get('agents') or [] if a.get('path')}
 
 
 def agents():
-    """{agent id: its home} for every agent whose home exists."""
     return {aid: home for aid, home in homes().items() if os.path.isdir(home)}
 
 
@@ -44,14 +39,13 @@ def folder(home):
 
 
 def prepare(home):
-    """Make sure the folder exists for the shim and tell it the broker is up and how long it may wait."""
     with folder(home) as f:
         f.write_json('settings.json', {'max_wait_s': MAX_WAIT_S})
         f.write_json('broker.alive', {'at': time.time()})
 
 
 def jobs(agent, home):
-    """The agent's jobs; one is running once it was let in or has started on its own after the max wait."""
+    """A job counts as running once admitted or started on its own after the max wait."""
     out = []
     with folder(home) as f:
         for name in f.names('.job'):
@@ -79,7 +73,7 @@ def jobs(agent, home):
 
 
 def finished(home):
-    """[(signature, peak_mb or None)] of jobs that ended since the last look; their records are consumed."""
+    """[(signature, peak_mb or None)] of ended jobs; consumes their records."""
     out = []
     with folder(home) as f:
         for name in f.names('.done'):
@@ -103,7 +97,6 @@ def forget(home, job):
 
 
 def publish_status(home, agent_jobs):
-    """What the hub shows for this agent: admitted jobs and queued ones, oldest first."""
     ordered = sorted(agent_jobs, key=lambda j: j.created)
     with folder(home) as f:
         f.write_json(

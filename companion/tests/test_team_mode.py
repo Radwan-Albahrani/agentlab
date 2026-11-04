@@ -1,5 +1,3 @@
-"""Team mode: a colleague asking the owner is triaged into errand / heads-up / nothing."""
-
 import json
 
 import pytest
@@ -19,7 +17,7 @@ def ask(monkeypatch, verdict, ts='200.1'):
     monkeypatch.setattr(t3, 'triage', lambda prompt: verdict)
     routing.route({'channel': 'C2', 'ts': ts, 'user': 'U_SALAH', 'text': f'<@{OWNER}> can you help?'}, False)
     for p in requests._pending.values():
-        p['last'] = 0  # skip the wait for more lines
+        p['last'] = 0  # skip REQ_SETTLE
     requests.pending_tick()
 
 

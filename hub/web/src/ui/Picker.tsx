@@ -81,11 +81,11 @@ const styles = stylex.create({
 export interface PickItem {
   value: string;
   label: string;
-  hint?: string; // on the right, e.g. why it can't be picked
+  hint?: string;
   disabled?: boolean;
 }
 
-/** Pick one item from a long list by typing to filter it; empty means none picked. */
+/** Type-to-filter single pick; '' means none picked. */
 export function Picker({
   items,
   value,

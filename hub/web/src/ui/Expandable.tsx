@@ -28,16 +28,7 @@ const styles = stylex.create({
   body: { display: 'grid', gap: space.lg, paddingInline: space.xl, paddingBottom: space.xl },
 });
 
-/** A card that shows one summary row and opens to its details when the row is clicked. */
-export function Expandable({
-  summary,
-  aside,
-  children,
-}: {
-  summary: ReactNode; // the always-visible text (title and status line)
-  aside?: ReactNode; // tags or pills at the right of the row
-  children: ReactNode;
-}) {
+export function Expandable({ summary, aside, children }: { summary: ReactNode; aside?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <Card>

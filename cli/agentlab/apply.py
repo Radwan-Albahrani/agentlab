@@ -1,5 +1,4 @@
-"""`agentctl apply`: make the server match cluster.toml. Every step reads the current state first and changes only
-what differs, so running it again is always safe; --dry-run prints the same steps without touching anything."""
+"""`agentctl apply`: idempotent; every step reads current state and changes only what differs."""
 
 import datetime
 import json
@@ -16,7 +15,7 @@ FIREWALL_UNIT = 'agentlab-firewall.service'
 
 def folders(cfg, plan):
     data = cfg['data']
-    # hub/data holds the phone-push keys (Bark device key, encryption key): root only, like the secrets.
+    # hub/data holds phone-push keys: root only.
     private = [f'{data}/secrets', f'{data}/secrets/agents', f'{data}/secrets/companions', f'{data}/backups']
     private.append(f'{data}/hub/data')
     shared = [
@@ -41,7 +40,7 @@ def folders(cfg, plan):
 
 
 def _owned(path, mode=0o755):
-    """Create path and any missing parents owned by the agent user (Docker would otherwise create them as root)."""
+    """Create path and missing parents owned by the agent user (else Docker creates them as root)."""
     missing = []
     while not os.path.exists(path):
         missing.append(path)
@@ -72,7 +71,7 @@ def agent_files(cfg, a, plan):
     env = f'{cfg["data"]}/secrets/agents/{a["id"]}.env'
     if not os.path.exists(env):
         plan.do(f"create {env} (the agent's extra environment, empty)", fn=lambda: _secret_file(env, ''))
-    userdata = f'{a["path"]}/home/.t3/userdata'  # the hub mounts it: it must not be created by Docker as root
+    userdata = f'{a["path"]}/home/.t3/userdata'  # must exist before deploy, or Docker creates it as root
     if not os.path.isdir(userdata):
         plan.do(f'create {userdata}', fn=lambda: _owned(userdata))
     folder, text = render.files_data(cfg, a), render.files_config(cfg)
@@ -81,7 +80,6 @@ def agent_files(cfg, a, plan):
 
 
 def _files_config(folder, text):
-    """File Browser runs as the agent user and keeps its database next to its config."""
     _owned(folder)
     _secret_file(f'{folder}/config.yaml', text, AGENT_UID)
 
@@ -94,7 +92,7 @@ def core_files(cfg, plan):
     if config.private_network(cfg):
         tunnel_token_copy(cfg, plan)
     if config.private_https(cfg) and not cloudflare.gate_secret(cfg, 'key'):
-        # the gate's session cookies and the proof the hub checks are keyed from it; a new one signs everyone out
+        # rotating it signs everyone out
         plan.do(
             "create the gate's session key",
             fn=lambda: cloudflare.save_gate_secret(cfg, 'key', secrets.token_hex(32)),
@@ -102,8 +100,7 @@ def core_files(cfg, plan):
 
 
 def tunnel_token_copy(cfg, plan):
-    """The tunnel container runs as cloudflared's own unprivileged uid and can't read the root-only token, so it
-    gets a copy only that uid reads, refreshed whenever `cloudflare setup` writes a new token."""
+    """Copy of the root-only tunnel token readable by cloudflared's uid."""
     src = f'{cfg["data"]}/secrets/cloudflare-tunnel.token'
     folder = f'{cfg["data"]}/{render.TUNNEL_TOKEN_DIR}'
     dst = f'{folder}/token'
@@ -111,7 +108,7 @@ def tunnel_token_copy(cfg, plan):
         with open(src) as f:
             token = f.read().strip()
     except FileNotFoundError:
-        return  # `cloudflare setup` writes it; until then the container has nothing to run
+        return
     try:
         with open(dst) as f:
             if f.read() == token and os.stat(dst).st_uid == render.CLOUDFLARED_UID:
@@ -130,7 +127,6 @@ def tunnel_token_copy(cfg, plan):
 
 
 def upstream_ref():
-    """Where a seeded companion checkout points `upstream`: the repo's own remote if it has one, else this checkout."""
     rc, out = run(['git', '-C', REPO, 'remote', 'get-url', 'origin'], check=False)
     return out.strip() if rc == 0 and out.strip() else REPO
 
@@ -141,9 +137,7 @@ def version():
 
 
 def seed_companion(cfg, comp):
-    """Copy the repo's companion/ into the agent's workspace as a git repo, once. After that it is the agent's code
-    (it changes it, commits, and restarts the companion); later template changes only arrive as merge commits from the
-    `template` branch, which starts at this seed commit (template.py)."""
+    """Seed the agent's companion checkout from companion/ once; later template changes arrive via template.py."""
     dst = render.companion_checkout(cfg, comp)
     shutil.copytree(
         os.path.join(REPO, 'companion'),
@@ -163,7 +157,6 @@ def seed_companion(cfg, comp):
 
 
 def companion_files(cfg, comp, plan):
-    """Its data and secrets folders, the folders it mounts from its agent, its code checkout and the bridge key."""
     data, name = cfg['data'], comp['name']
     a = next(x for x in cfg['agents'] if x['id'] == comp['agent'])
     home = a['path']
@@ -200,7 +193,7 @@ def companion_list(cfg, a):
 
 
 def companion_lists(cfg, plan):
-    """~/.agentlab/companions.json in each agent: the live list the in-container `companion` command reads."""
+    """~/.agentlab/companions.json in each agent, read by the in-container `companion` command."""
     for a in cfg['agents']:
         home = f'{a["path"]}/home'
         text = json.dumps(companion_list(cfg, a), indent=1) + '\n'
@@ -220,12 +213,11 @@ def _write_list(home, text):
         f.write('companions.json', text)
 
 
-SIGN_INS = (('.claude', '.credentials.json'), ('.codex', 'auth.json'))  # Claude Code / Codex login files
+SIGN_INS = (('.claude', '.credentials.json'), ('.codex', 'auth.json'))
 
 
 def signed_in(home):
-    """A Claude Code or Codex login in this home. ~/.claude.json alone isn't one: Claude Code writes it on install;
-    it counts only once it names the signed-in account (oauthAccount)."""
+    """Whether this home has a Claude Code or Codex login (~/.claude.json counts only with oauthAccount)."""
     for folder, name in SIGN_INS:
         try:
             with agent_folder(home, folder, create=False) as f:
@@ -242,8 +234,7 @@ def signed_in(home):
 
 
 def adopt(a, plan):
-    """Mark an agent that already has AI sign-ins (data from before agentlab) as onboarded, so the gate doesn't
-    send its person through onboarding again. False when there is nothing to adopt."""
+    """Mark an agent with existing AI sign-ins as onboarded; False when there is nothing to adopt."""
     home = f'{a["path"]}/home'
     if not os.path.isdir(home) or not signed_in(home):
         return False
@@ -279,7 +270,6 @@ def write_rendered(cfg, plan):
 
 
 def firewall(cfg, changed, plan):
-    """Load the rendered rules when they changed; the unit loads them at boot."""
     if 'firewall/agentlab.nft' not in changed:
         return
     if run(['systemctl', 'is-enabled', FIREWALL_UNIT], check=False)[0] == 0:
@@ -288,11 +278,10 @@ def firewall(cfg, changed, plan):
         warn(f'{FIREWALL_UNIT} is not installed: agents are not firewalled until `agentctl install` runs')
 
 
-HOST_SERVICES = ('agentlab-watch.service', 'agentlab-throttle.service')  # the timers' jobs start fresh every run
+HOST_SERVICES = ('agentlab-watch.service', 'agentlab-throttle.service')
 
 
 def code_changed_at(folder=None):
-    """When the newest Python file under host/ was written: a pull rewrites the files it changes."""
     folder = folder or os.path.join(REPO, 'host')
     newest = 0.0
     for root, dirs, files in os.walk(folder):
@@ -310,9 +299,7 @@ def started_at(unit):
 
 
 def host_services(plan, changed=None):
-    """The watcher and the throttle run from the checkout for good, and a running Python keeps the code it started
-    with: each that started before its code last changed (an update's pull, or an edit) restarts, so nobody has to.
-    The throttle keeps its queue in spool files, so nothing waiting is lost."""
+    """Restart the watcher/throttle if they started before their code last changed."""
     changed = code_changed_at() if changed is None else changed
     for unit in HOST_SERVICES:
         since = started_at(unit)
@@ -321,8 +308,7 @@ def host_services(plan, changed=None):
 
 
 def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force=False):
-    """`only`: deploy just these stacks (a companion an agent created or removed), everything else is still
-    rendered but left running as it is. `force`: redeploy every stack, even agents with a T3 turn running."""
+    """`only`: deploy just these stacks; `force`: redeploy all, even agents mid-turn."""
     plan = Plan(dry)
     if not dry:
         need_root('agentctl apply')
@@ -330,7 +316,6 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     access = cfg['auth']['cloudflare']
     if cfg['auth']['mode'] == 'cloudflare-access' and not (access['team'] and access['audience']):
         warn('Cloudflare Access is not set up yet, so the gate lets nobody in: run agentctl cloudflare setup')
-    # Agents whose home already existed before the first apply are adopted, not onboarded again.
     first = not os.path.exists(os.path.join(cfg['data'], 'rendered', 'cluster.json'))
     existing = [a for a in cfg['agents'] if os.path.isdir(f'{a["path"]}/home')] if first else []
     folders(cfg, plan)
@@ -349,7 +334,6 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     changed = write_rendered(cfg, plan)
     firewall(cfg, changed, plan)
     host_services(plan)
-    # The tunnel container resolves the private names itself now; a block an earlier version wrote goes.
     hostsfile.ensure([], plan)
     images.ensure(cfg, plan, force=build)
     for name, (kind, key) in render.stacks(cfg).items():
@@ -373,11 +357,11 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     templates = {}
     if only is None:
         cloudflare.sync_people(cfg, plan)
-        cloudflare.finish_https(cfg, plan)  # the edge listens on 443 now: Access may cover it once it has a cert
+        cloudflare.finish_https(cfg, plan)
         deploy.orphans(cfg)
         templates = template.update_all(cfg, plan)
     if not dry and not changed:
         say('  rendered files unchanged')
     if not dry and only is None:
-        health.wait_ready(cfg)  # ok only once every agent answers, not just runs
+        health.wait_ready(cfg)
     return {'changed_files': changed, 'companion_templates': templates}

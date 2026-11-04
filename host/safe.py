@@ -1,7 +1,4 @@
-"""File access inside folders an agent controls (its spool, its request folder), for host services running as root.
-An agent can put a symlink, a FIFO or a folder anywhere in its own home; following one would let it make root read
-or overwrite any host file, or hang a service. So every step opens relative to a directory fd with O_NOFOLLOW,
-only regular files are read, and writes go to a fresh file that is renamed into place."""
+"""Root's file access inside agent-controlled folders, never following symlinks or opening FIFOs."""
 
 import contextlib
 import json
@@ -13,8 +10,6 @@ AGENT_UID = 1000
 
 
 class Folder:
-    """An open folder under a trusted base (the agent's home), reached without following symlinks."""
-
     def __init__(self, base, rel, create=False, uid=AGENT_UID):
         self.fd = os.open(base, DIR_FLAGS)
         try:
@@ -57,7 +52,7 @@ class Folder:
             return 0
 
     def read(self, name, limit=65536):
-        """Contents of a regular file, or None (missing, a symlink, a FIFO, ...)."""
+        """Contents of a regular file, else None."""
         try:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
         except OSError:

@@ -1,13 +1,4 @@
-"""Errands: someone asked the owner for something (invoices, access, a document) and the agent does it as them.
-
-Everything happens in a thread of the owner's DM with the companion, headed by one message ("X asked you", Stop button):
-  start()             -> that head message + a T3 chat with the request and its conversation
-  outbox.tick()       -> the agent's files / approval request / temporary login arrive through the gate
-  ask_approval()      -> Approve / Reject for anything sensitive; the decision goes back to the chat
-  reply_requester()   -> the answer for whoever asked waits for the owner's Send (or goes out with an approval)
-  ask_credential()    -> a temporary first-login password, sent to them privately only after the owner's tap
-  close_head()        -> when it ends, the head message loses its Stop button and says how it ended
-Nobody but the owner can press any of these buttons. In dry-run mode nothing ever reaches anyone else."""
+"""Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
 from datetime import datetime
 
@@ -18,7 +9,7 @@ from .text import first_sentence, quote
 
 
 def start(p, what=''):
-    """p: the request: ch, ts, thread_ts, user (who asked), im, texts, files, tagged (the owner tagged the companion on it)."""
+    """p: the request: ch, ts, thread_ts, user (who asked), im, texts, files, tagged."""
     who, ch = slack.name(p['user']), p['ch']
     asked = '\n'.join(p['texts']).strip()
     link = slack.permalink(ch, p['ts'], slack.USER)
@@ -40,7 +31,7 @@ def start(p, what=''):
         ],
     )['ts']
     folder = f'req-{ch}-{p["ts"].replace(".", "")}'
-    try:  # the conversation around it, read as the owner
+    try:
         if p['thread_ts']:
             msgs = slack.USER.conversations_replies(channel=ch, ts=p['thread_ts'], limit=60)['messages']
         else:
@@ -67,7 +58,7 @@ def start(p, what=''):
 
 
 def track(p, dm, head, tid, title, folder, link):
-    """Follow an errand's chat in the owner's DM thread (also used to adopt a chat started by hand)."""
+    """Register an errand's chat as a task in the owner's DM thread."""
     new_task(
         dm,
         head,
@@ -87,8 +78,7 @@ def track(p, dm, head, tid, title, folder, link):
 
 
 def close_head(task, line, emoji):
-    """An errand ended: its head message loses the Stop button, the 👀 becomes `emoji`, and the 'Working on it'
-    line becomes `line`, so the DM list shows at a glance what is done."""
+    """Mark the errand's head message ended: no Stop button, :eyes: -> `emoji`, footer -> `line`."""
     if not task.get('requester'):
         return
     ch, ts = task['channel'], task['thread_ts']
@@ -100,7 +90,7 @@ def close_head(task, line, emoji):
         log('close head: message not found', e)
         return
 
-    def swap(x):  # the 👀 in markdown text or in rich_text emoji elements
+    def swap(x):
         if isinstance(x, dict):
             if x.get('type') == 'emoji' and x.get('name') == 'eyes':
                 x['name'] = emoji
@@ -123,7 +113,6 @@ def close_head(task, line, emoji):
         log('close head failed:', e)
 
 
-# ---------------------------------------------------------------- approvals
 def _approval_blocks(md, note, task_key='', buttons=True):
     b = slack.blocks(md, note)
     if buttons:
@@ -136,7 +125,7 @@ def _approval_blocks(md, note, task_key='', buttons=True):
 
 
 def ask_approval(task, a):
-    """approval.json from the agent -> a DM with Approve / Reject (a new message, so it notifies)."""
+    """approval.json -> a new DM message with Approve / Reject."""
     who = slack.name(task.get('requester') or OWNER)
     k = key(task['channel'], task['thread_ts'])
     md = f':raised_hand: **Approve?** {a.get("action", "")}\n\n{a.get("details", "")}' + (
@@ -205,10 +194,8 @@ def stop(task, k):
         )
 
 
-# ---------------------------------------------------------------- answering whoever asked
 def reply_requester(task, text, files=(), approved=False):
-    """Dry run: shown to the owner only, labelled. Otherwise it goes out only after the owner taps Send (or right
-    away with approved=True: they already approved this change and saw this reply with it)."""
+    """Offer the reply to the owner with a Send button; sent at once if `approved`, never sent in dry run."""
     who, req = slack.name(task.get('requester') or OWNER), task.get('requester')
     if mode() == 'owner' or not req or req == OWNER:
         slack.post(
@@ -242,8 +229,7 @@ def reply_requester(task, text, files=(), approved=False):
 
 
 def send_to_requester(task, text, files=()):
-    """Deliver as the companion: in their channel thread if the companion can post there, otherwise in a DM. A copy line goes to
-    the owner's errand thread."""
+    """Send the reply in the requester's thread if possible, else by DM, and note it in the owner's thread."""
     who, req = slack.name(task['requester']), task['requester']
     targets = [] if task.get('source_im') else [(task['source_ch'], task.get('source_thread'))]
     for target, tts in [*targets, ('dm', None)]:
@@ -309,13 +295,11 @@ def decide_reply(task, k, send):
     save()
 
 
-# ---------------------------------------------------------------- temporary logins
-_creds = {}  # task key -> login, in memory only (never saved)
+_creds = {}  # task key -> login; memory only, never persist
 
 
 def ask_credential(task, c):
-    """A temporary first-login password for the person who asked: the owner sees the login (password hidden)
-    and decides; on Send it goes to that person in a private DM, never into a thread."""
+    """Ask the owner whether to DM a temporary password to the requester (never into a thread)."""
     req = task.get('requester')
     if not req or req == OWNER or not c.get('password'):
         slack.post(
@@ -387,17 +371,15 @@ def decide_credential(task, k, send):
     save()
 
 
-# ---------------------------------------------------------------- buttons (owner only)
 def owner_action(handler, locked=True):
-    """Wrap a button handler: acknowledge, ignore anyone but the owner, find the task from the button's value
-    (or the message it sits on), run under the state lock unless it waits on T3 (Stop)."""
+    """Wrap a button handler: ack, owner only, resolve the task, run under the state lock if `locked`."""
 
     def run(ack, body):
         ack()
         if body['user']['id'] != OWNER:
             return
         k = body['actions'][0].get('value') or ''
-        if k not in state['tasks']:  # the Stop button sits on the head message itself
+        if k not in state['tasks']:
             k = key(body['channel']['id'], body['message']['ts'])
         task = state['tasks'].get(k)
         if not task:

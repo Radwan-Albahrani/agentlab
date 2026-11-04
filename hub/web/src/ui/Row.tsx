@@ -63,7 +63,6 @@ const BOX_TONE = { ok: styles.ok, warn: styles.boxWarn, bad: styles.boxBad, info
 
 export const List = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.list)}>{children}</div>;
 
-/** The square at the start of a row: an icon in a tone, or any mark (brand logo, letter). */
 export const IconBox = ({ icon, tone = 'idle', children }: { icon?: string; tone?: Tone; children?: ReactNode }) => (
   <div {...stylex.props(styles.box, BOX_TONE[tone])}>{icon ? <Icon name={icon} /> : children}</div>
 );
@@ -82,7 +81,6 @@ interface RowProps {
   wrap?: boolean;
 }
 
-/** One line in a list: what it is, a detail line, when, and what you can do. */
 export function Row({ icon, tone, lead, title, detail, meta, actions, accent, nestedUnder, flat, wrap }: RowProps) {
   return (
     <div

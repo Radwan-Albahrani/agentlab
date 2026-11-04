@@ -54,7 +54,6 @@ export function arrange(items: Pull[], query: string, sort: PullSort, filter: Pu
   return [...kept].sort(by[sort]);
 }
 
-/** Your PRs first ("Authored"), then everyone else's. */
 export function grouped(items: Pull[], me: string): { mine: Pull[]; others: Pull[] } {
   const own = (p: Pull) => !!me && p.author.toLowerCase() === me.toLowerCase();
   return { mine: items.filter(own), others: items.filter((p) => !own(p)) };

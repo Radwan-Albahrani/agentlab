@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Accounts app for one agent (port 8790; the edge serves it at /_agentlab/accounts/ with the prefix stripped), JSON
-only; the hub renders it:
-  GET  /api/page               sign-ins, connectors, devices, env vars (page)       /api/summary  the agent's card
-  GET  /api/state?p=<flow>     one live sign-in (also mcp-<name>)                   /api/env/value?k=<name>
-  POST /api/act                one button: {action, p, ...} (page.act)              /api/env/set|delete|import
-  GET  /api/onboarding         {done, ready, steps}                                  POST /api/onboarding/finish
-  POST /api/pair {kind, label, host?} one-time T3 pairing link (browser | app)    GET  /api/devices
-  POST /api/devices/revoke {id}                                                    POST /api/t3/*  companion bridge
-No login of its own: people reach it only through the edge, whose gate checks who signed in and that this is their
-agent; the hub and gate call it over the agent's own network, which no other agent can reach. The bridge also needs
-its key."""
+"""Accounts JSON API for one agent; no login of its own: only the edge gate and the hub can reach it."""
 
 import json
 import threading
@@ -30,7 +20,6 @@ PORT = 8790
 ENV_ACTIONS = ('set', 'delete', 'import')
 
 
-# "Browser" while the agent has no browser open: the viewer only runs alongside one, so say so and check again.
 NO_BROWSER = (
     '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     '<meta http-equiv="refresh" content="5"><title>No browser open</title>'
@@ -69,7 +58,7 @@ class Handler(BaseHTTPRequestHandler):
         proto = self.headers.get('X-Forwarded-Proto', 'https')
         if url.path == '/health':
             return self.reply(200, 'ok', 'text/plain')
-        if url.path == '/':  # the page lives in the hub
+        if url.path == '/':
             hub = public_url('hub', host, proto)
             if not hub:
                 return self.reply(404, 'open this page from the hub', 'text/plain')
@@ -89,7 +78,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == '/api/env/value':
             key = query.get('k', '')
             return self.json({'key': key, 'value': envfile.load().get(key)})
-        if url.path == '/browser':  # the viewer runs only while a browser is open
+        if url.path == '/browser':
             if browser_up() and (view := public_url('browser', host, proto)):
                 ws = f'{urlparse(view).path.strip("/")}/websockify'.lstrip('/')  # under the edge's path prefix, if any
                 return self.reply(302, '', 'text/plain', f'{view}/vnc.html?autoconnect=1&resize=scale&path={ws}')
@@ -139,7 +128,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=connectors.migrate, daemon=True).start()
-    for flow in signin.FLOWS:  # warm the status cache
+    for flow in signin.FLOWS:
         threading.Thread(target=signin.refresh, args=(flow,), daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), Handler).serve_forever()
 

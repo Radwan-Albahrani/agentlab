@@ -1,6 +1,5 @@
 #!/bin/bash
-# One Android SDK for every agent (mounted read-only): platform-tools, the emulator and the configured system image.
-# Installing it accepts the Android SDK licenses (https://developer.android.com/studio/terms).
+# One Android SDK shared read-only by every agent.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 [ -n "${AGENTLAB_ANDROID}" ] || { ok "Android off"; exit 0; }
@@ -10,8 +9,7 @@ if [ -x "${sdk}/emulator/emulator" ] && [ -d "${image_dir}" ]; then
   ok "Android SDK in ${sdk}"
   exit 0
 fi
-# The command-line tools need Java 17+. Distros carry different ones (Debian 13: 21 and 25; Ubuntu 24.04: 17 and 21),
-# so take the first the host has, newest LTS first (same order as cli/agentlab/preflight.py).
+# Java 17+, newest LTS first; keep in the same order as cli/agentlab/preflight.py.
 jre=$(pick_package openjdk-21-jre-headless openjdk-25-jre-headless openjdk-17-jre-headless) ||
   { echo "unsupported host: apt has no Java 17+ (openjdk-21/25/17-jre-headless)"; exit 1; }
 apt_install "${jre}" unzip

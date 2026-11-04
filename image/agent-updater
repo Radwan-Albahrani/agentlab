@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Keeps the agent's own tools current without anyone restarting anything (supervisord program `updater`).
-
-Every AGENTLAB_UPDATE_HOURS (default 6; 0 = never install) it re-runs the same installers the entrypoint uses
-(/etc/agent/tools.sh). The CLIs pick up new versions on their next run, but a running T3 server keeps the version it
-started with, so whenever the installed T3 is newer than the running one, it restarts ONLY the t3 program, and only
-while no T3 run is in progress (a restart mid-turn would cut it off). Busy: it checks again every few minutes, for up
-to AGENTLAB_UPDATE_WAIT_HOURS (default 4). Still busy then, AGENTLAB_ON_BUSY decides: "defer" (default) waits for the
-next update cycle; "resume" restarts T3 anyway, and T3 picks the turns it cut off back up by itself.
-
-The first check comes ~2 min after start, so a T3 installed while the server was already starting is picked up too."""
+"""Supervisord program `updater`: re-runs tools.sh installers and restarts t3 onto a new version only while idle."""
 
 import os
 import re
@@ -25,7 +16,7 @@ WAIT_HOURS = float(os.environ.get('AGENTLAB_UPDATE_WAIT_HOURS') or 4)
 ON_BUSY = os.environ.get('AGENTLAB_ON_BUSY') or 'defer'
 FIRST_CHECK_S = 120
 RETRY_S = 300
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')  # every other run status means a turn is in progress
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')
 
 
 def log(msg):
@@ -33,7 +24,6 @@ def log(msg):
 
 
 def due(now=None):
-    """Installers ran longer ago than HOURS (or never)."""
     if HOURS <= 0:
         return False
     try:
@@ -62,7 +52,7 @@ def installed_t3(run=subprocess.run):
 
 
 def running_t3(ps=None):
-    """The version the T3 server runs, from its binary's path (~/.t3/runtime/versions/<v>/t3); '' when not running."""
+    """The running T3 server's version, from its binary's path; '' when not running."""
     if ps is None:
         ps = subprocess.run(['ps', '-eo', 'args'], capture_output=True, text=True, check=False).stdout
     found = sorted({m for m in re.findall(r'/\.t3/runtime/versions/(\d[\w.-]*)/', ps)})
@@ -70,7 +60,7 @@ def running_t3(ps=None):
 
 
 def idle(db=T3_DB):
-    """No T3 run in progress. Unreadable DB counts as busy: better a later restart than a cut-off turn."""
+    """No T3 run in progress; an unreadable DB counts as busy."""
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
             marks = ','.join('?' * len(SETTLED))
@@ -81,8 +71,7 @@ def idle(db=T3_DB):
 
 
 def align_t3(run=subprocess.run, ps=None, db=T3_DB):
-    """Restart the t3 program onto the installed version when it differs and nothing is running.
-    -> 'current' | 'restarted' | 'busy' | 'unknown'"""
+    """-> 'current' | 'restarted' | 'busy' | 'unknown'"""
     have, want = running_t3(ps), installed_t3(run)
     if not have or not want:
         return 'unknown'
@@ -97,20 +86,17 @@ def align_t3(run=subprocess.run, ps=None, db=T3_DB):
 
 
 def resume_t3(run=subprocess.run):
-    """Restart t3 although a turn is running. T3 resumes the turns it cut off when it starts ("T3 Code restarted and
-    resumed this turn"), so nothing is sent to them."""
+    """Restart t3 mid-turn; T3 resumes cut-off turns itself, so nothing is sent to them."""
     log('restarting T3 although a turn is running; T3 resumes it after the restart')
     run([*SUPERVISOR, 'restart', 't3'], check=False)
 
 
 class Waiter:
-    """How long T3 has been held back by a busy agent, and what to do at the end of the wait."""
-
     def __init__(self, clock=time.time):
         self.clock, self.since, self.until = clock, None, 0
 
     def step(self, run=subprocess.run, ps=None, db=T3_DB, sleep=time.sleep):
-        """One check. -> 'current' | 'restarted' | 'busy' | 'resumed' | 'deferred' | 'unknown'"""
+        """-> 'current' | 'restarted' | 'busy' | 'resumed' | 'deferred' | 'unknown'"""
         if self.clock() < self.until:
             return 'deferred'
         state = align_t3(run, ps, db)

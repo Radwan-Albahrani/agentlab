@@ -1,7 +1,4 @@
-"""agentctl: make one Linux server a private cluster of AI coding agents, from /etc/agentlab/cluster.toml.
-Run any command with --json for machine-readable output. Exit codes: 0 done, 1 failed, 2 needs --yes, sudo or a
-manual step. Only `setup` (at a terminal) and `secret set` (a hidden prompt) ever ask anything; commands that change
-the host re-run themselves through sudo."""
+"""agentctl CLI: exit 0 done, 1 failed, 2 needs --yes, sudo or a manual step."""
 
 import argparse
 import json
@@ -214,8 +211,7 @@ class DoctorFailed(Failed):
 
 
 def fresh_code_then_rerun():
-    """Setup is what people re-run after a fix, so it starts on the latest agentlab: fast-forward the checkout and
-    re-run on the new code. Anything that stops the pull (not a checkout, local changes) is a note, not a failure."""
+    """Fast-forward the checkout and re-run on the new code; a failed pull is only a note."""
     try:
         before, after = update.pull('main')
     except Failed as e:
@@ -227,7 +223,6 @@ def fresh_code_then_rerun():
 
 
 def run_doctor(cfg):
-    """Checks print as a list for people; with --json they are the result, not messages."""
     checks = doctor.run_all(cfg)
     if not OUT.json:
         for ch in checks:
@@ -240,8 +235,7 @@ def run_doctor(cfg):
 
 
 def global_first(argv):
-    """`agentctl doctor --json` and `agentctl --json doctor` both work: the global options move to the front, so an
-    agent can append `--json` to any command."""
+    """Move global options to the front, so `--json` works anywhere on the command line."""
     front, rest, i = [], [], 0
     while i < len(argv):
         a = argv[i]

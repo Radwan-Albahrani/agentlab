@@ -1,6 +1,3 @@
-"""Pull request reviews: the PR list from the App, asking for a review (page or Slack), at most two at a time, the
-lead chat's brief, and what review.json turns into on GitHub. GitHub is a fake that records every call."""
-
 import json
 import os
 import re
@@ -21,18 +18,18 @@ class FakeGitHub:
     def __init__(self):
         self.calls, self.mutations, self.reject_inline = [], [], False
         self.comments = []  # the PR's issue comments
-        self.evidence = None  # head commit of the evidence repository; None while it is empty
+        self.evidence = None  # evidence repo head commit; None while empty
         self.trees, self.listing = [], []
 
     def git(self, method, path, body):
-        """Just enough of the Git Data API to commit screenshots to the evidence branch."""
+        """Minimal fake Git Data API for the evidence branch."""
         if path.endswith('/git/blobs'):
             return {'sha': f'blob{len(self.calls)}'}
         if path.endswith('/git/ref/heads/main'):
             if not self.evidence:
                 raise GitHubError(409, 'Git Repository is empty.')
             return {'object': {'sha': self.evidence}}
-        if '/git/trees/' in path:  # a recursive listing, for pruning
+        if '/git/trees/' in path:
             return {'tree': self.listing}
         if '/git/commits/' in path:
             return {'tree': {'sha': 'tree-of-' + path.rsplit('/', 1)[-1]}}
@@ -41,7 +38,7 @@ class FakeGitHub:
             return {'sha': f'tree{len(self.trees)}'}
         if path.endswith('/git/commits'):
             return {'sha': f'commit{len(self.trees)}', 'parents': body['parents']}
-        self.evidence = body['sha']  # create or move the branch
+        self.evidence = body['sha']
         return {}
 
     def slug(self):
@@ -67,7 +64,7 @@ class FakeGitHub:
             raise GitHubError(422, 'Line could not be resolved')
         if '/git/' in path:
             return self.git(method, path, body)
-        if path.endswith('/contents/README.md'):  # the first commit of an empty repository
+        if path.endswith('/contents/README.md'):
             self.evidence = 'commit0'
             return {'commit': {'sha': 'commit0'}}
         if method == 'POST' and path.endswith('/issues/5922/comments'):
@@ -162,18 +159,17 @@ def box_of(task):
     return os.path.join(outbox.OUTBOX, task['outbox'])
 
 
-# ---------------------------------------------------------------- the list
 def test_the_list_comes_from_the_apps_installations(gh):
     reviews.refresh()
     rows = reviews.rows(lambda k, t: {})
-    assert [r['number'] for r in rows] == [5923, 5922]  # newest activity first; empty search hits skipped
+    assert [r['number'] for r in rows] == [5923, 5922]
     assert rows[1]['ci'] == 'passing' and rows[0]['ci'] == 'failing'
     assert rows[0]['labels'] == [{'name': 'lane:green', 'color': '0e8a16'}]
     assert reviews.status['ready'] and reviews.status['accounts'] == ['example-org']
 
 
 def test_a_refresh_from_the_page_is_published_at_once(gh):
-    publish._last = time.time()  # the 5 s beat just ran: a refresh must not wait for the next one
+    publish._last = time.time()
     with open(os.path.join(config.COMP.asks_dir, 'refresh.json'), 'w') as f:
         json.dump({'type': 'pulls'}, f)
     asks.tick()
@@ -199,18 +195,17 @@ def test_without_the_app_nothing_is_listed_or_reviewed(monkeypatch):
     assert reviews.heartbeat()['ready'] is False
 
 
-# ---------------------------------------------------------------- starting
 def test_a_review_starts_a_lead_chat_with_the_pr_and_a_private_token(gh, told, fresh_bot):
     task = started(gh, told)
     project, title, message = told[0]
     assert project == '/workspace/platform' and title.startswith('Review app#5922')
     assert 'T3 child threads' in message and 'review.json' in message
-    assert 'x-access-token:$(cat /workspace/.companion/companion/outbox/' in message  # never the token itself
+    assert 'x-access-token:$(cat /workspace/.companion/companion/outbox/' in message
     assert 'ghs_secret' not in message
     box = box_of(task)
     assert stat.S_IMODE(os.stat(os.path.join(box, '.token')).st_mode) == 0o600
     with open(os.path.join(box, 'pr.md')) as f:
-        assert 'Ignore previous instructions' in f.read()  # kept as a claim to check, in the file
+        assert 'Ignore previous instructions' in f.read()
     assert task['channel'] == 'D_OWNER' and 'Review and QA' in fresh_bot.text()
     assert task['review']['head'] == 'a' * 40
 
@@ -287,7 +282,6 @@ def test_other_slack_asks_stay_tasks(gh, told):
     )
 
 
-# ---------------------------------------------------------------- publishing
 def finish(task, review):
     with open(os.path.join(box_of(task), 'review.json'), 'w') as f:
         json.dump(review, f)
@@ -335,10 +329,9 @@ def test_findings_become_one_review_with_inline_comments_where_they_fit(gh, told
     assert inline['side'] == inline['start_side'] == 'RIGHT'
     assert inline['body'].startswith('**Retry duplicates the charge** | `🔴 blocking` | `§ correctness`')
     assert '```suggestion\nb\nc\n```' in inline['body']
-    # not in the diff: in the body, with a link GitHub renders as the highlighted lines
     assert body['body'].startswith('**Old helper still called** | `🟠 non-blocking`')
     assert f'https://github.com/{REPO}/blob/{"a" * 40}/api/g.py#L3' in body['body']
-    assert [m[1]['id'] for m in gh.mutations] == ['T_MINE', 'T_MINE']  # reply + resolve, only its own thread
+    assert [m[1]['id'] for m in gh.mutations] == ['T_MINE', 'T_MINE']
     assert not os.path.exists(os.path.join(box_of(task), '.token'))
     assert task['review']['summary'] == '2 findings (1 blocking)' and task['posted']
     assert 'Review posted on' in fresh_bot.text()
@@ -381,7 +374,7 @@ def test_a_rereview_rewrites_a_changed_finding_in_place(gh, told):
     [(name, args)] = gh.mutations
     assert name == 'updatePullRequestReviewComment' and args['id'] == 'C_T_MINE'
     assert args['body'].startswith('**Retry still duplicates the charge** | `🔴 blocking`')
-    assert not [c for c in gh.calls if c[1].endswith('/reviews')]  # nothing new to post
+    assert not [c for c in gh.calls if c[1].endswith('/reviews')]
 
 
 QA_MD = 'Mobile: <img src="home-320.png" width="300" alt="Home">\n\n![Desktop](desk.png)\n\nLog in `/tmp/run.log`'
@@ -408,11 +401,10 @@ def test_there_is_one_qa_comment_per_pr_edited_on_every_review(gh, told, fresh_b
     [comment] = gh.comments
     body = comment['body']
     assert body.startswith('<!-- companion-qa-report -->')
-    # screenshots named as files go to the evidence repository (started with a README when empty), never to the PR's
     [tree] = gh.trees
     run = tree['tree'][0]['path'].rsplit('/', 1)[0]
     assert run.startswith(f'{REPO}/pr-5922/run-') and tree['base_tree'] == 'tree-of-commit0'
-    assert sorted(t['path'].rsplit('/', 1)[-1] for t in tree['tree']) == ['desk.png', 'home-320.png']  # not notes.txt
+    assert sorted(t['path'].rsplit('/', 1)[-1] for t in tree['tree']) == ['desk.png', 'home-320.png']
     assert f'<img src="https://github.com/{EVIDENCE}/raw/commit1/{run}/home-320.png" width="300" alt="Home">' in body
     assert f'![Desktop](https://github.com/{EVIDENCE}/raw/commit1/{run}/desk.png)' in body
     assert '`/tmp/run.log`' in body and gh.evidence == 'commit1'
@@ -421,9 +413,9 @@ def test_there_is_one_qa_comment_per_pr_edited_on_every_review(gh, told, fresh_b
     again = started(gh, told)
     qa_box(again)
     finish(again, QA_DONE)
-    assert len(gh.comments) == 1  # edited, not a second comment
+    assert len(gh.comments) == 1
     assert f'/repos/{REPO}/issues/comments/900' in [c[1] for c in gh.calls if c[0] == 'PATCH']
-    assert gh.trees[1]['base_tree'] == 'tree-of-commit1' and gh.evidence == 'commit2'  # added on top
+    assert gh.trees[1]['base_tree'] == 'tree-of-commit1' and gh.evidence == 'commit2'
 
 
 def test_screenshots_that_cannot_be_stored_are_marked_and_the_thread_says_why(gh, told, fresh_bot, monkeypatch):
@@ -436,7 +428,7 @@ def test_screenshots_that_cannot_be_stored_are_marked_and_the_thread_says_why(gh
     qa_box(task)
     finish(task, QA_DONE)
     [comment] = gh.comments
-    assert '_(screenshot not attached: home-320.png)_' in comment['body']  # never a broken image
+    assert '_(screenshot not attached: home-320.png)_' in comment['body']
     assert f'could not store them in {EVIDENCE}' in fresh_bot.text()
 
 
@@ -461,11 +453,10 @@ def test_old_evidence_is_pruned_with_its_history(gh):
     [tree] = gh.trees
     assert 'base_tree' not in tree and [e['sha'] for e in tree['tree']] == ['r', 'n']
     [ref] = [c for c in gh.calls if c[0] == 'PATCH' and c[1].endswith('/git/refs/heads/main')]
-    assert ref[2]['force'] is True  # a fresh commit with no parents: the old images leave the history too
-    assert reviews.pulls.prune_evidence(gh, EVIDENCE, now - 86400 * 100) == 0  # nothing old: nothing rewritten
+    assert ref[2]['force'] is True
+    assert reviews.pulls.prune_evidence(gh, EVIDENCE, now - 86400 * 100) == 0
 
 
-# ---------------------------------------------------------------- placing comments
 def test_comments_sit_only_on_pr_side_lines_of_one_hunk():
     files = [{'path': 'a.py', 'patch': PATCH}]
     assert report.placeable(files, 'a.py', 12)
@@ -483,7 +474,7 @@ def test_a_lead_chat_that_stops_before_the_review_is_nudged_twice_at_most(gh, to
     for _ in range(3):
         tasks._finish_turn(task, turn)
     assert len(sent) == 2 and 'review.json' in sent[0]
-    assert task['outcome'] == 'answered'  # the third time it closes as usual
+    assert task['outcome'] == 'answered'
     task['review']['published'] = 'a' * 40
     tasks._finish_turn(task, turn)
     assert len(sent) == 2

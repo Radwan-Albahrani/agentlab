@@ -10,7 +10,7 @@ from .settings import DATA, load, lock, random_text
 
 BARK = os.environ.get('BARK_URL', '')  # empty: phone pushes are off
 LOG = os.path.join(DATA, 'notify-log.json')
-recent = []  # newest first, shown on the page; mutated in place
+recent = []  # newest first; mutated in place
 
 
 def load_recent():
@@ -44,7 +44,7 @@ def send(title, body, subtitle='', level='active', group='agents', s=None, kind=
     while len(json.dumps(msg).encode()) > (2600 if s['encrypt'] else 3500) and len(msg['body']) > 200:
         msg['body'] = msg['body'][: int(len(msg['body']) * 0.85)].rsplit(' ', 1)[0] + '…'  # APNs: 4 KB per push
     if s['encrypt']:
-        iv = random_text()  # fresh IV per push
+        iv = random_text()
         ct = base64.b64encode(aes_cbc(s['enc_key'].encode(), iv.encode(), json.dumps(msg).encode())).decode()
         payload = {
             'device_key': s['device_key'],
@@ -92,7 +92,7 @@ def post(payload):
         with urllib.request.urlopen(req, timeout=15) as r:
             res = json.loads(r.read() or b'{}')
         return res.get('code') == 200, res.get('message', '')
-    except urllib.error.HTTPError as e:  # Bark explains itself in the body
+    except urllib.error.HTTPError as e:
         try:
             detail = json.loads(e.read()).get('message', str(e))
         except ValueError:
@@ -113,7 +113,7 @@ def server_up():
 
 
 def aes_cbc(key, iv, data):
-    """AES-CBC with PKCS7 padding through libcrypto (already loaded by Python's ssl; no extra package)."""
+    """AES-CBC with PKCS7 padding through libcrypto (no extra package)."""
     lib = ctypes.CDLL('libcrypto.so.3')
     vp, cp, ip = ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)
     lib.EVP_CIPHER_CTX_new.restype = vp

@@ -37,7 +37,6 @@ const styles = stylex.create({
   on: { backgroundColor: colors.fg, color: colors.bg },
 });
 
-/** The phone top bar: one scrollable row of menu pills, then the theme toggle. */
 export function PhoneNav({ menu }: { menu: Menu }) {
   const { pathname } = useLocation();
   return (

@@ -1,6 +1,4 @@
-"""Coolify's API, for deploy = "coolify": one Coolify service per stack, in one project, with an environment per
-agent (its companions share it) and one for the core. Coolify recreates only the containers whose definition changed,
-so one stack's deploy never restarts another's."""
+"""Coolify's API for deploy = "coolify": one service per stack, one environment per agent plus one for the core."""
 
 import base64
 import json
@@ -47,7 +45,7 @@ class Api:
         try:
             return json.loads(body)
         except ValueError:
-            return body.decode(errors='replace').strip()  # a few endpoints answer plain text (/version: "4.5.3")
+            return body.decode(errors='replace').strip()
 
     def server(self):
         servers = self.call('GET', '/servers')
@@ -117,8 +115,7 @@ DONE = {'finished', 'failed', 'cancelled', 'cancelled-by-user'}
 
 
 def wait(api, stack, deployment, timeout_s=20 * 60, sleep=None, clock=None):
-    """Until Coolify finishes a queued deployment; its log tail when it fails. (Service deploys usually start
-    without a deployment id: the caller then watches the containers instead.)"""
+    """Until Coolify finishes a queued deployment; its log tail when it fails."""
     import time  # noqa: PLC0415 - patched in tests through the arguments
 
     sleep, clock = sleep or time.sleep, clock or time.time

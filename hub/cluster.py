@@ -1,11 +1,4 @@
-"""The cluster as agentctl rendered it (cluster.json, mounted read-only): agents, companions, limits, the domain.
-Each agent runs its Accounts app (JSON API) on :8790 inside its own network; the hub joins every agent network,
-reads it and forwards the page's buttons to it.
-
-People reach their own agent on the one cluster domain; an admin opens someone else's through the gate's
-/_agentlab/view/<id> (it sets the view cookie, then goes to `next`), so every agent link below goes through it.
-One-person setups may publish an agent's tools on host ports instead (cluster.json agents[].publish): then links go
-straight to http://<the host this page was opened with>:<port>, the way people reach them."""
+"""cluster.json as agentctl rendered it (agents, companions, limits, domain), links to agents, and their Accounts API."""
 
 import contextvars
 import json
@@ -17,16 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 CONFIG = os.environ.get('HUB_CONFIG', '/etc/agentlab/cluster.json')
-AGENT_URL = os.environ.get('HUB_AGENT_URL', '')  # '...{id}...' template; tests point it at fake agents
+AGENT_URL = os.environ.get('HUB_AGENT_URL', '')  # '...{id}...' template
 ACCOUNTS_PORT = 8790
 ACCOUNTS = {'claude': 'Claude', 'codex': 'Codex', 'github': 'GitHub'}
 HOSTNAME = re.compile(r'^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$')
 _cache = {'mtime': None, 'data': {}}
-_host = contextvars.ContextVar('request_host', default='')  # the host this request came in on, without its port
+_host = contextvars.ContextVar('request_host', default='')
 
 
 def load():
-    """cluster.json, re-read when agentctl rewrites it (agents added or removed show up without a restart)."""
     try:
         mtime = os.path.getmtime(CONFIG)
     except OSError:
@@ -41,7 +33,6 @@ def load():
 
 
 def agents():
-    """{id: agent} in config order."""
     return {a['id']: a for a in load().get('agents') or [] if a.get('id')}
 
 
@@ -79,7 +70,7 @@ def links(agent_id):
         'accounts': link(agent_id, '/_agentlab/accounts/'),
         'terminal': link(agent_id, '/_agentlab/terminal/'),
         'files': link(agent_id, '/_agentlab/files/'),
-        'browser': link(agent_id, '/_agentlab/accounts/browser'),  # checks a browser is open, then the viewer
+        'browser': link(agent_id, '/_agentlab/accounts/browser'),
     }
     host, ports = request_host(), published(agent_id)
     if host:
@@ -91,7 +82,7 @@ def links(agent_id):
         }
         out.update({k: f'http://{host}:{ports[t]}{p}' for k, (t, p) in direct.items() if t in ports})
         if ports:
-            out['accounts'] = f'/agents/{quote(agent_id, safe="")}/accounts'  # the hub's own page for it
+            out['accounts'] = f'/agents/{quote(agent_id, safe="")}/accounts'
     return out
 
 
@@ -107,7 +98,7 @@ def owner(agent_id):
 
 
 def owners():
-    """{owner email: [their agent ids]} in config order (one person may own several agents)."""
+    """{owner email: [their agent ids]}"""
     out = {}
     for a in agents().values():
         out.setdefault((a.get('owner') or '').lower(), []).append(a['id'])
@@ -125,13 +116,12 @@ def companions():
 
 
 def display_name(name):
-    """How a companion calls itself (cluster.json companions[].display_name), else its name capitalised."""
     c = next((c for c in load().get('companions') or [] if c.get('name') == name), {})
     return c.get('display_name') or name.capitalize()
 
 
 def extra_stacks():
-    """Compose projects that aren't agentlab's but are shown on Services (restart, logs; never deployed from here)."""
+    """Non-agentlab compose projects shown on Services (restart and logs only)."""
     return list((load().get('hub') or {}).get('extra_stacks') or [])
 
 
@@ -152,7 +142,7 @@ def size_mb(text):
 
 
 def pool_mb():
-    """All agents together (agentlab.slice MemoryMax)."""
+    """Memory for all agents together (agentlab.slice MemoryMax)."""
     return size_mb((load().get('limits') or {}).get('total_memory')) or 0
 
 
@@ -170,7 +160,7 @@ def call(agent_id, path, body=None, timeout=60):
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
         status, raw = e.code, e.read()
-    except Exception:  # agent stopped / starting
+    except Exception:
         return 502, None
     try:
         return status, json.loads(raw)
@@ -184,7 +174,6 @@ def summary(agent_id):
 
 
 def summaries(names):
-    """{id: summary or None} for these agents, asked in parallel."""
     if not names:
         return {}
     with ThreadPoolExecutor(len(names)) as ex:

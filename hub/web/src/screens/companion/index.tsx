@@ -32,9 +32,6 @@ export function Companion() {
   );
 }
 
-/** The companion's page: what needs you and what runs first (Overview), then a tab per kind of work, so no view is
- * a long scroll through everything. Tabs only appear for what this companion has (pull requests need a GitHub App,
- * polls need polls). */
 function CompanionView({ d }: { d: Data }) {
   const now = useNow();
   const waiting = d.tasks.filter((t) => t.status === 'waiting').length;

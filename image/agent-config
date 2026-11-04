@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-start configuration the entrypoint delegates (kept out of bash so it can be tested):
+"""Per-start configuration the entrypoint delegates:
 agent-config codex <config.toml> <command>   register the browser tool in Codex's config, replacing any older form
 agent-config notes <agent id> [--android]    environment notes for the agents (CLAUDE.md / AGENTS.md belong to them)
 agent-config skills                          install our skills for Claude Code and Codex (only our own folders)"""
@@ -13,13 +13,12 @@ import tomllib
 INSTRUCTIONS = '/etc/agent/agent-instructions.md'
 BUILTIN_BEGIN = '# BEGIN agent-builtin (written by the container entrypoint on every start)'
 ALREADY_TOLD = ('agent-environment', 'Your environment (agent:', 'Your environment (agent profile')
-# The one span of an agent's CLAUDE.md / AGENTS.md that is ours (older images wrote "managed by the container"): it is
-# refreshed on every start; every byte outside it belongs to the agent and is never touched.
+# Our span of CLAUDE.md / AGENTS.md; every byte outside it belongs to the agent.
 BLOCK = re.compile(r'<!-- BEGIN agent-environment\b[^\n]*?-->(\r?\n)(.*?)<!-- END agent-environment -->', re.S)
 BLOCK_BEGIN = '<!-- BEGIN agent-environment (managed by agentlab; edits here are overwritten) -->'
 BLOCK_END = '<!-- END agent-environment -->'
 SKILLS = '/etc/agent/skills'
-MANAGED = '.agentlab-managed'  # marks a skill folder as ours: replaced on every start, never someone else's
+MANAGED = '.agentlab-managed'  # marks a skill folder as ours to replace
 
 
 def read(path):
@@ -30,8 +29,7 @@ def read(path):
 
 
 def codex_with_browser(text, command):
-    """Codex's config with exactly one browser-tool entry, in our managed block. `codex mcp ...` rewrites the file and
-    can drop our markers, so every form of an earlier entry is removed first; other tables and managed blocks stay."""
+    """Codex config with exactly one browser-tool entry; `codex mcp` rewrites can drop our markers, so strip all forms."""
     text = re.sub(r'\n?# BEGIN agent-builtin.*?# END agent-builtin\n?', '\n', text, flags=re.S)
     text = re.sub(r'^\[mcp_servers\.playwright(\.[^\]]+)?\]\n(?:(?![\[#])[^\n]*\n?)*', '', text, flags=re.M)
     text = re.sub(r'^# (BEGIN|END) agent-builtin.*\n?', '', text, flags=re.M)
@@ -53,8 +51,7 @@ def write_codex(path, command):
 
 
 def sections(text, keep):
-    """Keep or drop each optional <!-- name --> ... <!-- /name --> section (android, companions): the agents are told
-    only about what this agent actually has."""
+    """Keep or drop each optional <!-- name --> ... <!-- /name --> section."""
     for name, on in keep.items():
         if not on:
             text = re.sub(rf'<!-- {name} -->.*?<!-- /{name} -->\n?', '', text, flags=re.S)
@@ -63,8 +60,7 @@ def sections(text, keep):
 
 
 def refresh_block(text, body):
-    """`text` with its first managed block's content replaced by `body` (in the file's own line endings), or None
-    when it has no complete block."""
+    """`text` with its managed block's content replaced by `body` (line endings kept), or None if it has none."""
     m = BLOCK.search(text)
     if not m:
         return None
@@ -74,7 +70,7 @@ def refresh_block(text, body):
 
 
 def _raw(path):
-    """The file exactly as stored (line endings kept), or None when it's missing or not UTF-8 text."""
+    """The file with line endings kept, or None when missing or not UTF-8."""
     try:
         with open(path, encoding='utf-8', newline='') as f:
             return f.read()
@@ -83,9 +79,7 @@ def _raw(path):
 
 
 def write_notes(agent, home, android=False, companions=()):
-    """environment.md (always current). Claude gets one @import line, Codex (no imports) the text itself. A file that
-    already has our marked block gets that block refreshed; one without it gets the block appended once, unless it
-    was told some other way before. Nothing else in either file is ever changed."""
+    """Write environment.md and refresh (or append once) our block in CLAUDE.md (@import) and AGENTS.md (text)."""
     text = read(INSTRUCTIONS).replace('{{AGENT_ID}}', agent).replace('{{COMPANIONS}}', ', '.join(companions))
     text = sections(text, {'android': android, 'companions': bool(companions)})
     notes = os.path.join(home, '.config', 'agent', 'environment.md')
@@ -99,7 +93,7 @@ def write_notes(agent, home, android=False, companions=()):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         current = _raw(path)
         if current is None and os.path.exists(path):
-            continue  # not text we can read: leave it
+            continue
         refreshed = refresh_block(current or '', body)
         if refreshed is not None:
             if refreshed != current:
@@ -107,25 +101,24 @@ def write_notes(agent, home, android=False, companions=()):
                     f.write(refreshed)
             continue
         if current and (notes in current or any(marker in current for marker in ALREADY_TOLD)):
-            continue  # told some other way before (no marked block): leave the file alone
+            continue  # told some other way before
         with open(path, 'a', encoding='utf-8', newline='') as f:
             f.write(('\n\n' if (current or '').strip() else '') + f'{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n')
 
 
 def skill_roots(home):
-    """Where each CLI looks for user skills: Claude Code ~/.claude/skills, Codex $CODEX_HOME/skills."""
     codex_home = os.environ.get('CODEX_HOME') or os.path.join(home, '.codex')
     return [os.path.join(home, '.claude', 'skills'), os.path.join(codex_home, 'skills')]
 
 
 def install_skills(src, home):
-    """Copy each skill in src into every root, replacing only folders that are ours (or absent) -> skipped paths."""
+    """Copy each skill into every root, replacing only our own folders -> skipped paths."""
     skipped = []
     for name in sorted(os.listdir(src)) if os.path.isdir(src) else []:
         for root in skill_roots(home):
             dest = os.path.join(root, name)
             if os.path.exists(dest) and not os.path.exists(os.path.join(dest, MANAGED)):
-                skipped.append(dest)  # someone else's skill by that name: leave it
+                skipped.append(dest)
                 continue
             shutil.rmtree(dest, ignore_errors=True)
             shutil.copytree(os.path.join(src, name), dest)

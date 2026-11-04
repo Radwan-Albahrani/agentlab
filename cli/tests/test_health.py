@@ -1,7 +1,3 @@
-"""Agents are ready only when they answer (#18): apply waits for their health checks and names the one that isn't,
-doctor reports a stuck start, and with Coolify each agent is taken off Coolify's network as soon as its deploy settles
-while the agent waits for exactly that before its first downloads."""
-
 import contextlib
 import io
 import json
@@ -43,7 +39,6 @@ class State(unittest.TestCase):
         self.assertEqual((s, detail), ('unhealthy', 'curl: (7) Failed to connect'))
 
     def test_created_during_a_rollout_is_starting(self):
-        # #24: Coolify creates the new container a moment before starting it
         self.assertEqual(self.state(['c1'], state_json('created', health_status=None))[0], 'starting')
         self.assertEqual(self.state(['c1'], state_json('restarting', health_status=None))[0], 'starting')
         failed = '{"Status": "created", "ExitCode": 0, "Error": "port is already allocated"}'
@@ -130,8 +125,6 @@ class DoctorCheck(unittest.TestCase):
 
 
 class CoreChecks(unittest.TestCase):
-    """#22: doctor said all OK while the edge and gate were only Created."""
-
     def checks(self, states):
         from agentlab import doctor  # noqa: PLC0415
 
@@ -172,8 +165,6 @@ class NetworkWait(unittest.TestCase):
 
 
 class PromptIsolation(unittest.TestCase):
-    """A deployed agent is taken off Coolify's network as soon as its stack settles, not at the end of apply."""
-
     def test_isolates_the_agent_right_after_it_settles(self):
         tmp = tempfile.mkdtemp()
         cfg = resolve(data=tmp)

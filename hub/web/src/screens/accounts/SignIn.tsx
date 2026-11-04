@@ -13,7 +13,6 @@ import { useAccountAct } from './useAccountAct';
 
 type Keys = AccountsPage['keys'];
 
-/** One account (Claude, Codex, GitHub or Expo): its state, its buttons, and the steps while a sign-in runs. */
 export function SignIn({ agent, f, keys }: { agent: string; f: Flow; keys: Keys }) {
   const run = useAccountAct(agent);
   const start = (how?: string) => run({ action: 'start', p: f.key, how });
@@ -65,7 +64,6 @@ export function SignIn({ agent, f, keys }: { agent: string; f: Flow; keys: Keys 
   );
 }
 
-/** The middle step depends on how the provider signs in: a callback address, a device code, or a pasted code. */
 function SecondStep({ f, send }: { f: Flow; send: (text: string) => unknown }) {
   if (f.key === 'codex' && f.mode === 'browser')
     return (

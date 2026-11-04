@@ -1,5 +1,4 @@
-"""Live facts the throttle admits against: the agents' shared pool (agentlab.slice), each agent's own container
-(its mem_limit), swap in use and disk pressure. Without them the broker would admit blind and leave throttling to the kernel."""
+"""Live memory, swap and disk-pressure facts the throttle admits against."""
 
 import json
 import os
@@ -39,7 +38,7 @@ def agent_mb(agent):
 
 
 def io_pressure():
-    """% of the last 10 s in which some task waited on the disk (PSI io "some" avg10)."""
+    """PSI io "some" avg10, %."""
     some = _read('/proc/pressure/io').splitlines()[0]
     return float(some.split('avg10=')[1].split()[0])
 
@@ -53,7 +52,7 @@ def swap_used_mb():
 
 
 def _agent_scopes():
-    """{agent: its container's cgroup}. Asking docker takes seconds, so only when a container appeared or was replaced."""
+    """{agent: cgroup}; re-asks docker (slow) only when a container appeared or was replaced."""
     global _scopes, _resolved_at
     agents = set(homes())
     changed = not agents <= _scopes.keys() or any(not os.path.isdir(s) for s in _scopes.values())

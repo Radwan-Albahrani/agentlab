@@ -18,7 +18,7 @@ const styles = stylex.create({
 
 const PLACEHOLDER = 'Announce that staging is frozen on Thursday…\nor paste a list and say “make a poll, ends at 2pm”';
 
-/** Channels it can post in first; the others are listed too, so it is clear why they can't be picked. */
+/** Postable channels first; the rest stay listed (disabled). */
 const pickItems = (channels: Channel[], name: string): PickItem[] =>
   [...channels]
     .sort((a, b) => Number(b.member) - Number(a.member) || a.name.localeCompare(b.name))
@@ -29,7 +29,6 @@ const pickItems = (channels: Channel[], name: string): PickItem[] =>
       hint: c.member ? undefined : `invite @${name} first`,
     }));
 
-/** Tell a companion what to post (an announcement, a poll, …) in plain words; the agent prepares it. */
 export function AskBox({ name, display, channels }: { name: string; display: string; channels: Channel[] }) {
   const act = useAct();
   const [text, setText] = useState('');

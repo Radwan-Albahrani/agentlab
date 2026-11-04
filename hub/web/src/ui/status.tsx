@@ -158,12 +158,11 @@ export function Pill({ tone = 'idle', dot, children }: { tone?: Tone; dot?: bool
   );
 }
 
-/** How many things need you here, as a small red number. */
 export const Count = ({ n }: { n: number }) => <span {...stylex.props(styles.count)}>{n}</span>;
 
 export const Dot = ({ ok }: { ok: boolean }) => <i {...stylex.props(styles.dot, ok ? styles.dotOk : styles.dotBad)} />;
 
-/** A filled bar. `share`: a part of a whole (e.g. votes), so it never turns warn / bad when full. */
+/** `share`: a part of a whole (e.g. votes), so it never turns warn / bad when full. */
 export function Meter({ pct, big, share }: { pct: number; big?: boolean; share?: boolean }) {
   const p = Math.max(0, Math.min(100, pct));
   return (
@@ -180,12 +179,10 @@ export function Meter({ pct, big, share }: { pct: number; big?: boolean; share?:
 
 const BADGE_SIZE = { '': null, xs: styles.badgeXs, sm: styles.badgeSm, xl: styles.badgeXl };
 
-/** An agent's letter in its colour. */
 export const Badge = ({ name, size = '' }: { name: string; size?: keyof typeof BADGE_SIZE }) => (
   <span {...stylex.props(hueTheme(name), styles.badge, BADGE_SIZE[size])}>{name.charAt(0).toUpperCase()}</span>
 );
 
-/** A companion: a bot in its agent's colour, wearing the agent's badge. */
 export function CompanionAvatar({ profile, size = '' }: { profile: string; size?: '' | 'sm' | 'lg' }) {
   return (
     <span {...stylex.props(hueTheme(profile), styles.avatar, size === 'sm' && styles.avatarSm, size === 'lg' && styles.avatarLg)}>

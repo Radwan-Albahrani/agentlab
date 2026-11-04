@@ -1,5 +1,3 @@
-"""Where Slack messages go in restricted mode (the default)."""
-
 import pytest
 from bot import requests, routing, slack, tasks
 from bot.state import state
@@ -81,10 +79,10 @@ def test_a_tag_with_instructions_in_his_dm_is_a_task_in_his_companion_dm(fresh_b
     routing.route(in_his_dm('109.1', '<@BCOMPANION> check his login'), True)
     ((kind, head, (where, msgs)),) = started
     assert kind == 'task'
-    assert fresh_bot.messages[0]['channel'] == 'D_OWNER'  # the task's thread: the companion can't post in their DM
+    assert fresh_bot.messages[0]['channel'] == 'D_OWNER'
     assert head == '1.0'
     assert where == 'their Slack DM with Salah'
-    assert [m['ts'] for m in msgs] == ['108.9', '109.1']  # oldest first
+    assert [m['ts'] for m in msgs] == ['108.9', '109.1']
 
 
 THEIRS = [{'user': 'U_SALAH', 'ts': '108.9', 'text': 'I cannot log in'}]

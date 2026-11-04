@@ -1,6 +1,4 @@
-"""Nightly backups of what can't be rebuilt: every agent's T3 databases (their chats), companion databases, the
-hub's own state and the config. SQLite's online backup API copies a consistent snapshot while T3 keeps writing, which a plain file copy of
-a database in WAL mode does not."""
+"""Nightly backups of agents' T3 and companion databases, hub state and config, via SQLite's online backup API."""
 
 import datetime
 import os
@@ -18,7 +16,6 @@ def root(cfg):
 
 
 def databases(base):
-    """Relative paths of the SQLite databases under base (sidecar -wal / -shm files are not databases)."""
     out = []
     for folder, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', 'cache', 'Cache')]
@@ -58,7 +55,7 @@ def run(cfg, config_path, today=None):
             except sqlite3.Error as e:
                 failed.append(f'{name}/{rel}: {e}')
     shutil.copy2(config_path, f'{dest}/cluster.toml')
-    hub_state = f'{cfg["data"]}/hub/data'  # phone-push keys and display settings: small, and not rebuildable
+    hub_state = f'{cfg["data"]}/hub/data'
     if os.path.isdir(hub_state):
         shutil.copytree(hub_state, f'{dest}/hub', dirs_exist_ok=True)
     pruned = prune(cfg, today)
@@ -80,7 +77,7 @@ def prune(cfg, today=None):
         try:
             day = datetime.date.fromisoformat(name)
         except ValueError:
-            continue  # not ours
+            continue
         if day < oldest:
             shutil.rmtree(os.path.join(root(cfg), name))
             gone.append(name)

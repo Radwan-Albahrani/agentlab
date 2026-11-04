@@ -1,5 +1,4 @@
-"""What needs the owner's decision or a fix, most urgent first. Each source adds its own items; display settings
-then drop the ones about hidden things."""
+"""What needs the owner's decision or a fix, most urgent first."""
 
 import time
 
@@ -22,7 +21,7 @@ WAITING_ICON = {'approval': 'alert', 'send': 'send', 'login': 'key', 'answer': '
 
 
 def _item(about, tone, icon, title, detail, actions=(), since=None):
-    """`about` is the display key of what the item concerns, so hidden things never show up here."""
+    """`about` is the display key the item concerns; it is dropped when that key is hidden."""
     return about, {
         'tone': tone,
         'icon': icon,
@@ -130,7 +129,7 @@ def _accounts(summaries):
             continue
         a = s['accounts']
         open_accounts = [link('Open', f'/agents/{name}/accounts', 'arrow')]
-        if not (a['claude']['signedIn'] or a['codex']['signedIn']):  # one AI account is enough
+        if not (a['claude']['signedIn'] or a['codex']['signedIn']):
             why = 'Sign in to Claude or Codex; the agent cannot work without one.'
             yield _item(f'profile.{name}', 'warn', 'key', f'{name} has no AI account', why, open_accounts)
         elif not a['github']['signedIn']:
@@ -148,7 +147,7 @@ def needs(summaries, comps):
 
 
 def count(comps):
-    """For the menu badge: only the cheap sources (no calls to the agents)."""
+    """Menu badge count from the cheap sources only (no calls to the agents)."""
     waiting = sum(1 for c in comps for t in c['tasks'] if t['status'] == 'waiting')
     down = sum(1 for c in comps if c['state'] not in ('live', 'unconfigured'))
     usage = store.watch.usage()

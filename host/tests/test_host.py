@@ -1,5 +1,4 @@
-"""Host services: the throttle's scheduling and spool, the watcher (storage, inventory, hub and agent requests) and
-the janitor's choice of worktrees. Agent-controlled folders get the symlink and secret-handling cases."""
+"""Host services: throttle, watcher, janitor and install-step helpers."""
 
 import json
 import os
@@ -20,7 +19,7 @@ sys.path.insert(0, HOST)
 os.makedirs(os.path.dirname(CLUSTER), exist_ok=True)
 
 
-def tearDownModule():  # the folder exists before the imports (they read AGENTLAB_CLUSTER), so no TemporaryDirectory
+def tearDownModule():  # TMP must exist before the imports read AGENTLAB_CLUSTER
     shutil.rmtree(TMP, ignore_errors=True)
 
 
@@ -249,14 +248,14 @@ class Watch(unittest.TestCase):
                 mock.patch.object(secrets.os, 'chown'),
             ):
                 state = {}
-                secrets.check_extra(state, extra)  # first look only records
+                secrets.check_extra(state, extra)
                 self.assertEqual(events, [])
                 for f in ('media.txt', 'pass.txt', 'evil.txt'):
                     with open(f'{d}/{f}', 'w') as fh:
                         fh.write('v2')
                 secrets.check_extra(state, extra)
             by = {e[1].split()[0]: e for e in events}
-            self.assertEqual(restarted, [['docker', 'restart', 'jellyfin-abc']])  # coolify's own never
+            self.assertEqual(restarted, [['docker', 'restart', 'jellyfin-abc']])
             self.assertIn('✗ no container coolify-*', by['extra/media.txt'][2])
             with open(f'{home}/pass-token') as fh:
                 self.assertEqual(fh.read(), 'v2')
@@ -323,9 +322,7 @@ class Watch(unittest.TestCase):
         self.assertEqual(
             [c for c in calls if c[1] == 'network'], [['docker', 'network', 'disconnect', 'u1', 'agent-u1']]
         )
-        self.assertEqual(
-            event.call_args.args[1], 'sara agent isolated again after a deploy'
-        )  # names, not container ids
+        self.assertEqual(event.call_args.args[1], 'sara agent isolated again after a deploy')
 
     def test_inventory_tags_by_compose_project(self):
         stacks = [{'id': 'agentlab-core', 'uuid': ''}, {'id': 'agentlab-agent-sara', 'uuid': 'u1'}]
@@ -355,8 +352,6 @@ class Watch(unittest.TestCase):
 
 
 class AgentRequests(unittest.TestCase):
-    """The agent's companion requests: scoped by path, payloads checked, secrets never echoed."""
-
     def setUp(self):
         self.cfg = write_cluster()
         self.calls = []
@@ -462,7 +457,7 @@ class Janitor(unittest.TestCase):
                 ('t1', 'done', old),
                 ('t2', 'recent', fresh),
                 ('t3', 'live', None),
-                ('t4', 'delegated', None),  # delegate_task's child chats are never settled: their last turn counts
+                ('t4', 'delegated', None),
                 ('t5', 'delegated-now', None),
             )
             for tid, wt, settled in threads:
@@ -492,8 +487,6 @@ class Janitor(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('git'), 'needs git')
 class WorktreeNotice(unittest.TestCase):
-    """Worktrees with unsaved work get a notice period, then go with their state kept as a ref."""
-
     def git(self, *args, cwd=None):
         env = {
             **os.environ,
@@ -546,12 +539,11 @@ class WorktreeNotice(unittest.TestCase):
         self.assertIn('fresh (1 uncommitted; removed ', out)
         ref = 'refs/agentlab/removed/' + trees['stale'].replace('/', '-')
         self.assertIn(f'saved as {ref}', out)
-        self.assertEqual(self.git('show', f'{ref}:notes.txt').stdout, 'stale')  # the untracked file survives too
+        self.assertEqual(self.git('show', f'{ref}:notes.txt').stdout, 'stale')
 
 
 class PickPackage(unittest.TestCase):
-    """pick_package under the install steps' pipefail, with an apt-cache that keeps writing after the Candidate line
-    (as the real one does): it used to fail when grep -q stopped reading first (#17)."""
+    """pick_package under pipefail with an apt-cache that keeps writing after the Candidate line (#17)."""
 
     def pick(self, policy):
         tmp = tempfile.mkdtemp(dir=TMP)
@@ -563,7 +555,7 @@ class PickPackage(unittest.TestCase):
             f.write('esac\n')
         os.chmod(fake, 0o755)
         lib = os.path.join(HOST, 'install', 'lib.sh')
-        # ls() stubbed: the apt lists count as present, so no apt-get update runs
+        # ls() stubbed so no apt-get update runs
         cmd = f'source "{lib}"; ls() {{ :; }}; pick_package openjdk-21-jre-headless openjdk-25-jre-headless openjdk-17-jre-headless'
         return subprocess.run(
             ['bash', '-c', cmd],
@@ -574,7 +566,7 @@ class PickPackage(unittest.TestCase):
         )
 
     def test_finds_the_first_available_despite_a_long_policy(self):
-        for _ in range(5):  # the old pipe failed by timing, so try it a few times
+        for _ in range(5):  # the old bug was timing-dependent
             out = self.pick({'openjdk-21-jre-headless': '21.0.13+9-1~deb13u2', 'openjdk-25-jre-headless': '25.0.5'})
             self.assertEqual((out.returncode, out.stdout.strip()), (0, 'openjdk-21-jre-headless'))
 
@@ -587,16 +579,12 @@ class PickPackage(unittest.TestCase):
 
 
 class HostTunnel(unittest.TestCase):
-    """Private names run cloudflared in the core stack: the host unit agentlab installed for public names stops, and a
-    cloudflared someone else runs is left alone (#22)."""
-
     def setUp(self):
         self.dir = tempfile.mkdtemp(dir=TMP)
         self.calls = os.path.join(self.dir, 'calls')
         bin_dir = os.path.join(self.dir, 'bin')
         os.makedirs(bin_dir)
         with open(os.path.join(bin_dir, 'systemctl'), 'w') as f:
-            # is-enabled/is-active say yes; everything is recorded
             f.write(f'#!/bin/sh\necho "systemctl $*" >> {self.calls}\nexit 0\n')
         os.chmod(os.path.join(bin_dir, 'systemctl'), 0o755)
         self.path = f'{bin_dir}:{os.environ["PATH"]}'
@@ -632,8 +620,6 @@ class HostTunnel(unittest.TestCase):
 
 
 class SysboxInstall(unittest.TestCase):
-    """The installer never adds sysbox-mgr options and removes the one drop-in an earlier version left (bad flag)."""
-
     def setUp(self):
         self.dir = tempfile.mkdtemp(dir=TMP)
         self.calls = os.path.join(self.dir, 'calls')

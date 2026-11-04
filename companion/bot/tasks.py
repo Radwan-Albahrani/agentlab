@@ -1,11 +1,4 @@
-"""Tasks: a Slack thread kept in sync with a T3 chat, like a conversation.
-
-start()      a tag (or DM) -> the thread as context -> a new chat in the best-matching project
-follow_up()  the owner's next message in that thread -> the chat's next turn (or the answer to its question box;
-             a short "status?" while it works is answered from T3 without disturbing it)
-tick()       every few seconds per task: one "thinking" line edited live with the current step, milestone lines
-             (workers, pull requests), the agent's questions with numbered options, then the answer as a new
-             message (Slack notifies on new messages, not on edits). Busy-model failures are retried."""
+"""Tasks: a Slack thread kept in sync with a T3 chat (start, follow_up, tick)."""
 
 import re
 import time
@@ -19,8 +12,7 @@ THINKING = ':seedling: thinking…'
 
 
 def start(channel, thread_ts, trigger_ts, text, elsewhere=None):
-    """elsewhere: (where, messages) of a conversation the companion can't post in (one of the owner's own DMs); the task
-    then lives in `channel`, their DM with the companion, with that conversation as its context."""
+    """elsewhere: (where, messages) of a conversation the bot can't post in, given to the chat as context."""
     k = key(channel, thread_ts)
     slack.react(channel, trigger_ts, 'eyes')
     folder = f'{channel}-{thread_ts.replace(".", "")}'
@@ -50,7 +42,6 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None):
     COMP.event('started', title, task=k, detail=f'task from {slack.name(OWNER)} in ' + (f'#{chan}' if chan else 'a DM'))
 
 
-# ---------------------------------------------------------------- the owner's next message
 STATUS_ASK = re.compile(
     r"\b(status|progress|eta|update me|any update|an update|updates\?|how(?:'s| is) it going|how far"
     r"|where (?:are|r) (?:we|you|u)|done yet|finished yet|what(?:'s| are you| r u) (?:doing|working on|up|happening)"
@@ -67,7 +58,7 @@ POLL_WORDS = re.compile(r'\b(poll|vote|votes|voting)\b', re.I)
 
 
 def is_status_ask(msg):
-    """A short "how's it going?", not an instruction that happens to say "status" ("fix the status badge")."""
+    """A short "how's it going?", not an instruction mentioning status ("fix the status badge")."""
     return len(msg.split()) <= 8 and not INSTRUCTION.match(msg) and bool(STATUS_ASK.search(msg))
 
 
@@ -75,25 +66,25 @@ def follow_up(task, text, files, ts):
     ch = task['channel']
     msg = slack.readable(without_mention(text)).strip()
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
-    if m and m.group(1) in task.get('options', {}):  # "1" answers the last question with option 1
+    if m and m.group(1) in task.get('options', {}):  # "1" picks option 1 of the last question
         msg = task['options'][m.group(1)]
     elif is_status_ask(msg) and not files and t3.busy(task['thread']):
-        status_reply(task, ts)  # a busy chat would only queue the question
+        status_reply(task, ts)
         return
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
-    between, more = since_last(task, ts, folder)  # untagged messages since the companion last listened
+    between, more = since_last(task, ts, folder)
     if between:
         msg = 'Meanwhile in the Slack thread:\n' + '\n'.join(between) + '\n\nMy message now:\n' + msg
         paths += more
     if paths:
         msg += '\n\nFiles (saved for you):\n' + '\n'.join(f'- {p}' for p in paths)
     open_polls = polls.for_prompt(ch, task['thread_ts'])
-    if open_polls and POLL_WORDS.search(msg):  # the chat may predate what the companion can do with polls
+    if open_polls and POLL_WORDS.search(msg):
         msg += '\n\n---' + prompts.poll_changes(prompts.outbox(task['outbox']), slack.name(OWNER), open_polls)
     slack.react(ch, ts, 'eyes')
     res = {}
-    if t3.waiting_question(task['thread']):  # answer the question box, don't queue behind it
+    if t3.waiting_question(task['thread']):
         res = t3.answer(task['thread'], msg)
         if not res.get('ok'):
             log('respond failed, sending instead:', res.get('result') or res.get('error'))
@@ -105,7 +96,7 @@ def follow_up(task, text, files, ts):
         return
     now = now_iso()
     with lock:
-        if not task['active']:  # previous turn answered: a fresh thinking line
+        if not task['active']:
             task.update(active=True, burst_start=now, step_from=now, status_ts=None, ended='')
         task.update(trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, last_status='', last_status_at=0)
         if not task.get('status_ts'):
@@ -114,8 +105,7 @@ def follow_up(task, text, files, ts):
 
 
 def since_last(task, ts, folder):
-    """Thread messages between the last one the companion acted on and `ts` (it only acts when tagged, but the chat
-    in between is context)."""
+    """Transcript of thread messages since the last one acted on, up to `ts`."""
     seen = task.get('seen_ts') or task['trigger_ts']
     try:
         msgs = slack.app.client.conversations_replies(
@@ -128,7 +118,7 @@ def since_last(task, ts, folder):
 
 
 def status_reply(task, ts):
-    """Answer "status?" from T3's own record without queueing a message behind the agent's work."""
+    """Answer "status?" from T3's record without messaging the busy chat."""
     tid = task['thread']
     s = t3.snapshot(tid, task.get('burst_start') or '')
     run = t3.open_run_since(tid)
@@ -151,11 +141,10 @@ def status_reply(task, ts):
         md='\n\n'.join(out),
         note="Status from T3 · the agent wasn't interrupted",
     )
-    task['seen_ts'] = ts  # don't pass the "status?" on later
+    task['seen_ts'] = ts  # keeps the "status?" out of since_last
     save()
 
 
-# ---------------------------------------------------------------- following a chat
 def question_text(item):
     out, opts, n = [], {}, 0
     for qq in item.get('questions') or []:
@@ -170,7 +159,7 @@ def question_text(item):
 
 
 def working_line(task, s, now):
-    """The live 'thinking' message: the agent's current step, plus time and workers on longer jobs."""
+    """Text of the live 'thinking' line."""
     elapsed = now - parse_iso(task['burst_start'])
     running = sum(1 for _, _, r in s['workers'] if r)
     bits = [mins(elapsed)] if elapsed >= 60 else []
@@ -181,11 +170,10 @@ def working_line(task, s, now):
 
 
 def reply(task, md, note=None, outcome='answered below'):
-    """Post the agent's answer as a NEW message. The thinking line stays where it was, as the record of when
-    the companion picked the turn up, closed into one grey line: what happened and for how long."""
+    """Post the answer as a new message (Slack notifies on new messages, not edits) and close the thinking line."""
     ch, tts = task['channel'], task['thread_ts']
     if task.get('status_ts'):
-        elapsed = time.time() - (task.get('line_start') or parse_iso(task.get('burst_start')))  # this line's stretch
+        elapsed = time.time() - (task.get('line_start') or parse_iso(task.get('burst_start')))
         n = task.get('workers_said', 0)
         bits = [
             'Picked this up',
@@ -204,13 +192,12 @@ TRANSIENT = re.compile(
     r'|\b(429|500|502|503|504|529)\b|timed? ?out|connection (reset|closed|error)',
     re.I,
 )
-RETRY_WAITS = (30, 90, 180)  # s before each automatic "continue"
+RETRY_WAITS = (30, 90, 180)  # seconds before each automatic "continue"
 
 
 def retry_transient(task, s, now):
-    """A run failed on something temporary (model at capacity, rate limit, 5xx): wait, then say "continue", up
-    to 3 times. True while a retry is pending, so tick() doesn't report the failure yet."""
-    if now - task.get('retry_sent', 0) < 45:  # "continue" sent, the new run is starting
+    """Send "continue" after a transient failure, up to 3 times; True while a retry is pending."""
+    if now - task.get('retry_sent', 0) < 45:
         return True
     if task.get('retry_at'):
         if now < task['retry_at']:
@@ -246,10 +233,9 @@ def retry_transient(task, s, now):
 
 
 def resume_if_running(task):
-    """A finished task's chat got a new turn from outside Slack (the owner in T3, a wake-up), or its T3 child threads
-    are still working: follow it again."""
+    """Reactivate a finished task (under 3 days old) whose chat is running again."""
     if time.time() - parse_iso(task.get('start')) > 3 * 86400 or not t3.has_open_run(task['thread']):
-        return False  # only recent chats, to keep the polling cheap
+        return False
     now = now_iso()
     task.update(
         active=True,
@@ -278,11 +264,11 @@ def tick(task):
     _post_questions(task, s)
     _post_milestones(task, s)
     if s['requests']:
-        task['quiet_since'] = 0  # waiting for the owner's answer: nothing to show
+        task['quiet_since'] = 0
         return
     if s['running'] or any(r for _, _, r in s['workers']):
         task['quiet_since'] = 0
-        if not task.get('status_ts'):  # a new burst after a question / milestone
+        if not task.get('status_ts'):
             task.update(status_ts=slack.note_only(ch, tts, THINKING), line_start=time.time())
         line = working_line(task, s, now)
         if line != task['last_status'] and now - task['last_status_at'] >= STATUS_EVERY:
@@ -291,18 +277,17 @@ def tick(task):
         return
     if not task['quiet_since']:
         task['quiet_since'] = now
-    # an orchestrator may start more workers right after a run: wait a minute then; a plain chat answers now
-    if task['workers_said'] and now - task['quiet_since'] < SETTLE:
+    if task['workers_said'] and now - task['quiet_since'] < SETTLE:  # orchestrators may start more workers
         return
-    if s['last_status'] == 'interrupted' and now - task['quiet_since'] < 30:
-        return  # cut off (a message sent, a restart): a new turn usually follows
+    if s['last_status'] == 'interrupted' and now - task['quiet_since'] < 30:  # a new turn usually follows
+        return
     if retry_transient(task, s, now):
         return
     _finish_turn(task, s)
 
 
 def _post_questions(task, s):
-    """The agent asks something formally: post it as its message, with numbered options."""
+    """Post the agent's new questions with numbered options."""
     for rid, kind, item in s['requests']:
         if rid in task['asked']:
             continue
@@ -322,7 +307,7 @@ def _post_questions(task, s):
 
 
 def _post_milestones(task, s):
-    """Milestones of longer jobs, as short lines of their own."""
+    """Post new workers and pull requests as short lines."""
     ch, tts = task['channel'], task['thread_ts']
     if len(s['workers']) > task['workers_said']:
         new = [t for _, t, _ in s['workers']][task['workers_said'] :]
@@ -351,7 +336,7 @@ REVIEW_NUDGE = (
 def _finish_turn(task, s):
     r = task.get('review')
     if r and not r.get('published') and s['last_status'] == 'completed' and task.get('nudged', 0) < 2:
-        # a lead chat that delegated often ends its turn while the lanes run; when they are done, carry on
+        # a lead chat often ends its turn before publishing review.json
         task['nudged'] = task.get('nudged', 0) + 1
         res = t3.send(task['thread'], REVIEW_NUDGE)
         if res.get('ok'):
@@ -359,22 +344,21 @@ def _finish_turn(task, s):
             log('review nudged to finish', r['id'])
             return
     ch, tts = task['channel'], task['thread_ts']
-    task['retries'] = 0  # the turn ended for real: next time starts fresh
+    task['retries'] = 0
     final = task.get('latest', '')
     took = parse_iso(s['last_done']) - parse_iso(task['burst_start']) if s['last_done'] else 0
-    # footer, Slack style: where it ran and, for longer turns, how long it took
     foot = ' · '.join(
         x for x in (AGENT, (task.get('project') or '').rsplit('/', 1)[-1], took >= 60 and mins(took)) if x
     )
     no_action = re.match(r'\s*`?NO_ACTION:?\s*(.*?)`?\s*$', final or '', re.S)
     status = s['last_status']
     posted = task.pop('posted', False)
-    if posted and status == 'completed':  # the post is the answer; the line linking to it is already in the thread
+    if posted and status == 'completed':
         if task.get('status_ts'):
             slack.update(ch, task['status_ts'], 'Posted', note=':seedling: Picked this up · posted ↓')
         task['status_ts'] = None
         outcome = 'posted'
-    elif task.get('requester') and no_action:  # a request that needs nothing: close quietly
+    elif task.get('requester') and no_action:
         if task.get('status_ts'):
             slack.update(
                 ch,
@@ -394,7 +378,7 @@ def _finish_turn(task, s):
     else:
         reply(task, final or '_(no reply)_', foot)
         outcome = 'answered'
-    if task.get('reply_pending') and status == 'completed':  # approved change done -> answer the requester
+    if task.get('reply_pending') and status == 'completed':
         errands.reply_requester(task, task.pop('reply_pending'), approved=True)
     slack.react(ch, task['trigger_ts'], 'eyes', remove=True)
     COMP.event(

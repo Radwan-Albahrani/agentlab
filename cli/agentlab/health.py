@@ -1,6 +1,4 @@
-"""Whether each agent is actually up: its container's own health check (Accounts, terminal and T3 answer), not just
-"running". A first start downloads the agent's tools, so apply waits for it, and says which agent isn't ready and why
-instead of reporting ok while one is still stuck (#18)."""
+"""Agent readiness: each container's own health check, not just "running"."""
 
 import json
 import time
@@ -8,7 +6,7 @@ import time
 from . import deploy
 from .util import Failed, run, say
 
-READY_S = 20 * 60  # a first start installs Claude Code, Codex and T3 into the agent's home
+READY_S = 20 * 60
 MISSING_GRACE_S = 120  # a Coolify rollout removes the old container before it creates the new one
 
 
@@ -24,7 +22,7 @@ def state(cfg, agent):
         st = {}
     status, error = st.get('Status'), ' '.join(str(st.get('Error') or '').split())[-300:]
     if status in ('created', 'restarting') and not error:
-        return 'starting', f'{status} (Coolify or Docker is still bringing it up)'  # #24: a rollout passes through
+        return 'starting', f'{status} (Coolify or Docker is still bringing it up)'
     if status != 'running':
         return 'exited', error or f'{status or "unknown"} (exit {st.get("ExitCode", "?")})'
     health = st.get('Health') or {}
@@ -34,7 +32,7 @@ def state(cfg, agent):
 
 
 def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
-    """Until every agent is healthy. Progress once a minute; fails naming each agent that isn't, and why."""
+    """Until every agent is healthy; fails naming each agent that isn't, and why."""
     start = clock()
     deadline, said = start + timeout_s, None
     while True:
@@ -42,8 +40,6 @@ def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
         waiting = {aid: s for aid, s in states.items() if s[0] != 'healthy'}
         if not waiting:
             return
-        # unhealthy can still recover (a slow first start outlasts the health check's grace period); an exited one
-        # can't, and a missing one only after a rollout has had time to create it
         rolled = clock() - start >= MISSING_GRACE_S
         stuck = {aid: s for aid, s in waiting.items() if s[0] == 'exited' or (s[0] == 'missing' and rolled)}
         if stuck or clock() >= deadline:
@@ -62,8 +58,7 @@ def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
 
 
 def core_state(cfg, service):
-    """(state, detail) of one agentlab-core service: running/healthy/starting/unhealthy, or Docker's own state
-    (created, exited, restarting) with the error Docker recorded starting it."""
+    """(state, detail) of one agentlab-core service."""
     ids = deploy.containers(cfg, 'agentlab-core', service, all_states=True)
     if not ids:
         return 'missing', 'no container'
@@ -80,8 +75,6 @@ def core_state(cfg, service):
 
 
 def core_checks(cfg, c):
-    """For doctor: every core service (edge, gate, hub, tinyauth, the tunnel) up; anything else is an error with
-    Docker's reason, since nobody gets in while one is down."""
     from . import render  # noqa: PLC0415 - render imports this module's neighbours
 
     for service in render.core(cfg)['services']:
@@ -97,7 +90,6 @@ def core_checks(cfg, c):
 
 
 def checks(cfg, c):
-    """For doctor: a starting agent is a warning (first starts take minutes), a stuck one an error."""
     for a in cfg['agents']:
         s, detail = state(cfg, a)
         if s == 'healthy':

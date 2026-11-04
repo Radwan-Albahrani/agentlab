@@ -1,4 +1,4 @@
-"""The host watcher's output (host/watch writes <data>/hub/watch, mounted at /watch) and requests to it."""
+"""The host watcher's output (/watch) and request files to it."""
 
 import os
 import time
@@ -7,7 +7,7 @@ from pathlib import Path
 from .files import read_json, read_jsonl
 
 WATCH = os.environ.get('WATCH_DIR', '/watch')
-ALIVE_WITHIN = 120  # s: older numbers mean the watcher has stopped
+ALIVE_WITHIN = 120  # s
 
 
 def usage():
@@ -19,7 +19,7 @@ def containers():
 
 
 def container_names():
-    """Containers the page may restart or read logs of: agentlab's and the extra stacks' (domains.known)."""
+    """Containers the page may restart or read logs of (domains.known)."""
     import domains  # noqa: PLC0415 - domains reads this module
 
     return {r['name'] for r in containers().get('items') or [] if domains.known(r.get('stack') or 'other')}
@@ -35,7 +35,7 @@ def alive():
 
 
 def logs(container):
-    """The tail the watcher last wrote for a container (after a logs~<name> request): (text, written at)."""
+    """(text, mtime) of the log tail the watcher wrote after a logs~<name> request."""
     p = Path(WATCH, 'logs', os.path.basename(container) + '.txt')
     try:
         return p.read_text(encoding='utf-8', errors='replace'), p.stat().st_mtime
@@ -44,12 +44,11 @@ def logs(container):
 
 
 def people():
-    """Per-person storage: {owner email: {size, used, avail}} of each person's own disk (None while not mounted)."""
+    """{owner email: {size, used, avail} or None while not mounted}"""
     return {k.lower(): v for k, v in (usage().get('people') or {}).items()}
 
 
 def companion_container(name):
-    """The container of a companion (stack agentlab-companion-<name>), or None."""
     for r in containers().get('items') or []:
         if r.get('stack') == f'agentlab-companion-{name}' or r['name'] == f'companion-{name}':
             return r['name']
@@ -57,7 +56,7 @@ def companion_container(name):
 
 
 def request(name):
-    """Ask the watcher to do something on the host; it picks requests up within about a second."""
+    """Drop a request file for the host watcher."""
     folder = os.path.join(WATCH, 'requests')
     os.makedirs(folder, exist_ok=True)
     Path(folder, name).touch()

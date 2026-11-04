@@ -20,7 +20,6 @@ const styles = stylex.create({
 
 export const Settings = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.list)}>{children}</div>;
 
-/** One setting: its name and help on the left, the control on the right (stacked on phones). */
 export function Setting({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <div {...stylex.props(styles.setting)}>

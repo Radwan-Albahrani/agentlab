@@ -1,15 +1,4 @@
-"""The HTTP side, in the edge's two passes.
-
-Pass 1, `/verify` (forwardAuth on every request): who is this (per auth mode), may they, and which agent do they get.
-The answer goes back as X-Agentlab-User / -Admin / -Agent, which pass 2 routes on. Pass 1 deletes any client-sent
-X-Agentlab-* (and tinyauth's Remote-*) before calling us, so those headers here are always the edge's or tinyauth's.
-
-Pass 2, everything else: the gate's own pages (menu, view switching, "no agent yet"), reached only through the edge
-with pass 1's headers set. Agents can't open connections to the gate (nftables), so those headers are trusted here.
-
-Private HTTPS (auth.cloudflare.https): requests over HTTPS sign in through Access's OIDC provider and the gate's own
-session cookie (oidc.py), all inside /verify, so the edge's routing stays the same. Plain HTTP keeps Access's token
-until agentctl marks HTTPS live (Access covers port 443 and the certificate is in place); then it is redirected."""
+"""Pass 1: forwardAuth `/verify`; pass 2: the gate's pages, trusting the X-Agentlab-* headers the edge strips/sets."""
 
 import logging
 import os
@@ -50,11 +39,7 @@ def _header_email(headers, name):
 
 
 def identify(cfg, keys, headers, on_domain):
-    """The verified email of the caller, or TokenError.
-    - cloudflare-access: the Access JWT. On the main domain Cloudflare's email header must also match it, so a forged
-      header can't ride along with someone's real token.
-    - tailscale: Tailscale-User-Login, set by `tailscale serve` (tagged devices have none and get nothing).
-    - tinyauth: Remote-Email, set by tinyauth's forwardAuth answer just before ours."""
+    """The caller's verified email per auth mode, or TokenError."""
     if cfg.mode == 'none':
         if not none_allowed():
             raise TokenError('auth.mode none without GATE_ALLOW_NONE=1')
@@ -85,13 +70,11 @@ def safe_path(nxt):
 
 
 def safe_next(query):
-    """Where to go after switching views."""
     return safe_path((parse_qs(query).get('next') or ['/'])[0])
 
 
 def wants_page(headers):
-    """A browser opening a page (sent to sign in), rather than a script or an API call (told 401): what the browser
-    says it is fetching, else whether it accepts HTML. Only GET and HEAD, so a form post never turns into a redirect."""
+    """A browser navigation (sent to sign in) rather than a script (told 401); GET/HEAD only."""
     if (headers.get('X-Forwarded-Method') or 'GET').upper() not in ('GET', 'HEAD'):
         return False
     mode = (headers.get('Sec-Fetch-Mode') or '').strip().lower()
@@ -118,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def _other_method(self):
-        # Traefik's forwardAuth may keep the original method, so /verify answers them all; the pages are GET only.
+        # forwardAuth may keep the original method, so /verify answers them all
         if urlsplit(self.path).path == '/verify':
             return self._verify()
         return self._send(405, 'text/plain', b'Method not allowed\n')
@@ -195,8 +178,7 @@ class Handler(BaseHTTPRequestHandler):
                 'text/plain',
                 b'',
                 [
-                    # absolute: Traefik's forwardAuth resolves a relative Location against the gate's own
-                    # address, which sent people to http://gate:8080/
+                    # absolute: forwardAuth resolves a relative Location against the gate's own address
                     ('Location', f'https://{host}{safe_path(nxt)}'),
                     ('Set-Cookie', signin.session_cookie(email, host)),
                     ('Set-Cookie', oidc.cleared(oidc.PENDING)),
@@ -204,7 +186,6 @@ class Handler(BaseHTTPRequestHandler):
             )
             return None
         if uri.path == oidc.LOGOUT:
-            # Access's own logout ends the Access session too, so the next visit really asks again
             to = f'https://{cfg.team}.cloudflareaccess.com/cdn-cgi/access/logout'
             self._send(302, 'text/plain', b'', [('Location', to), ('Set-Cookie', oidc.cleared(oidc.SESSION))])
             return None
@@ -275,7 +256,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def log_message(self, fmt, *args):
-        pass  # decisions are logged in _deny; per-request access logs would be every asset of every page
+        pass  # decisions are logged in _deny
 
 
 def serve(config, keys, onboarding, port, signin=None):

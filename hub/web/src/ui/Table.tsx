@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { colors, font, media, space, text } from '../theme/tokens.stylex';
 
-// A table that becomes one stacked block per row on phones (columns marked `wide` hide there).
+// On phones each row becomes a stacked block and `wide` columns hide.
 
 const styles = stylex.create({
   table: { width: '100%', borderCollapse: 'collapse', fontSize: text.base },
@@ -60,8 +60,7 @@ export const Th = ({ num, wide, fit, children }: { num?: boolean; wide?: boolean
 
 export const Tr = ({ children }: { children: ReactNode }) => <tr {...stylex.props(styles.tr)}>{children}</tr>;
 
-/** num: right-aligned (on phones it spans the row); wide: hidden on phones; fit: as narrow as its content;
- * muted / mono: secondary text. */
+/** num: right-aligned (spans the row on phones); wide: hidden on phones; fit: as narrow as its content. */
 export const Td = ({
   num,
   wide,

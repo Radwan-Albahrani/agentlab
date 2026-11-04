@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""The base image's launcher. The companion's code is the owner's agent's git checkout, mounted read-only at /app,
-so the agent can change its companion and restart it. This file is baked into the image and is NOT read from /app:
-changing it needs an image rebuild.
-
-On start:
-1. Not configured (a required Slack secret is missing or empty) -> say so and exit 0: the restart policy is
-   on-failure, so the companion stays down quietly until the owner adds its secrets on the hub and restarts it.
-2. /app/requirements.txt differs from what the image was built with -> a venv at /data/venv (on top of the image's
-   packages) gets them installed, once per distinct file. A failed install exits 1 (on-failure backs off).
-3. Runs `python -m bot` from /app and copies its output to stdout (docker logs) and to the agent-readable
-   /files/<id>/logs/companion.log (5 MB x 3), and keeps /files/<id>/status.json current (state, heartbeat, the
-   checkout's git version, last error). Exits with the bot's code."""
+"""Base image launcher for `python -m bot` in /app; baked into the image (not read from /app), so edits need a rebuild."""
 
 import hashlib
 import json
@@ -67,7 +56,7 @@ def write_status(**changes):
 
 
 def version():
-    """The checkout's commit (short), read from .git without git; '' when it isn't a readable git checkout."""
+    """The checkout's short commit, read from .git without git; '' if unreadable."""
     git = os.path.join(APP, '.git')
     try:
         with open(os.path.join(git, 'HEAD')) as f:
@@ -103,7 +92,7 @@ def sha256(path):
 
 
 def python():
-    """The interpreter to run the bot with: the image's, or the venv when the checkout needs other packages."""
+    """The image's interpreter, or the venv's when the checkout needs other packages."""
     req = os.path.join(APP, 'requirements.txt')
     if not os.path.isfile(req):
         return sys.executable

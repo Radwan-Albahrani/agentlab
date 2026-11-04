@@ -23,7 +23,7 @@ def test_finish_needs_an_ai_sign_in_and_done_needs_the_finish(signed_in):
     assert [s['id'] for s in st['steps']] == ['claude', 'codex', 'connectors', 'github']
     assert onboarding.finish() == ''
     assert onboarding.state()['done'] is True
-    signed_in['codex'] = False  # signed out of every AI again: T3 closes until they sign back in
+    signed_in['codex'] = False
     assert onboarding.state()['done'] is False
 
 
@@ -72,11 +72,10 @@ def test_published_t3_links_use_the_hub_pages_host_and_the_port(t3, monkeypatch)
     calls, replies = t3
     replies['t3 auth pairing create'] = made()
     monkeypatch.setenv('AGENTLAB_PUBLISHED', 't3=7101,browser=7103')
-    for kind in ('browser', 'app'):  # no pair host needed: the app reaches the port like the browser does
+    for kind in ('browser', 'app'):
         out = pairing.pair(kind, 'phone', 'Homebox.Tailnet.ts.net')
         assert out['url'] == 'http://homebox.tailnet.ts.net:7101/pair#token=tok123'
     assert "--base-url 'http://homebox.tailnet.ts.net:7101'" in calls[-1]
-    # Anything that isn't a plain hostname (a port, a path, an injection) falls back to the cluster's own address.
     for bad in ('evil.com:80', 'evil.com/x', 'a b', "x';rm", ''):
         assert pairing.pair('browser', '', bad)['url'].startswith('https://agents.example.com/')
     monkeypatch.setenv('AGENTLAB_PUBLISHED', '')
@@ -86,7 +85,7 @@ def test_published_t3_links_use_the_hub_pages_host_and_the_port(t3, monkeypatch)
 def test_unknown_kind_and_t3_failure(t3):
     with pytest.raises(ValueError):
         pairing.pair('tv', '')
-    assert pairing.pair('browser', '')['available'] is False  # t3 answered 'unknown'
+    assert pairing.pair('browser', '')['available'] is False
 
 
 def test_devices_are_paired_sessions_only_and_revoke_checks_ownership(t3):

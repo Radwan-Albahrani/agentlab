@@ -1,6 +1,4 @@
-"""What the page shows. Each item is 'show', 'present' (hidden while presenting) or 'hide'; presenting is one switch
-(Alt+Shift+P, triple-clicking the logo, or /display) and leaves no trace on screen. Hidden things are never sent:
-their API routes answer 404 and lists leave them out."""
+"""What the page shows: each item is 'show', 'present' (hidden while presenting) or 'hide'; hidden things are never sent."""
 
 import json
 import os
@@ -8,7 +6,7 @@ import os
 import cluster
 
 FILE = os.path.join(os.environ.get('NOTIFY_DATA', '/data'), 'display.json')
-INFRA = 'present'  # infrastructure is hidden while presenting by default
+INFRA = 'present'
 
 
 def items():
@@ -74,7 +72,7 @@ def mode(key, s=None):
 
 def visible(key, s=None):
     s = s or load()
-    if key == 'display':  # reachable by its address; only unlinked while presenting
+    if key == 'display':  # always reachable by its address
         return True
     m = mode(key, s)
     return m == 'show' or (m == 'present' and not s['presenting'])

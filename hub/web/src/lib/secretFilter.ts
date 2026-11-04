@@ -32,13 +32,12 @@ export function filterSecrets(items: Secret[], f: SecretFilter): Secret[] {
   return items.filter((s) => matchesText(s, q) && matchesKind(s, f.kind) && matchesUser(s, f.usedBy));
 }
 
-/** How many secrets each kind option would show, given the search and the "used by" choice. */
 export function kindCounts(items: Secret[], f: SecretFilter): Record<KindFilter, number> {
   const rest = filterSecrets(items, { ...f, kind: 'all' });
   return Object.fromEntries(KINDS.map((k) => [k, rest.filter((s) => matchesKind(s, k)).length])) as Record<KindFilter, number>;
 }
 
-/** Everyone that uses at least one secret, most used first, with counts given the search and kind. */
+/** Users of at least one secret, most used first. */
 export function users(items: Secret[], f: SecretFilter): { name: string; count: number }[] {
   const rest = filterSecrets(items, { ...f, usedBy: '' });
   const counts = new Map<string, number>();

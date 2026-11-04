@@ -1,15 +1,10 @@
 #!/bin/bash
-# tailscale ingress: `tailscale serve` terminates HTTPS on the machine's MagicDNS name and adds Tailscale-User-Login,
-# which the gate trusts (the firewall stops agents from forging it). 443 -> agents, hub_port -> the hub.
-# Installs Tailscale with its official script and signs the machine in: with a saved auth key straight away,
-# otherwise by printing the login link (exit 2; re-run once it's opened).
+# tailscale ingress: `tailscale serve` adds Tailscale-User-Login, which the gate trusts. 443 -> agents, hub_port -> hub.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 [ "${AGENTLAB_INGRESS}" = tailscale ] || { ok "ingress is ${AGENTLAB_INGRESS}: tailscale serve not needed"; exit 0; }
-# Published-ports setups (the hub and every agent's T3 on host ports) keep their own network as the way in: leave
-# Tailscale's settings alone.
 [ -n "${AGENTLAB_SERVE}" ] || { ok "everything is on published ports: tailscale serve not used"; exit 0; }
-# On WSL Tailscale usually runs on Windows: use its CLI (mirrored networking lets it reach WSL's loopback).
+# On WSL use Windows' Tailscale CLI (mirrored networking reaches WSL's loopback).
 ts=tailscale
 windows="/mnt/c/Program Files/Tailscale/tailscale.exe"
 if ! have tailscale && grep -qi microsoft /proc/version && [ -x "${windows}" ]; then ts=${windows}; fi
@@ -28,7 +23,7 @@ if ! running; then
     tailscale up --auth-key="file:${key}" >/dev/null
     changed "signed this machine in to the tailnet with the saved auth key"
   else
-    # `tailscale up` prints a login link and waits; the sign-in carries on in tailscaled after it's stopped
+    # `tailscale up` blocks; the sign-in carries on in tailscaled after the timeout kills it
     url=$(timeout 20 tailscale up 2>&1 | grep -oE 'https://login\.tailscale\.com/[^[:space:]]+' | head -1 || true)
     manual "sign this machine in to your tailnet: open ${url:-the link from 'sudo tailscale up'} (or save an auth key: agentctl secret set tailscale-authkey), then run agentctl install again"
   fi

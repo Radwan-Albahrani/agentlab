@@ -1,7 +1,4 @@
-"""Fixed configuration (environment, secrets, paths) and the live settings the hub can change.
-
-Environment and secrets are read once at start. Settings (mode, auto-retry, publish channel) live in the
-companion folder and are re-read on every use, so a change on the hub takes effect within seconds."""
+"""Environment, secrets and paths (read once at start) and the hub-editable settings (re-read on every use)."""
 
 import os
 import time
@@ -17,30 +14,30 @@ def secret(name):
 
 
 def optional_secret(name):
-    """'' when the file is missing or still empty (the GitHub App is set up later, on the hub's Secrets page)."""
+    """The secret, or '' when the file is missing."""
     try:
         return secret(name)
     except OSError:
         return ''
 
 
-NAME = os.environ.get('COMPANION_NAME', 'Companion')  # how it calls itself in Slack and in the agent's prompts
-ID = os.environ.get('COMPANION_ID', NAME.lower())  # its folder names and its id on the hub
-OWNER = secret('owner.txt')  # the Slack user id of the only person it works for
-AGENT = os.environ.get('COMPANION_AGENT', 'agent')  # the agent whose environment it lives in
-BRIDGE = os.environ.get('COMPANION_BRIDGE', f'http://agent-{AGENT}:8790')  # that agent's Accounts bridge
+NAME = os.environ.get('COMPANION_NAME', 'Companion')
+ID = os.environ.get('COMPANION_ID', NAME.lower())
+OWNER = secret('owner.txt')  # Slack user id of the only person it works for
+AGENT = os.environ.get('COMPANION_AGENT', 'agent')
+BRIDGE = os.environ.get('COMPANION_BRIDGE', f'http://agent-{AGENT}:8790')  # the agent's Accounts bridge
 T3 = os.environ.get('COMPANION_T3', '/t3')  # the agent's ~/.t3/userdata (read-only)
-# The agent's /workspace/.companion is mounted at /files; each companion keeps to its own folder in it (attachments,
-# outboxes, drafts, logs, status.json), so two companions of one agent never see each other's work.
+# Same folder twice: FILES as mounted here, AGENT_FILES as the agent sees it.
 FILES = os.path.join(os.environ.get('COMPANION_FILES', '/files'), ID)
 AGENT_FILES = f'/workspace/.companion/{ID}'
-DATA = os.environ.get('COMPANION_DATA', '/data')  # <data>/companions/<name>/: its database + what the hub reads
+DATA = os.environ.get('COMPANION_DATA', '/data')
 
-POLL = 3  # s between checks of every task
-ASKS_POLL = 0.5  # s between checks for the hub's asks (someone just clicked)
-SETTLE = 60  # s an orchestrator gets to start more workers before its turn counts as finished
-STATUS_EVERY = 8  # s minimum between live edits of a "thinking" line
-REQ_SETTLE = 20  # s a burst of messages to the owner may keep arriving before it is looked at
+# Seconds.
+POLL = 3
+ASKS_POLL = 0.5
+SETTLE = 60  # an orchestrator's wait for more workers before its turn counts as finished
+STATUS_EVERY = 8  # minimum between live edits of a "thinking" line
+REQ_SETTLE = 20  # wait for a burst of messages to the owner to finish
 
 MODES = [
     {
@@ -143,8 +140,7 @@ def evidence_repo():
 
 
 def work_tools():
-    """What the owner's work accounts offer the agent for errands (mail search, a password vault, ...), as prompt
-    text from the optional secret work-tools.md; '' when there is none."""
+    """Prompt text describing the owner's work tools, from the optional secret work-tools.md."""
     return optional_secret('work-tools.md')
 
 

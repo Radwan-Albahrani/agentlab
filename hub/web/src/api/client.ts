@@ -15,7 +15,7 @@ async function request<R>(url: string, init?: RequestInit): Promise<R> {
   try {
     body = (await r.json()) as typeof body;
   } catch {
-    // non-JSON error pages fall through to the status text below
+    /* non-JSON error page */
   }
   if (!r.ok || body.ok === false) throw new ApiError(body.error || `HTTP ${r.status}`, r.status);
   return body as R;
@@ -33,7 +33,7 @@ export async function post(url: string, body: Record<string, unknown> = {}): Pro
   return r.message || 'Done';
 }
 
-/** POST and return the data the server answers with (a pairing link), not a toast text. */
+/** POST and return the server's data instead of a toast text. */
 export async function postFor<R>(url: string, body: Record<string, unknown> = {}): Promise<R> {
   const r = await request<{ message: R }>(url, {
     method: 'POST',

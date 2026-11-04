@@ -5,8 +5,6 @@ import { Button, LinkButton } from '../../ui/Button';
 import { Disclosure } from '../../ui/controls';
 import { Note } from '../../ui/text';
 
-// The box under a sign-in row while a sign-in runs: numbered steps, a device code, the CLI's terminal.
-
 const styles = stylex.create({
   box: {
     marginInlineStart: { default: 62, [media.phone]: space.xxl },
@@ -114,7 +112,6 @@ export function Terminal({ screen, children }: { screen: string; children?: Reac
   );
 }
 
-/** Step 1 of every sign-in: the provider's page, once its link exists. */
 export function OpenSignInStep({
   provider,
   url,
@@ -137,7 +134,6 @@ export function OpenSignInStep({
   );
 }
 
-/** Cancel while it runs, Close once it has finished. */
 export const FlowEnd = ({ finished, onEnd }: { finished: boolean; onEnd: () => unknown }) => (
   <div>
     <Button label={finished ? 'Close' : 'Cancel'} small onClick={onEnd} />

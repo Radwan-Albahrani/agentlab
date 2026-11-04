@@ -1,6 +1,3 @@
-"""Product-update drafts: inline image references are dropped (the screenshots go up as files), and replies after
-posting revise the post, whose button edits the posted message in place."""
-
 import json
 import os
 import shutil
@@ -74,7 +71,7 @@ def test_a_reply_after_posting_edits_the_post(draft, fresh_bot):
 
     uploads = len(fresh_bot.uploads)
     press('draft_post')
-    assert len(fresh_bot.uploads) == uploads  # nothing posted again
+    assert len(fresh_bot.uploads) == uploads
     edit = next(u for u in fresh_bot.updates if u.get('ts') == POSTED_TS)
     assert edit['text'] == 'Second version'
     assert st['status'] == 'posted'
@@ -97,7 +94,7 @@ def test_a_post_from_before_is_found_in_the_channel(draft, fresh_bot):
     write(draft, 'First', 1)
     drafts.tick()
     st = state.state['drafts'][KEY]
-    st.update(status='posted', revising=True)  # posted by an older version: no place kept
+    st.update(status='posted', revising=True)  # no 'posted' location stored
     write(draft, 'Fixed', 2)
     drafts.tick()
     press('draft_post')

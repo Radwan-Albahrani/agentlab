@@ -1,6 +1,4 @@
-"""Whether an agent's owner finished onboarding (signed in to Claude / Codex), asked of the agent's Accounts API.
-Done never becomes undone, so `True` is cached for good; `False` only briefly, so finishing shows up within seconds.
-If the agent doesn't answer, the gate lets the request through: a sick Accounts app must not lock anyone out of T3."""
+"""Whether an agent's owner finished onboarding; unreachable counts as done so nobody gets locked out of T3."""
 
 import json
 import logging
@@ -26,7 +24,6 @@ class Onboarding:
         self._not_done = {}  # agent id -> monotonic time we learned it
 
     def pending(self, agent_id, upstream):
-        """True only when the agent said onboarding isn't done (recently). Unknown or unreachable is False."""
         with self._lock:
             if agent_id in self._done:
                 return False

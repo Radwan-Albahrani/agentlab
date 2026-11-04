@@ -1,5 +1,4 @@
-"""What each screen shows, as JSON for the web app. Display settings and the person's scope are applied here:
-hidden or someone else's things are left out entirely (never sent), so the browser cannot show them."""
+"""Each screen's JSON; hidden or out-of-scope things are left out here, never sent to the browser."""
 
 import os
 import time
@@ -13,7 +12,7 @@ import scope
 import store
 from shapes import epoch
 
-BARK_PUBLIC = os.environ.get('BARK_PUBLIC', '')  # the Bark server address the phone app uses
+BARK_PUBLIC = os.environ.get('BARK_PUBLIC', '')  # Bark server address for the phone app
 DAY = 86400
 
 
@@ -33,7 +32,6 @@ def shown_companions(profile=None):
     ]
 
 
-# ------------------------------------------------------------------ navigation
 def nav():
     items = store.watch.containers().get('items') or []
     agents = []
@@ -76,7 +74,6 @@ def nav():
     }
 
 
-# ------------------------------------------------------------------ overview
 def overview():
     sums = cluster.summaries(shown_profiles())
     comps = shown_companions()
@@ -117,7 +114,6 @@ def overview():
     return out
 
 
-# ------------------------------------------------------------------ agents
 def agent_card(n, s):
     if s is None:
         return {'name': n, 'online': False}
@@ -133,7 +129,7 @@ def agent_card(n, s):
             'chat': links['chat'],
             'terminal': links['terminal'],
             'files': links['files'],
-            'browser': links['browser'] if s.get('browserUp') else None,  # the viewer runs only while one is open
+            'browser': links['browser'] if s.get('browserUp') else None,
         },
         'companions': [
             {'name': c['name'], 'display': c['display'], 'live': c['state'] == 'live'} for c in shown_companions(n)
@@ -191,14 +187,13 @@ def agent(host, prof):
 
 
 def accounts(host, prof, page):
-    """The agent's Accounts page (from its own app) minus what the display settings hide, plus its browser link."""
+    """The agent's own Accounts page minus hidden items, plus its browser link."""
     if not see('agent.env'):
         page.pop('env', None)
     page['browserUrl'] = cluster.links(prof)['browser'] if page.get('browserUp') else None
     return page
 
 
-# ------------------------------------------------------------------ companions
 def companion(name):
     c = store.companions.companion(name)
     settings = store.companions.settings(name)
@@ -231,7 +226,7 @@ def companion(name):
         'mode': mode,
         'templateUpdate': c['template_update'],
         'tasks': tasks,
-        'events': c['events'][:200],  # paged on the page
+        'events': c['events'][:200],
         'sentThisWeek': [
             e for e in c['events'] if e.get('kind') in ('sent', 'files') and time.time() - e['at'] < 7 * DAY
         ],
@@ -257,7 +252,7 @@ def companion(name):
 
 
 def companion_secrets(name):
-    """The companion's own secrets (<data>/secrets/companions/<name>/): what each is, never the values."""
+    """The companion's own secrets: what each is, never the values."""
     prefix = f'companions/{name}/'
     items = [s for s in store.secrets.all_secrets() if s['name'].startswith(prefix)]
     present = {s['name'] for s in items}
@@ -274,12 +269,10 @@ def companion_secrets(name):
 
 
 def companion_logs(name):
-    """The tail of the companion's log, written into its agent's workspace."""
     text, at = store.companions.log_tail(name)
     return {'text': text, 'at': at}
 
 
-# ------------------------------------------------------------------ services and configs
 def services():
     groups = domains.by_stack()
     out = {'domains': [], 'other': []}
@@ -332,9 +325,8 @@ def config(sid):
     }
 
 
-# ------------------------------------------------------------------ storage
 def people_disks():
-    """Per-person storage: each person in scope with their disk and the agents on it, [{email, agents, size?, ...}]."""
+    """[{email, agents, size?, ...}]: each person in scope with their disk and the agents on it."""
     disks, shown = store.watch.people(), set(shown_profiles())
     return [
         {'email': email, 'agents': [a for a in ids if a in shown], **(disks.get(email) or {})}
@@ -344,7 +336,7 @@ def people_disks():
 
 
 def my_disk():
-    """The disk number for the overview: the pool for admins (shared), else the person's own disk (per-person)."""
+    """(disk, label) for the overview: the shared pool, or the person's own disk."""
     if cluster.storage_mode() == 'per-person':
         if scope.current().admin:
             return None, ''
@@ -392,7 +384,6 @@ def storage():
     return out
 
 
-# ------------------------------------------------------------------ secrets
 def effect(s):
     if not s['known']:
         return 'Not mapped yet: nothing happens on change.'
@@ -406,7 +397,7 @@ def effect(s):
 
 
 def kinds(s):
-    """What a change does, as filter categories: restart, copy, read (used when scripts run) or unmapped."""
+    """What a change does, as filter categories: restart, copy, read or unmapped."""
     if not s['known']:
         return ['unmapped']
     found = set()
@@ -427,7 +418,6 @@ def secrets():
     return {'items': items, 'events': store.secrets.events(20)}
 
 
-# ------------------------------------------------------------------ notifications and display
 def notifications():
     s = notify.load()
     shown = shown_profiles()

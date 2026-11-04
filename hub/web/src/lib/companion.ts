@@ -17,8 +17,7 @@ export function filterTasks(tasks: Task[], f: TaskFilter): Task[] {
   return tasks.filter((t) => t.status === f);
 }
 
-/** How long a task ran; empty for ones that finished before end times were recorded. */
-/** How long a task has run: until now while it is still going (an earlier turn's end does not count), else until it ended. */
+/** Until now while still going (an earlier turn's end doesn't count); '' for old tasks without an end time. */
 export function taskAge(t: Task, now = Date.now() / 1000): string {
   const going = t.status === 'working' || t.status === 'waiting';
   if (!t.startedAt || (!t.endedAt && !going)) return '';

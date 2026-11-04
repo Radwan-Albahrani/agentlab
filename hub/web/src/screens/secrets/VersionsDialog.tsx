@@ -6,7 +6,6 @@ import { Dialog, DialogActions } from '../../ui/Dialog';
 import { List, Row } from '../../ui/Row';
 import { Mono } from '../../ui/text';
 
-/** A secret's kept versions, each restorable. */
 export function VersionsDialog({ name, onClose }: { name: string | null; onClose: () => void }) {
   const { data } = useSecretVersions(name);
   return (

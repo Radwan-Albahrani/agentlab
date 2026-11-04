@@ -15,7 +15,6 @@ MB = 2**20
 
 
 def heavy_jobs():
-    """(running, waiting): this agent's heavy jobs the throttle has admitted, and the ones queued."""
     try:
         with open(THROTTLE_STATUS) as f:
             status = json.load(f)
@@ -30,7 +29,7 @@ def _read(name):
 
 
 def memory():
-    """(used MB without file cache, limit MB or None); (None, None) if the cgroup can't be read."""
+    """-> (used MB without file cache, limit MB or None)."""
     try:
         stat = dict(line.split() for line in _read('memory.stat').splitlines())
         used = int(_read('memory.current')) - int(stat.get('active_file', 0)) - int(stat.get('inactive_file', 0))

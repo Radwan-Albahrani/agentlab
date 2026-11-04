@@ -7,8 +7,6 @@ import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { useAct } from '../ui/feedback';
 
-// One logs viewer for every screen. Asking makes the watcher write a fresh tail (within about a second).
-
 const GIVE_UP_MS = 45_000;
 
 const styles = stylex.create({
@@ -32,7 +30,7 @@ const styles = stylex.create({
 
 interface Request {
   name: string;
-  since: number; // epoch seconds when it was asked for
+  since: number;
 }
 
 const Ctx = createContext<((name: string) => void) | null>(null);

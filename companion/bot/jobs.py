@@ -1,4 +1,4 @@
-"""Work that may wait on Slack or T3 runs in the background, so Slack's event handlers return at once."""
+"""Background threads, so Slack event handlers return at once."""
 
 import threading
 

@@ -26,12 +26,12 @@ import urllib.parse
 HOME = os.path.expanduser('~')
 REQUESTS = os.path.join(HOME, '.agentlab', 'requests')
 RESULTS = os.path.join(HOME, '.agentlab', 'results')
-LIVE = os.path.join(HOME, '.agentlab', 'companions.json')  # written by the host's watcher: the current list
+LIVE = os.path.join(HOME, '.agentlab', 'companions.json')  # written by the host's watcher
 CODE = '/workspace/companions'
 STATE = '/workspace/.companion'
 TEST_VENVS = os.path.join(HOME, '.cache', 'companion-test')
 WAIT_S = 60
-CREATE_WAIT_S = 300  # seeding the checkout and deploying a new stack takes longer
+CREATE_WAIT_S = 300
 NAME_RE = re.compile(r'^[a-z][a-z0-9-]{0,40}$')
 ACTIONS = ('restart', 'stop', 'start')
 KINDS = ('slack',)
@@ -48,7 +48,7 @@ SLACK_NEW_APP = 'https://api.slack.com/apps?new_app=1&manifest_yaml='
 
 
 def names():
-    """The live list from the watcher; before it has written one, the list the container started with."""
+    """The watcher's live list, else the one the container started with."""
     try:
         with open(LIVE) as f:
             live = json.load(f)
@@ -120,8 +120,7 @@ def cmd_logs(name, follow):
 
 
 def request(action, name, payload=None, wait_s=None):
-    """Hand one request to the host and wait for its answer -> the result dict (exits if none or not ok). The file is
-    0600 from the start: a secret's value sits in it until the watcher reads and deletes it."""
+    """Hand one request to the host watcher and wait -> result dict; exits if none or not ok."""
     wait_s = wait_s or WAIT_S
     base = f'{action}~companion~{name}'
     result = os.path.join(RESULTS, base + '.json')
@@ -129,9 +128,10 @@ def request(action, name, payload=None, wait_s=None):
     with contextlib.suppress(FileNotFoundError):
         os.remove(result)
     path = os.path.join(REQUESTS, base)
+    # 0600 from the start: it may hold a secret's value.
     with open(os.open(path + '.tmp', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
         json.dump(payload if payload is not None else {'at': time.time()}, f)
-    os.replace(path + '.tmp', path)  # the watcher never sees a half-written request
+    os.replace(path + '.tmp', path)
     print(f'asked the host to {action} {name}; waiting up to {wait_s} s...', file=sys.stderr, flush=True)
     deadline = time.time() + wait_s
     while time.time() < deadline:
@@ -145,7 +145,7 @@ def request(action, name, payload=None, wait_s=None):
         if out.get('ok') is False:
             sys.exit(1)
         return out
-    if action == 'secret':  # don't leave a value lying around for a watcher that isn't coming
+    if action == 'secret':  # don't leave the value on disk
         with contextlib.suppress(FileNotFoundError):
             os.remove(path)
         sys.exit(f'companion: no answer from the host after {wait_s} s; the secret was not set')
@@ -216,11 +216,10 @@ def cmd_settings(name, spec):
         sys.exit(f'companion: settings must be a JSON object or @file with one ({e})')
     if not isinstance(settings, dict):
         sys.exit('companion: settings must be a JSON object')
-    request('settings', name, settings)  # the watcher merges the object as it is
+    request('settings', name, settings)
 
 
 def cmd_test(name):
-    """The checkout's tests, in a venv of its own (kept between runs) so they never touch the agent's Python."""
     src = os.path.join(CODE, name)
     if not os.path.isdir(src):
         sys.exit(f'companion: no checkout at {src}')
@@ -228,7 +227,7 @@ def cmd_test(name):
     py = os.path.join(venv, 'bin', 'python')
     if not os.path.exists(py):
         subprocess.run([sys.executable, '-m', 'venv', venv], check=True)
-    # tests/requirements.txt pulls in ../requirements.txt; a checkout without it gets its runtime requirements.
+    # tests/requirements.txt includes ../requirements.txt
     reqs = next(
         (r for r in ('tests/requirements.txt', 'requirements.txt') if os.path.exists(os.path.join(src, r))), None
     )
@@ -245,7 +244,6 @@ def cmd_test(name):
 
 
 def create_args(rest):
-    """[--display-name X] [--kind K] -> (display name, kind)."""
     opts = {'--display-name': '', '--kind': 'slack'}
     while rest:
         flag, *rest = rest

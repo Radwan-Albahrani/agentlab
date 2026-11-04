@@ -1,6 +1,4 @@
-"""Stand-ins for the hub's tests: every agent's Accounts app (image/accounts) — /<agent id>/api/... answers with a
-signed-in agent — and, given a watch folder, the host watcher's log requests. Run:
-python3 fake_agent.py [port] [watch folder]   (the hub then uses HUB_AGENT_URL=http://127.0.0.1:<port>/{id})"""
+"""Fake Accounts app (/<agent id>/api/...) and watcher log answerer: python3 fake_agent.py [port] [watch folder]."""
 
 import json
 import os
@@ -27,8 +25,6 @@ def flow(key, name, signed_in=True):
     }
 
 
-# admin has finished onboarding; sara hasn't, so the onboarding page has something to do. App pairing works for
-# admin (a pair host) and not for sara (no pair_domain), as it would on a cluster without one.
 ONBOARDED = {'admin'}
 DEVICES = {
     'admin': [
@@ -60,7 +56,7 @@ def onboarding(agent):
     return {'done': ready and agent in ONBOARDED, 'ready': ready, 'steps': steps}
 
 
-PAIR_BODIES = []  # what the hub sent, so tests can check it passed the page's host
+PAIR_BODIES = []
 
 
 def pair(agent, kind):
@@ -81,7 +77,7 @@ def pair(agent, kind):
 
 
 def summary(agent):
-    browser = agent == 'admin'  # one agent with its browser open, one without
+    browser = agent == 'admin'
     return {
         'agent': agent,
         'owner': 'sara@example.com' if agent == 'lab' else f'{agent}@example.com',
@@ -170,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def answer_logs(watch):
-    """What the host watcher does for logs~<container>: write the tail the page then shows."""
+    """Answer logs~<container> requests like the host watcher."""
     folder = os.path.join(watch, 'requests')
     while True:
         for name in os.listdir(folder) if os.path.isdir(folder) else []:

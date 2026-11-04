@@ -1,18 +1,4 @@
-"""Keeps each agent's disk from filling (timer agentlab-janitor, nightly, and the hub's Storage → Clean up now); the
-result goes to the hub's activity log. Fill alerts are the watcher's. DRY=1 only lists the worktrees it would remove
-or keep. Inside each running agent:
-  Docker leftovers   build cache, images, stopped containers unused for 3+ days, unused volumes
-  worktrees          T3 settles a chat but keeps its worktree (several GB with node_modules), and scheduled chats add
-                     some every day. One goes when every chat on it has been settled, archived or deleted for 12 h
-                     (one no chat points at: 2 days old). A chat T3 never settles (delegate_task's child chats end
-                     without it) counts from its last finished turn, or they would keep their worktrees for good. A
-                     clean one goes at once (`git worktree remove` keeps the branch). One with uncommitted changes
-                     or commits on no remote waits NOTICE_DAYS from the last work in it (the cleanup report says
-                     when it goes), so unfinished work isn't cut off but abandoned work doesn't stay for good; its
-                     state is then saved as a git ref first (REMOVE_WORKTREES says how to get it back).
-  package caches     only when the storage the agent lives on (the pool image, its owner's image, or the host's
-                     disk) is 75 % full or more: npm and bun caches, unreferenced pnpm packages, old Homebrew downloads. They refill on the next install, which only costs download time.
-Run: python3 -m janitor (from host/)."""
+"""Per-agent tidy: Docker leftovers, idle worktrees, and package caches when storage is full; DRY=1 only lists."""
 
 import json
 import os
@@ -27,7 +13,7 @@ import cluster
 SETTLED_HOURS = 12
 ORPHAN_DAYS = 2
 CACHES_AT = 75
-NOTICE_DAYS = 7  # untouched this long, a worktree with unsaved work goes too (its state kept as a ref)
+NOTICE_DAYS = 7  # untouched this long, a worktree with unsaved work goes too (saved as a ref)
 DRY = bool(os.environ.get('DRY'))
 
 DOCKER_PRUNE = """docker info >/dev/null 2>&1 || exit 0
@@ -36,11 +22,7 @@ docker image prune -af --filter until=72h | tail -1
 docker builder prune -af --filter until=72h | tail -1
 docker volume prune -f | tail -1"""
 
-# Runs inside the agent, as the agent: reads worktree paths on stdin. A clean one goes at once. One with uncommitted
-# changes or commits on no remote gets NOTICE_DAYS from the last work in it (its newest commit or changed file); after
-# that its state (commits and changes, untracked files too) is saved as refs/agentlab/removed/<name> in its repository,
-# and only then is it removed, so nothing is lost: `git worktree add <path> <ref>`, or `git stash apply <ref>` for the
-# changes.
+# Runs as the agent with worktree paths on stdin; unsaved work is kept as refs/agentlab/removed/<name> before removal.
 REMOVE_WORKTREES = r'''removed="" kept="" n=0 now=$(date +%s)
 while read -r wt; do
   [ -e "${wt}/.git" ] || continue
@@ -87,7 +69,7 @@ def _epoch(iso):
 
 
 def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
-    """Worktrees (paths as the agent sees them) whose chats are all done long enough, from the agent's T3 database."""
+    """Worktrees (agent-side paths) whose chats have all been done long enough, per the agent's T3 database."""
     now = now or time.time()
     db = f'{root}/home/.t3/userdata/statev2.sqlite'
     if not os.path.exists(db):
@@ -111,6 +93,7 @@ def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
             if not wt:
                 continue
             settled, unsettled = _epoch(d.get('settledAt')), _epoch(d.get('unsettledAt'))
+            # chats T3 never settles (delegate_task children) count from their last finished turn
             ended = (
                 _epoch(deleted or d.get('deletedAt'))
                 or _epoch(d.get('archivedAt'))
@@ -148,7 +131,7 @@ def _run(cmd, stdin=None):
 
 
 def container(data, agent_id):
-    """The running agent container; Coolify labels it with its service uuid instead of the stack name."""
+    """The running agent container; under Coolify its project label is the service uuid."""
     stack = f'agentlab-agent-{agent_id}'
     try:
         with open(f'{data}/rendered/compose/{stack}/.coolify-service-uuid') as f:
@@ -176,7 +159,7 @@ def used(path):
 
 def tidy(data, agent):
     agent_id, root = agent['id'], agent['path']
-    unit = agent.get('storage_unit') or root  # what fills up: the image it lives on, else the host's filesystem
+    unit = agent.get('storage_unit') or root
     cid = container(data, agent_id)
     if not cid or not os.path.isdir(root) or (agent.get('storage_unit') and not os.path.ismount(unit)):
         return [], 0

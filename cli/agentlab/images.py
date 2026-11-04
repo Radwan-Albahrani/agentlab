@@ -1,5 +1,4 @@
-"""The four agentlab images. With no [images] registry they are built here from the repo (agentlab/<name>:latest,
-never pulled); with one they are pulled as <registry>/agentlab-<name>:<tag>."""
+"""The agentlab images: built locally (agentlab/<name>:latest, never pulled) or pulled from the [images] registry."""
 
 import os
 
@@ -47,7 +46,6 @@ def pull(cfg, plan, names=None):
 
 
 def ensure(cfg, plan, force=False):
-    """Build (or pull) whatever the cluster needs that isn't here yet."""
     if local(cfg):
         build(cfg, plan, force=force)
     else:

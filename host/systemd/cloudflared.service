@@ -1,5 +1,4 @@
-# The tunnel: the one way in for cloudflared ingress. The token is read at start from a root-only file (not the
-# command line, where every local user could read it).
+# Token comes from a root-only file, never the command line (readable by every local user).
 [Unit]
 Description=cloudflared tunnel for agentlab
 After=network-online.target

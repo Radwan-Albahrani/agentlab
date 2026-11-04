@@ -1,5 +1,4 @@
-# The hub's hands on the host: its buttons and the agents' companion requests within a second, usage and
-# inventory every 30 s. Always on (not a timer) so requests don't wait for the next tick.
+# Always on (not a timer) so hub and companion requests are handled within a second.
 [Unit]
 Description=agentlab: watcher for the hub
 After=docker.service agentlab-disks.service

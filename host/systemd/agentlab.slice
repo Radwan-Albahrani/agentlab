@@ -1,5 +1,4 @@
-# All agent containers together (cgroup_parent: agentlab.slice): at most limits.total_memory of RAM, so a burst of
-# builds across agents slows them down instead of starving the host, the edge and the hub.
+# cgroup_parent of every agent container: caps their combined RAM (limits.total_memory).
 [Unit]
 Description=agentlab: memory pool for all agents
 

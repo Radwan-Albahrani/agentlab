@@ -1,6 +1,3 @@
-"""Asks from the hub: an ask starts the agent in the owner's DM, its post.json is previewed and posted only on
-the owner's tap (unless he said not to ask), and polls collect votes, close on time and announce the winner."""
-
 import json
 import os
 import time
@@ -21,7 +18,7 @@ def drop_ask(**ask):
 
 @pytest.fixture
 def started(t3_quiet, monkeypatch):
-    """Start an ask through the page's folder; returns (task, its outbox, what the agent was told)."""
+    """Start an ask via the asks folder -> (task, outbox, prompt sent)."""
     told = []
     monkeypatch.setattr(t3, 'start_thread', lambda project, title, message: told.append(message) or ('T_ASK', ''))
 
@@ -56,7 +53,7 @@ def test_an_ask_is_taken_once_and_starts_the_agent_in_the_owners_dm(started, fre
     task, _, told = started(text='Announce the deploy freeze on Thursday', channel='C_TECH', review=True)
     assert task['channel'] == 'D_OWNER' and task['thread'] == 'T_ASK'
     assert 'deploy freeze' in told and 'C_TECH' in told and '#ask-tech' in told and 'post.json' in told
-    assert os.listdir(config.COMP.asks_dir) == []  # taken: it never runs twice
+    assert os.listdir(config.COMP.asks_dir) == []
     assert 'From the hub' in fresh_bot.text()
 
 
@@ -83,7 +80,7 @@ def test_dont_post_posts_nothing(started, fresh_bot):
 
 def test_without_review_it_goes_out_at_once(started, fresh_bot):
     task, box, _ = started(text='x', channel='C_TECH', review=False)
-    write_post(box, {'channel': '#ask-tech', 'text': 'Hello all'})  # a channel name works too
+    write_post(box, {'channel': '#ask-tech', 'text': 'Hello all'})
     outbox.tick(task)
     assert channel_posts(fresh_bot, 'C_TECH')[0]['text'] == 'Hello all'
 
@@ -146,9 +143,9 @@ def test_anyone_can_vote_once_and_take_it_back(poll, fresh_bot):
     assert ['poll_vote_0', 'poll_vote_1', 'poll_vote_2'] in fresh_bot.actions()
     vote(p, 'U_A', 'Pizza')
     vote(p, 'U_B', 'Pizza')
-    vote(p, 'U_A', 'Sushi')  # changes their vote
+    vote(p, 'U_A', 'Sushi')
     assert polls.counts(p) == [1, 0, 1]
-    vote(p, 'U_B', 'Pizza')  # the same choice again takes it back
+    vote(p, 'U_B', 'Pizza')
     assert polls.counts(p) == [0, 0, 1]
     assert '1 vote' in json.dumps(fresh_bot.updates[-1])
     assert publish.card('k', task)['status'] == 'working' and 'Poll open' in publish.card('k', task)['outcome']
@@ -160,16 +157,16 @@ def test_the_poll_closes_on_time_and_announces_the_winner(poll, fresh_bot):
     vote(p, 'U_B', 'Shawarma')
     vote(p, 'U_C', 'Pizza')
     polls.tick()
-    assert p['open']  # not yet
+    assert p['open']
     p['closes'] = time.time() - 1
     polls.tick()
     assert not p['open']
     announce = channel_posts(fresh_bot, 'C_RANDOM')[-1]
     assert announce['thread_ts'] == p['ts'] and announce['reply_broadcast']
     assert '**Shawarma** wins with 2 of 3 votes' in json.dumps(announce['blocks'])
-    vote(p, 'U_D', 'Pizza')  # too late
+    vote(p, 'U_D', 'Pizza')
     assert polls.counts(p) == [1, 2, 0]
-    task['active'] = False  # the agent's turn ended long ago
+    task['active'] = False
     assert publish.card('k', task)['status'] == 'done'
 
 
@@ -190,10 +187,8 @@ def test_only_the_owner_can_close_a_poll_early(poll):
     assert not p['open']
 
 
-# ---------------------------------------------------------------- tagged in a channel
 @pytest.fixture
 def tagged(t3_quiet, monkeypatch):
-    """The owner tagged the companion under the restaurant list in #random: "make a poll, ends at 2pm"."""
     told = []
     monkeypatch.setattr(t3, 'start_thread', lambda project, title, message: told.append(message) or ('T_TAG', ''))
     monkeypatch.setattr(projects, 'pick', lambda ask, convo, chan: ('/workspace/x', 'test'))
@@ -217,12 +212,12 @@ def test_the_agent_is_told_it_can_post_here_without_a_preview(tagged):
 
 def test_a_poll_asked_for_in_a_channel_is_a_new_message_there_at_once(tagged, fresh_bot):
     task, box, _ = tagged
-    write_post(box, LUNCH)  # no channel: the one he asked in
+    write_post(box, LUNCH)
     outbox.tick(task)
     (p,) = state.state['polls'].values()
     poll_msg = next(m for m in fresh_bot.messages if m['channel'] == 'C_RANDOM' and m.get('text') == 'Where do we eat?')
-    assert 'thread_ts' not in poll_msg  # its own message, not a thread reply
-    assert 'post_send' not in json.dumps(fresh_bot.actions())  # no preview: he asked right there
+    assert 'thread_ts' not in poll_msg
+    assert 'post_send' not in json.dumps(fresh_bot.actions())
     in_thread = [m for m in fresh_bot.messages if m['channel'] == 'C_RANDOM' and m.get('thread_ts') == '70.1']
     assert 'Poll posted in #' in json.dumps(in_thread)
     owner_dm = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER']
@@ -239,7 +234,7 @@ def test_once_posted_the_agents_wrap_up_stays_out_of_the_thread(tagged, fresh_bo
     before = len(fresh_bot.messages)
     task['latest'] = 'I prepared the lunch poll.'
     tasks._finish_turn(task, {'last_status': 'completed', 'last_done': None})
-    assert len(fresh_bot.messages) == before  # nothing new posted
+    assert len(fresh_bot.messages) == before
     assert task['outcome'] == 'posted'
 
 
@@ -251,7 +246,6 @@ def test_a_post_for_another_channel_still_asks_first(tagged, fresh_bot):
     assert ['post_send', 'post_skip'] in fresh_bot.actions()
 
 
-# ---------------------------------------------------------------- straight to people
 def test_a_message_by_dm_is_previewed_even_when_asked_in_the_channel(tagged, fresh_bot):
     task, box, told = tagged
     assert '"to"' in told
@@ -273,7 +267,6 @@ def test_an_unclear_person_is_refused_with_why(tagged, fresh_bot):
     assert 'post_send' not in json.dumps(fresh_bot.actions())
 
 
-# ---------------------------------------------------------------- multiple choice
 def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fresh_bot):
     task, box, _ = started(text='x', channel='C_RANDOM', review=False)
     write_post(
@@ -295,7 +288,7 @@ def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fre
     vote(p, 'U_A', 'Wed')
     vote(p, 'U_B', 'Wed')
     assert polls.counts(p) == [1, 0, 2] and polls.voters(p) == 2
-    vote(p, 'U_A', 'Mon')  # pressed again: only that one is taken back
+    vote(p, 'U_A', 'Mon')
     assert p['votes']['U_A'] == [2]
     assert 'pick as many as you like' in json.dumps(fresh_bot.updates[-1])
     assert '**Wed** wins: 2 of the 2 people who voted picked it' in polls.result(p)
@@ -304,12 +297,12 @@ def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fre
 def test_polls_from_before_become_multiple_choice_and_keep_their_votes(poll, fresh_bot):
     _, p = poll
     p.pop('multiple')
-    p['votes'] = {'U_OWNER': 1}  # the old shape: one index per person
+    p['votes'] = {'U_OWNER': 1}
     polls.migrate()
     assert p['multiple'] and p['votes'] == {'U_OWNER': [1]}
-    assert 'pick as many as you like' in json.dumps(fresh_bot.updates[-1])  # its message was redrawn
+    assert 'pick as many as you like' in json.dumps(fresh_bot.updates[-1])
     vote(p, 'U_OWNER', 'Pizza')
-    assert p['votes']['U_OWNER'] == [1, 0]  # in the order picked
+    assert p['votes']['U_OWNER'] == [1, 0]
 
 
 def test_votes_are_public_with_pictures_and_names(poll, fresh_bot):
@@ -323,7 +316,6 @@ def test_votes_are_public_with_pictures_and_names(poll, fresh_bot):
     assert '- Shawarma: 2 (Salah, Sam)' in polls.result(p)
 
 
-# ---------------------------------------------------------------- changing a poll
 def drop_change(box, change):
     with open(os.path.join(box, 'poll-change.json'), 'w') as f:
         json.dump(change, f)
@@ -333,13 +325,13 @@ def test_the_agent_can_switch_a_poll_to_single_choice_keeping_each_latest_pick(p
     task, p = poll
     p['multiple'] = True
     vote(p, 'U_A', 'Sushi')
-    vote(p, 'U_A', 'Pizza')  # picked last
+    vote(p, 'U_A', 'Pizza')
     vote(p, 'U_B', 'Shawarma')
     drop_change(os.path.join(outbox.OUTBOX, task['outbox']), {'poll': p['id'], 'multiple': False})
     outbox.tick(task)
     assert not p['multiple'] and p['votes'] == {'U_A': [0], 'U_B': [1]}
     assert '1 person had several picks; their latest was kept' in fresh_bot.text()
-    assert task['posted']  # the companion's line is the answer; the agent's wrap-up stays out
+    assert task['posted']
 
 
 def test_the_page_can_change_the_closing_time_and_close_a_poll(poll, fresh_bot):
@@ -348,7 +340,7 @@ def test_the_page_can_change_the_closing_time_and_close_a_poll(poll, fresh_bot):
     drop_ask(type='poll', poll=p['id'], closes=later)
     asks.tick()
     assert p['closes'] == later and 'from the hub' in fresh_bot.text()
-    drop_ask(type='poll', poll=p['id'], closes=time.time() - 60)  # the past: refused, nothing changes
+    drop_ask(type='poll', poll=p['id'], closes=time.time() - 60)
     asks.tick()
     assert p['closes'] == later
     drop_ask(type='poll', poll=p['id'], close=True)
@@ -377,15 +369,14 @@ def test_poll_times_read_as_12_hour_clock():
     assert clock(two_pm, date=True) == 'Thu Oct 29, 2:00 PM'
 
 
-# ---------------------------------------------------------------- voting for someone
 def test_the_owner_can_add_a_vote_for_someone_and_it_says_so(poll, fresh_bot):
     task, p = poll
     box = os.path.join(outbox.OUTBOX, task['outbox'])
     drop_change(box, {'poll': p['id'], 'vote': {'for': 'Ali Example', 'options': ['shawarma']}})
     outbox.tick(task)
     assert p['votes']['U_ALI'] == [1] and p['added_by'] == {'U_ALI': OWNER}
-    assert "added Ali's vote for Shawarma" in fresh_bot.text()  # Slack's display name for him
-    assert 'Ali (added by Sam)' in json.dumps(fresh_bot.updates[-1])  # public: shown as added
+    assert "added Ali's vote for Shawarma" in fresh_bot.text()
+    assert 'Ali (added by Sam)' in json.dumps(fresh_bot.updates[-1])
     drop_change(box, {'poll': p['id'], 'vote': {'for': 'Ali Example', 'remove': True}})
     outbox.tick(task)
     assert 'U_ALI' not in p['votes'] and not p['added_by']
@@ -394,9 +385,9 @@ def test_the_owner_can_add_a_vote_for_someone_and_it_says_so(poll, fresh_bot):
 @pytest.mark.parametrize(
     ('who', 'option', 'problem'),
     [
-        ('Al', 'Pizza', 'matches 2 people'),  # Ali Example and Ali Khan
+        ('Al', 'Pizza', 'matches 2 people'),
         ('Nobody Here', 'Pizza', 'Nobody in Slack is called'),
-        ('Gone Person', 'Pizza', 'Nobody in Slack is called'),  # deactivated
+        ('Gone Person', 'Pizza', 'Nobody in Slack is called'),
         ('Ali Example', 'Burgers', 'is not one of the options'),
     ],
 )
@@ -422,9 +413,9 @@ def test_a_later_message_about_a_poll_brings_the_poll_instructions(poll, tagged,
 
 def test_moving_the_closing_time_updates_the_whole_message(poll, fresh_bot):
     _, p = poll
-    later = datetime(2030, 1, 3, 14, 30).timestamp()  # a Thursday
+    later = datetime(2030, 1, 3, 14, 30).timestamp()
     drop_ask(type='poll', poll=p['id'], closes=later, text='Lunch! Links below.')
     asks.tick()
     shown = json.dumps(fresh_bot.updates[-1]['blocks'], ensure_ascii=False)
     assert '**Where?** · closes Thu 2:30 PM' in shown and 'Lunch! Links below.' in shown
-    assert shown.count('closes') == 1  # only the companion's own line says when
+    assert shown.count('closes') == 1

@@ -1,13 +1,4 @@
-"""Applies a changed secret where it is used, so editing a file in <data>/secrets (by hand or on the hub's Secrets
-screen) takes effect without anyone running a command. What each secret needs is in hub/secrets-map.json ("apply"):
-  copy: <path>       install the file at that path for the agent user
-  restart: <name>    restart the stack agentlab-<name> (e.g. companion-{companion}); enough for files read at start
-  redeploy: <name>   recreate the stack agentlab-<name> (env files are read only when a container is created)
-A key may hold {companion} or {agent}; it then matches that file in every companion's or agent's folder.
-
-[hub] extra_secrets (another folder of secrets on this host, with its own map) gets two narrower rules, because its
-map lives outside the repo: restart: <container name prefix> (only containers the hub may restart: agentlab's stacks
-and [hub] extra_stacks) and copy: <path> (only into an agent's home)."""
+"""Applies changed secrets per hub/secrets-map.json's copy / restart / redeploy rules."""
 
 import hashlib
 import json
@@ -22,7 +13,7 @@ from .settings import AGENT_UID, AGENTCTL, SECRETS_DIR, SECRETS_MAP
 
 
 def fingerprints(root=SECRETS_DIR):
-    """{path relative to the secrets folder: sha256}; hidden entries (like .versions) are skipped."""
+    """{relative path: sha256}, skipping hidden entries."""
     out = {}
     for folder, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs if not d.startswith('.'))
@@ -36,7 +27,7 @@ def fingerprints(root=SECRETS_DIR):
 
 
 def changes(known, current):
-    """([(name, 'added' | 'changed')], [removed names]). The first look (nothing known yet) only records."""
+    """([(name, 'added' | 'changed')], [removed]); the first look only records."""
     if not known:
         return [], []
     changed = [(n, 'added' if n not in known else 'changed') for n, h in current.items() if known.get(n) != h]
@@ -129,7 +120,7 @@ def _extra_copy(folder):
 
 
 def check_extra(state, extra):
-    """What check() does, for the [hub] extra_secrets folder and its map, with only the two narrower rules."""
+    """check() for [hub] extra_secrets: its map lives outside the repo, so only narrow restart/copy rules."""
     folder = (extra or {}).get('folder') or ''
     if not folder or not os.path.isdir(folder):
         state.pop('extra_secrets', None)

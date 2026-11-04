@@ -10,7 +10,6 @@ interface Props {
   onChange: (change: Partial<SecretFilter>) => void;
 }
 
-/** Search plus two filters: what a change does, and who uses the secret. Counts follow the other choices. */
 export function SecretFilters({ items, filter, onChange }: Props) {
   const counts = kindCounts(items, filter);
   const kinds = (Object.keys(KIND_LABELS) as KindFilter[]).map((k) => ({ value: k, label: KIND_LABELS[k], count: counts[k] }));

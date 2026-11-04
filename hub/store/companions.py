@@ -11,10 +11,10 @@ import cluster
 from . import secrets as store_secrets
 from .files import read_json, write_json
 
-ROOT = os.environ.get('COMPANIONS_DIR', '/companions')  # each companion publishes into ROOT/<name>/
-AGENTS = os.environ.get('AGENTS_DIR', '/agents')  # <data>/agents: each agent's home and workspace
-LOG_TAIL = 200_000  # bytes of a companion's log the page shows
-LIVE_WITHIN = 45  # s: an older heartbeat means the bot is down
+ROOT = os.environ.get('COMPANIONS_DIR', '/companions')
+AGENTS = os.environ.get('AGENTS_DIR', '/agents')
+LOG_TAIL = 200_000  # bytes
+LIVE_WITHIN = 45  # s
 TASKS_SHOWN, EVENTS_SHOWN, POLLS_SHOWN = 300, 600, 20
 
 
@@ -30,7 +30,7 @@ def _state(heartbeat):
 
 
 def _polls(con):
-    """Open polls first, then the latest closed ones; [] for a bot that runs none (no table)."""
+    """Open polls first, then the latest closed ones; [] when the bot has no polls table."""
     try:
         rows = con.execute(
             'select id, task, open, closes, data from polls order by open desc, closes desc limit ?', (POLLS_SHOWN,)
@@ -44,7 +44,7 @@ def _polls(con):
 
 
 def _pulls(con):
-    """Open pull requests, newest activity first; [] for a bot without a GitHub App (no table)."""
+    """Open pull requests, newest activity first; [] when the bot has no pulls table."""
     try:
         rows = con.execute('select id, repo, number, updated, data from pulls order by updated desc')
         return [
@@ -56,7 +56,7 @@ def _pulls(con):
 
 
 def _read_db(name):
-    """(tasks newest first, events newest first, polls, pulls), from the bot's database opened read-only."""
+    """(tasks, events, polls, pulls) from the bot's database, newest first."""
     path = os.path.join(_folder(name), 'companion.db')
     if not os.path.isfile(path):
         return [], [], [], []
@@ -84,14 +84,13 @@ def _read_db(name):
 
 
 def status(name):
-    """What the companion's runner last wrote in its agent's workspace (state, last error), or {}."""
+    """The companion runner's status.json (state, last error), or {}."""
     agent = cluster.companions().get(name, '')
     return read_json(os.path.join(AGENTS, agent, 'workspace', '.companion', name, 'status.json'), {})
 
 
 def template_update(name):
-    """How the companion's code stands against the agentlab template (agentctl writes template.json on each apply):
-    {state: up-to-date|merged|conflict|skipped|reverted, detail, from, to, at}, or {} before the first check."""
+    """The last template update agentctl applied (template.json): {state, detail, from, to, at}, or {}."""
     r = read_json(os.path.join(_folder(name), 'template.json'), {})
     if not r:
         return {}
@@ -108,7 +107,6 @@ def companion(name):
     heartbeat = read_json(os.path.join(_folder(name), 'heartbeat.json'), {})
     tasks, events, polls, pulls = _read_db(name)
     st = status(name)
-    # Not set up yet (its Slack app or secrets are missing): not "down", just waiting for its owner or their agent.
     state = 'unconfigured' if st.get('state') == 'not configured' else _state(heartbeat)
     return {
         'name': name,
@@ -135,7 +133,7 @@ def url(name):
 
 
 def settings(name):
-    """[(field, current value)] from the bot's settings-schema.json and the page's settings.json."""
+    """[(field, current value)] from settings-schema.json and settings.json."""
     schema = read_json(os.path.join(_folder(name), 'settings-schema.json'), [])
     current = read_json(os.path.join(_folder(name), 'settings.json'), {})
     return [(f, current.get(f['key'], f.get('default'))) for f in schema]
@@ -152,7 +150,7 @@ def _checked(field, value):
 
 
 def set_setting(name, key, value):
-    """Validate against the schema, then write settings.json (the bot re-reads it within seconds). Returns the field."""
+    """Validate against the schema and write settings.json; returns the field."""
     if name not in cluster.companions():
         raise ValueError('Unknown companion.')
     field = {f['key']: f for f, _ in settings(name)}.get(key)
@@ -171,7 +169,7 @@ def channels(name):
 
 
 def ask(name, text, channel, review):
-    """Drop an ask for the bot (it takes it within seconds). The channel must be one it can post in, or ''."""
+    """Drop an ask file for the bot; channel is one it is a member of, or ''."""
     text = str(text or '').strip()
     if not text:
         raise ValueError('Write what you want first.')
@@ -189,7 +187,7 @@ def ask(name, text, channel, review):
 
 
 def log_tail(name):
-    """(the end of the companion's log, written at) from its agent's workspace; ('', 0) before it ever ran."""
+    """(end of the companion's log, mtime); ('', 0) before it ever ran."""
     agent = cluster.companions().get(name, '')
     path = os.path.join(AGENTS, agent, 'workspace', '.companion', name, 'logs', 'companion.log')
     try:
@@ -201,7 +199,7 @@ def log_tail(name):
 
 
 def save_secret(name, file, value):
-    """Set one of the companion's own secrets (created when missing); the watcher restarts it. False if unchanged."""
+    """Set one of the companion's own secrets (created when missing); False if unchanged."""
     path = f'companions/{name}/{file}'
     if path not in store_secrets.secrets_map():
         raise ValueError('Not one of its secrets.')
@@ -214,12 +212,11 @@ def _drop(name, ask):
 
 
 def pulls_refresh(name):
-    """Ask the bot to re-read the open pull requests from GitHub now (the page does on open and on refresh)."""
     _drop(name, {'type': 'pulls', 'at': time.time()})
 
 
 def review(name, pr_id):
-    """Ask the bot to review one of the pull requests it listed ("owner/repo#123")."""
+    """Ask the bot to review one of its listed pull requests ("owner/repo#123")."""
     pr = next((p for p in companion(name)['pulls'] if p['id'] == pr_id), None)
     if not pr:
         raise ValueError('That pull request is not in the list any more; refresh it.')
@@ -228,7 +225,7 @@ def review(name, pr_id):
 
 
 def poll_change(name, poll, b):
-    """Ask the bot to change one of its open polls: single / multiple choice, closing time (epoch), or close now."""
+    """Ask the bot to change an open poll: multiple choice, closing time (epoch), or close now."""
     if poll not in {p['id'] for p in companion(name)['polls'] if p['open']}:
         raise ValueError('That poll is not open.')
     change = {'type': 'poll', 'poll': poll}

@@ -1,7 +1,4 @@
-"""`agentctl secret set <name>`: the one way to hand agentlab a secret. The value comes from stdin (hidden at a
-terminal), never from the command line, so it stays out of shell history, process lists and logs; it lands in the
-file agentlab reads, root-only (a companion's are the agent user's, since the companion runs as that user). The
-watcher applies a changed secret where it is used, so nothing needs a restart by hand."""
+"""`agentctl secret set <name>`: value from stdin only, never argv, written to the file agentlab reads."""
 
 import getpass
 import os
@@ -10,7 +7,7 @@ import sys
 
 from .util import AGENT_UID, OUT, Failed, need_root, say
 
-# The companion secrets an agent may set through the watcher too (host/watch/agent_requests.py SECRET_KEYS).
+# Must match host/watch/agent_requests.py SECRET_KEYS.
 COMPANION_KEYS = (
     'owner.txt',
     'bot-token.txt',
@@ -56,7 +53,6 @@ def listing(cfg):
 
 
 def read_value(about, stdin=None, prompt=getpass.getpass):
-    """The secret from stdin; at a terminal (and without --json) a hidden prompt."""
     stdin = stdin or sys.stdin
     at_terminal = stdin.isatty() and not OUT.json
     value = (prompt(f'Paste {about} (hidden), then Enter: ') if at_terminal else stdin.read()).strip()

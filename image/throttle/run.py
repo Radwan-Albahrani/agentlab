@@ -1,8 +1,4 @@
-"""Runs one heavy command for the throttle shim: waits silently for the host broker's go (or, if the broker is down,
-for room in this agent's own memory limit), runs the real tool at the lowest CPU priority so T3 and chats stay
-responsive, measures the peak memory of its whole process tree and reports it, so the broker learns what this job
-needs. It never fails or delays a command beyond the broker's max wait, and passes exit codes and signals through
-unchanged. Spool contract with the host broker (agents/throttle): <id>.job -> <id>.go, <id>.run, <id>.done."""
+"""Runs one shimmed heavy command once the host broker (agents/throttle) says go, and reports its peak memory."""
 
 import contextlib
 import json
@@ -16,11 +12,11 @@ import time
 import uuid
 
 SPOOL = os.path.expanduser('~/.local/state/agent-throttle')
-BROKER_FRESH_S = 10  # broker.alive older than this: the broker is down, use the local check
+BROKER_FRESH_S = 10
 DEFAULT_MAX_WAIT_S = 480
 FALLBACK_ESTIMATE_MB = 1500
 LOCAL_HEADROOM_MB = 1024
-DAEMON_TOOLS = {'docker'}  # their work runs in a daemon, outside the measured process tree: don't learn from them
+DAEMON_TOOLS = {'docker'}  # work runs in a daemon outside the measured tree: don't learn from them
 MB = 2**20
 
 
@@ -57,7 +53,7 @@ def project():
 
 
 def describe(tool, args):
-    """(signature the broker learns peaks under, label the owner sees)."""
+    """-> (signature the broker learns peaks under, label the owner sees)."""
     command = ' '.join([tool, *[a for a in args if not a.startswith('-')][:2]])
     return f'{command} @ {project()}', f'{command} · {project()}'
 
@@ -83,7 +79,6 @@ def wait_locally(deadline):
 
 
 def wait_for_broker(job_id, deadline):
-    """Until the broker says go, it stops answering (then the local check decides), or the max wait is over."""
     last_touch = 0.0
     while time.time() < deadline:
         if os.path.exists(spool(f'{job_id}.go')):
@@ -116,7 +111,7 @@ def tree_rss_mb(root):
 
 
 def run(argv, job_id):
-    """Run the tool (nice 19: T3 runs at nice 10, the job yields CPU to it) -> (exit code, peak MB)."""
+    """-> (exit code, peak MB); nice 19 so it yields CPU to T3 (nice 10)."""
     child = subprocess.Popen(['nice', '-n', '19', *argv])
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda s, _: child.send_signal(s))
@@ -139,7 +134,7 @@ def run(argv, job_id):
 
 
 def admit(tool, signature, label, deadline):
-    """Wait for a go -> the job id the broker knows it by (None when it ran on the local check)."""
+    """Wait for a go -> the broker's job id (None on the local check)."""
     if not broker_alive():
         wait_locally(deadline)
         return None
@@ -158,7 +153,7 @@ def report(job_id, tool, signature, peak):
 
 def main():
     tool, real, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    # Ctrl-C reaches the tool through the terminal already; a no-op handler (unlike SIG_IGN) is reset by exec.
+    # No-op, not SIG_IGN: exec resets it, so the tool still gets Ctrl-C.
     for sig in (signal.SIGINT, signal.SIGQUIT):
         signal.signal(sig, lambda *_: None)
     signature, label = describe(tool, args)
@@ -166,7 +161,7 @@ def main():
     try:
         job_id = admit(tool, signature, label, time.time() + max_wait)
     except OSError:
-        job_id = None  # spool unusable: just run
+        job_id = None
     leader = spool(f'pid-{os.getpid()}')  # the shim skips the gate below this process
     with contextlib.suppress(OSError):
         pathlib.Path(leader).touch()
@@ -178,7 +173,7 @@ def main():
     if job_id:
         with contextlib.suppress(OSError):
             report(job_id, tool, signature, peak)
-    if code < 0:  # the tool died of a signal: die the same way
+    if code < 0:
         signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     sys.exit(code)

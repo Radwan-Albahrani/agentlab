@@ -1,5 +1,4 @@
-"""T3's own MCP tools, called with a short-lived token: answer a chat's pending question or interrupt its run
-(the actions the companion can't do through `t3 thread`)."""
+"""Calls T3's own MCP tools with a short-lived token for what `t3 thread` can't do (answer, interrupt)."""
 
 import json
 import subprocess
@@ -69,7 +68,7 @@ def _t3(*args):
 
 
 def with_tools(label, work):
-    """Run work(client) with a 5-minute token, revoked straight after -> (ok, detail)."""
+    """Run work(client) with a token revoked straight after -> (ok, detail)."""
     p = _t3(
         'auth',
         'session',
@@ -94,7 +93,7 @@ def with_tools(label, work):
     session_id = issued.get('sessionId') or issued.get('id', '')
     try:
         return work(Client(token))
-    except Exception as e:  # any failure goes back to the companion, not into the server
+    except Exception as e:
         return False, f'{type(e).__name__}: {e}'[:400]
     finally:
         if session_id:
@@ -102,8 +101,6 @@ def with_tools(label, work):
 
 
 def answer(thread, message):
-    """Answer the chat's pending question(s) the way the app's answer box does."""
-
     def work(t3):
         pending = t3.call('t3_pending_request_list', {'threadId': thread}).get('requestIds', [])
         if not pending:

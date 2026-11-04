@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""The hub (port 8080): the web app (static/, built from web/) and its JSON API (routes.py), for everyone with an
-agent, each scoped to their own (scope.py); admins see everything. Every request except /health names a signed-in
-person (access.py) or gets 403; POSTs must also come from this page (Origin check)."""
+"""The hub server (port 8080): the web app (static/) and its JSON API (routes.py), scoped to the signed-in person."""
 
 import json
 import mimetypes
@@ -50,7 +48,6 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def static(self, path):
-        """Hashed assets are cached for good; every other path is the app (it routes in the browser)."""
         f = os.path.realpath(os.path.join(STATIC, path.lstrip('/')))
         if f.startswith(STATIC + os.sep) and os.path.isfile(f):
             cache = 'public, max-age=31536000, immutable' if path.startswith('/assets/') else 'no-cache'
@@ -105,7 +102,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    if notify.enabled():  # phone pushes only once a Bark server is configured
+    if notify.enabled():
         notify.watcher = notify.Watcher(cluster.ids)
         notify.watcher.start()
     ThreadingHTTPServer(('0.0.0.0', PORT), Handler).serve_forever()

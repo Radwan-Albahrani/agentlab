@@ -1,5 +1,3 @@
-"""Commands on the host: shell, Docker and systemd units."""
-
 import subprocess
 
 

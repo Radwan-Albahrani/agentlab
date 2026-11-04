@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Boot-time mount of the storage images listed in cluster.json (agentlab-disks.service, before Docker). Only mounts:
-creating and growing images is `agentctl apply`'s job. A mount point that already holds a mount (say, from fstab)
-is left alone."""
+"""Boot-time mount of cluster.json's storage images; creating and growing them is `agentctl apply`'s job."""
 
 import json
 import os

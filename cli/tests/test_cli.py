@@ -1,6 +1,3 @@
-"""agentctl: config validation, the security-relevant shape of what it renders, cluster.toml edits, Cloudflare
-setup against a fake API, and the agent-facing output contract (--json, exit codes)."""
-
 import contextlib
 import copy
 import io
@@ -155,7 +152,7 @@ class Config(unittest.TestCase):
     def test_required_and_reserved(self):
         self.assertIn('domain is required', problems(BASE.replace('domain = "agents.example.com"\n', '')))
         self.assertIn("id 'hub'", problems(BASE.replace('id = "omar"', 'id = "hub"')))
-        self.assertEqual('', problems(BASE.replace('team = "example"', 'team = ""')))  # cloudflare setup finds it
+        self.assertEqual('', problems(BASE.replace('team = "example"', 'team = ""')))
         self.assertIn('team must be', problems(BASE.replace('team = "example"', 'team = "Not A Team"')))
 
     def test_ingress_must_suit_the_mode(self):
@@ -282,8 +279,6 @@ class DoctorHost(unittest.TestCase):
 
 
 class Migration(unittest.TestCase):
-    """What moving an existing one-person setup in needs: a published hub, extra stacks, adopting signed-in agents."""
-
     ONE = BASE.replace('owner = "omar@example.com"', 'owner = "sara@example.com"').replace(
         'mode = "cloudflare-access"', 'mode = "tailscale"'
     )
@@ -298,7 +293,7 @@ class Migration(unittest.TestCase):
 
     def test_published_ports_leave_tailscale_alone(self):
         cfg = resolve(self.ONE, hub__publish=7190)
-        self.assertFalse(config.ports_only(cfg))  # agents still go through the edge
+        self.assertFalse(config.ports_only(cfg))
         for i, a in enumerate(cfg['agents']):
             a['publish'] = {'t3': 7101 + 10 * i}
         self.assertTrue(config.ports_only(cfg))
@@ -344,7 +339,7 @@ class Migration(unittest.TestCase):
         hub = render.core(resolve(self.ONE))['services']['hub']
         self.assertNotIn('BARK_URL', hub['environment'])
         self.assertIn('/srv/agentlab/hub/data:/data', hub['volumes'])
-        self.assertNotIn('volumes', render.core(resolve(self.ONE)))  # no named volume: state lives on the host
+        self.assertNotIn('volumes', render.core(resolve(self.ONE)))
         cfg = resolve(self.ONE, hub__bark_url='http://host.docker.internal:7192/', hub__bark_public='http://phone:7192')
         hub = render.core(cfg)['services']['hub']
         self.assertEqual(hub['environment']['BARK_URL'], 'http://host.docker.internal:7192')
@@ -435,14 +430,14 @@ class Migration(unittest.TestCase):
             os.makedirs(f'{d}/b/home')
             with open(f'{d}/a/home/.codex/auth.json', 'w') as f:
                 f.write('{}')
-            with open(f'{d}/b/home/.claude.json', 'w') as f:  # Claude Code installed, nobody signed in
+            with open(f'{d}/b/home/.claude.json', 'w') as f:
                 f.write('{"numStartups": 1}')
             with (
                 mock.patch('os.fchown'),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertTrue(apply.adopt(signed, util.Plan(False)))
-                self.assertFalse(apply.adopt(signed, util.Plan(False)))  # once
+                self.assertFalse(apply.adopt(signed, util.Plan(False)))
                 self.assertFalse(apply.adopt(fresh, util.Plan(False)))
             self.assertTrue(os.path.isfile(f'{d}/a/home/.config/agent/onboarded'))
             self.assertFalse(os.path.exists(f'{d}/b/home/.config'))
@@ -508,7 +503,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(svc['networks']['agentlab-sara']['ipv4_address'], '10.207.1.2')
         self.assertEqual(svc['runtime'], 'sysbox-runc')
         self.assertNotIn('security_opt', svc)
-        self.assertNotIn('user', svc)  # starts as the agent; its root dockerd goes through one sudo rule
+        self.assertNotIn('user', svc)
         self.assertEqual(svc['environment']['AGENTLAB_ISOLATION'], 'sysbox')
         self.assertIn('/dev/net/tun', svc['devices'])
         self.assertEqual(body['networks'], {'agentlab-sara': {'external': True, 'name': 'agentlab-sara'}})
@@ -535,7 +530,7 @@ class Rendering(unittest.TestCase):
         self.assertNotIn('ports', files)
         r = self.routers['sara-files']
         self.assertIn('PathPrefix(`/_agentlab/files`)', r['rule'])
-        self.assertNotIn('middlewares', r)  # File Browser serves under its baseURL
+        self.assertNotIn('middlewares', r)
         self.assertEqual(
             self.edge['http']['services']['sara-files']['loadBalancer']['servers'], [{'url': 'http://files-sara:80'}]
         )
@@ -641,7 +636,7 @@ class Yaml(unittest.TestCase):
         self.assertIn('d: true', out)
         self.assertIn('e: []', out)
         self.assertIn('  - x: 1\n    z: "n"', out)
-        self.assertIn('"y": 1', yaml.dump({'y': 1}))  # a bare y key would read as true
+        self.assertIn('"y": 1', yaml.dump({'y': 1}))
 
 
 class TomlEdits(unittest.TestCase):
@@ -698,8 +693,6 @@ enabled = true
 
 
 class FakeCloudflare:
-    """Just enough of the Cloudflare API: tunnels, their config and token, DNS, Access policies, apps and IdPs."""
-
     def __init__(self):
         self.tunnels, self.configs, self.dns, self.policies, self.apps = [], {}, [], [], []
         self.routes, self.posture = [], []
@@ -709,8 +702,7 @@ class FakeCloudflare:
             {'id': 'o1', 'type': 'onetimepin', 'name': 'One-time PIN'},
         ]
         self.writes = []
-        # the account's device enrollment application, with the policy that already lets the DB people enroll
-        # (kept apart from self.apps, which holds the self-hosted ones the tests look at)
+        # the account's device enrollment app (kept apart from self.apps)
         self.enroll = {
             'id': 'enroll',
             'type': 'warp',
@@ -721,9 +713,9 @@ class FakeCloudflare:
         self.denied = set()  # path fragments this token can't reach (the API answers 403)
         self.denied_writes = set()  # path fragments it may read but not change
         self.org = {'auth_domain': 'example.cloudflareaccess.com', 'warp_auth_session_duration': '24h'}
-        self.refuse_app_flag = False  # netzero's account: the per-app client sign-in flag is refused with 12130
+        self.refuse_app_flag = False  # the per-app client sign-in flag is refused with 12130
         self.own_groups = None  # the token's permission group names, when it may read itself
-        self.calls = []  # every call, in order
+        self.calls = []
         self.ip_routes = []  # private IP routes on tunnels (teamnet)
         # device profiles: the default one in Exclude mode, as a new account has it
         self.profile = {'default': True, 'exclude': [{'address': '10.0.0.0/8'}]}
@@ -754,7 +746,7 @@ class FakeCloudflare:
             )
         if '/access/apps' in path and method in ('POST', 'PUT') and (body or {}).get('domain'):
             public = [d.get('uri') for d in body.get('destinations', []) if d.get('type') == 'public']
-            if body['domain'] not in public:  # what the real API answered netzero (#21)
+            if body['domain'] not in public:
                 raise cloudflare.ApiError(
                     f'Cloudflare {method} {path}: HTTP 400 [{{"code": 12130, "message": "access.api.error.'
                     'invalid_request: domain not included in destinations"}}]',
@@ -835,7 +827,7 @@ class FakeCloudflare:
             if method == 'POST':
                 n = len(self.apps) + 1
                 made = {**copy.deepcopy(body), 'id': f'a{n}', 'aud': f'aud{n}'}
-                if body.get('type') == 'saas':  # an OIDC client: its secret is in this answer only
+                if body.get('type') == 'saas':
                     made['saas_app'] = {**body['saas_app'], 'client_id': f'cid{n}', 'client_secret': f'secret{n}'}
                 self.apps.append(made)
                 return copy.deepcopy(made)
@@ -849,7 +841,7 @@ class FakeCloudflare:
         if '/access/apps/' in path and method == 'PUT':
             app = next(a for a in self.apps if a['id'] == path.rsplit('/', 1)[1])
             kept = {k: app[k] for k in ('id', 'aud') if k in app}
-            app.clear()  # a PUT replaces the application, as the real API does
+            app.clear()
             app.update({**body, **kept})
             return app
         if path.endswith('/access/organizations'):
@@ -976,7 +968,7 @@ class Cloudflare(unittest.TestCase):
         self.assertIn({'email': {'email': 'sara@example.com'}}, include)
         writes = len(self.fake.writes)
         self.run_setup()
-        self.assertEqual(len(self.fake.writes), writes)  # re-sync keeps both: nothing to change
+        self.assertEqual(len(self.fake.writes), writes)
 
     def probe(self):
         cfg = config.load(self.config_path)
@@ -985,7 +977,7 @@ class Cloudflare(unittest.TestCase):
 
     def test_token_probes_report_what_it_lacks(self):
         self.assertEqual(dict(self.probe()), {'tunnels': True, 'dns': True, 'access': True, 'idps': True})
-        self.fake.token = 'account'  # account-owned tokens verify under /accounts/<id>/
+        self.fake.token = 'account'
         self.assertTrue(all(ok for _, ok in self.probe()))
         for fragment, name in (
             ('/cfd_tunnel', 'tunnels'),
@@ -995,9 +987,9 @@ class Cloudflare(unittest.TestCase):
         ):
             self.fake.denied = {fragment}
             self.assertEqual([n for n, ok in self.probe() if not ok], [name])
-        self.fake.denied = {'/zones'}  # the zone isn't in the token's scope at all
+        self.fake.denied = {'/zones'}
         self.assertEqual([n for n, ok in self.probe() if not ok], ['dns'])
-        self.assertEqual(self.fake.writes, [])  # every probe is a read
+        self.assertEqual(self.fake.writes, [])
 
     def test_the_organization_is_probed_only_when_the_team_is_unknown(self):
         cfg = config.load(self.config_path)
@@ -1006,7 +998,7 @@ class Cloudflare(unittest.TestCase):
             self.assertIn(('org', True), cloudflare.probe_token(cfg))
             self.fake.denied = {'/access/organizations'}
             self.assertIn(('org', False), cloudflare.probe_token(cfg))
-        self.assertNotIn('org', dict(self.probe()))  # the test config names its team
+        self.assertNotIn('org', dict(self.probe()))
         self.assertIn('Access: Organizations', cloudflare.PERMISSIONS['org'])
 
     def test_refused_token_is_one_clear_problem(self):
@@ -1042,8 +1034,6 @@ class Cloudflare(unittest.TestCase):
 
 
 class AgentCompanions(unittest.TestCase):
-    """Companions belong to their agent: the state file is the truth, cluster.toml only seeds it once."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1087,12 +1077,12 @@ class AgentCompanions(unittest.TestCase):
             self.companions.create(self.path, 'sara', 'three')
         self.companions.create(self.path, 'omar', 'three-b')
         with self.assertRaisesRegex(util.Failed, 'limit is 2'):
-            self.companions.create(self.path, 'omar', 'three-c')  # seeded-bot counts too
+            self.companions.create(self.path, 'omar', 'three-c')
         with open(self.path) as f:
             text = f.read().replace('max_per_agent = 2', 'max_per_agent = 0')
         with open(self.path, 'w') as f:
             f.write(text)
-        self.companions.create(self.path, 'sara', 'three')  # 0 = no cap
+        self.companions.create(self.path, 'sara', 'three')
         with open(self.path, 'w') as f:
             f.write(text.replace('max_per_agent = 0', 'max_per_agent = 0\nself_service = false'))
         with self.assertRaises(util.Needs):
@@ -1103,7 +1093,7 @@ class AgentCompanions(unittest.TestCase):
             self.companions.remove(self.path, 'sara', 'seeded-bot')
         os.makedirs(f'{self.tmp.name}/companions/seeded-bot')
         self.companions.remove(self.path, 'omar', 'seeded-bot')
-        self.assertEqual(self.names(), [])  # still in cluster.toml, but already seeded: not brought back
+        self.assertEqual(self.names(), [])
         archived = os.listdir(f'{self.tmp.name}/companions/.removed')
         self.assertTrue(archived[0].startswith('seeded-bot-'))
 
@@ -1128,7 +1118,7 @@ class AgentNative(unittest.TestCase):
         util.OUT.messages.clear()
         util.OUT.changes.clear()
         util.OUT.warnings.clear()
-        self.enterContext(mock.patch('agentlab.privileges.elevate'))  # Privileges below tests it on its own
+        self.enterContext(mock.patch('agentlab.privileges.elevate'))
 
     def run_cli(self, *argv):
         out = io.StringIO()
@@ -1156,7 +1146,7 @@ class AgentNative(unittest.TestCase):
         data = json.loads(out)
         self.assertIn('--yes', data['error'])
         with open(self.path) as f:
-            self.assertIn('id = "omar"', f.read())  # nothing changed
+            self.assertIn('id = "omar"', f.read())
 
     def test_bad_config_fails_with_exit_1(self):
         with open(self.path, 'a') as f:
@@ -1182,8 +1172,6 @@ class AgentNative(unittest.TestCase):
 
 
 class Privileges(unittest.TestCase):
-    """Host-changing commands re-run through sudo; agents (no TTY or --json) get exit 2 instead of a password prompt."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1220,8 +1208,8 @@ class Privileges(unittest.TestCase):
             ['backup', 'list'],
             ['apply', '--dry-run'],
             ['agent', 'add', 'kim', 'kim@example.com', '--dry-run'],
-            ['agent', 'remove', 'omar'],  # prints the plan and stops for --yes
-            ['images', 'build'],  # this user reaches Docker
+            ['agent', 'remove', 'omar'],
+            ['images', 'build'],
         ]
         for argv in root:
             self.assertTrue(privileges.needs_root(self.args(*argv)), argv)
@@ -1258,7 +1246,7 @@ class Privileges(unittest.TestCase):
         out = io.StringIO()
         with (
             mock.patch('agentlab.privileges.subprocess.run', refused),
-            # the check containers run as root and without sudo: pin both so only the refusal is under test
+            # pin root and no sudo so only the refusal is under test
             mock.patch('agentlab.privileges.is_root', return_value=False),
             mock.patch('agentlab.privileges.shutil.which', return_value='/usr/bin/sudo'),
             contextlib.redirect_stdout(out),
@@ -1330,7 +1318,7 @@ class Init(unittest.TestCase):
         self.init()
         with open(self.etc, 'w') as f:
             f.write('# mine\n')
-        self.groups['agentlab'].gr_gid = os.stat(self.etc).st_gid  # chown is mocked: line the group up with the file
+        self.groups['agentlab'].gr_gid = os.stat(self.etc).st_gid
         self.ran.clear()
         util.OUT.changes.clear()
         result = self.init()
@@ -1395,8 +1383,6 @@ if __name__ == '__main__':
 
 
 class PrivateNetwork(unittest.TestCase):
-    """network = "private": no public hostnames; hostname routes over the tunnel and a private Access app."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1458,13 +1444,12 @@ class PrivateNetwork(unittest.TestCase):
         self.fake.apps.append({'id': 'x1', 'name': 'payroll', 'destinations': [{'uri': 'pay.example.com'}]})
         self.write(self.text)
         self.run_setup()
-        self.assertEqual([r['id'] for r in self.fake.dns], ['mine'])  # every agentlab record went, others stay
+        self.assertEqual([r['id'] for r in self.fake.dns], ['mine'])
         self.assertEqual(sorted(a['name'] for a in self.fake.apps), ['agentlab-test', 'payroll'])
         self.assertNotIn('agentlab-test apps', [p['name'] for p in self.fake.policies])
         self.assertEqual({d['type'] for d in self.fake.apps[0]['destinations']}, {'private'})
 
     def test_include_mode_profiles_get_the_team_domain_and_the_sign_in_provider(self):
-        # an expired client in Include mode asked to be connected first, and couldn't be
         own = [{'host': 'intranet.example.com'}]
         self.fake.profile = {'default': True, 'include': list(own)}
         self.fake.profiles = [
@@ -1477,7 +1462,7 @@ class PrivateNetwork(unittest.TestCase):
         self.assertEqual([e['host'] for e in self.fake.profile['include']], want)
         mac, ops = self.fake.profiles
         self.assertEqual([e['host'] for e in mac['include']], want)
-        self.assertNotIn('include', ops)  # Exclude mode already reaches both
+        self.assertNotIn('include', ops)
         with mock.patch.object(cloudflare, 'api_for', return_value=self.fake):
             checks = {c[0]: c for c in cloudflare.client_only_checks(config.load(self.config_path))}
         self.assertTrue(checks['client-reauth'][1])
@@ -1507,13 +1492,11 @@ class PrivateNetwork(unittest.TestCase):
             config.load(self.config_path)
 
     def test_the_tunnel_runs_next_to_the_edge_with_no_host_port_80(self):
-        # #22: a host port 80 collided with Coolify's proxy; the tunnel container reaches the edge directly instead
         cfg = config.load(self.config_path)
         edge = render.edge_service(cfg)
-        self.assertNotIn('80', [p.split(':')[-2] for p in edge['ports']])  # no host port 80 at all
+        self.assertNotIn('80', [p.split(':')[-2] for p in edge['ports']])
         self.assertIn('--entrypoints.ingress.address=:80', edge['command'])
         self.assertEqual(edge['networks']['agentlab-edge']['ipv4_address'], render.EDGE_IP)
-        # cloudflared answers Gateway's lookups through Docker's DNS, which knows aliases, not extra_hosts
         self.assertEqual(
             edge['networks']['agentlab-edge']['aliases'], ['edge', 'agents.example.com', 'agents-hub.example.com']
         )
@@ -1521,7 +1504,7 @@ class PrivateNetwork(unittest.TestCase):
         self.assertEqual(
             tunnel['extra_hosts'], [f'agents.example.com:{render.EDGE_IP}', f'agents-hub.example.com:{render.EDGE_IP}']
         )
-        self.assertEqual(list(tunnel['networks']), ['agentlab-edge'])  # never an agent's network
+        self.assertEqual(list(tunnel['networks']), ['agentlab-edge'])
         self.assertNotIn('ports', tunnel)
         self.assertIn('--token-file', tunnel['command'])
 
@@ -1586,8 +1569,6 @@ class PrivateNetwork(unittest.TestCase):
 
 
 class RequireWarp(unittest.TestCase):
-    """network = "public" with require_warp: the sign-in page stays, and the policy requires the Gateway check."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1620,7 +1601,7 @@ class RequireWarp(unittest.TestCase):
         (people,) = self.fake.policies
         self.assertEqual(people['require'], [{'device_posture': {'integration_uid': check['id']}}])
         self.assertTrue(self.fake.apps[0]['allow_authenticate_via_warp'])
-        self.assertTrue(self.fake.dns)  # still public hostnames
+        self.assertTrue(self.fake.dns)
 
     def test_an_existing_gateway_check_is_reused_and_reruns_change_nothing(self):
         self.fake.posture.append({'id': 'gw', 'type': 'gateway', 'name': 'Gateway'})
@@ -1659,8 +1640,6 @@ class HostsFile(unittest.TestCase):
 
 
 class SafeSwitch(unittest.TestCase):
-    """#19 and #20: everything checked before the first change, and the new way in made before the old one goes."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1674,7 +1653,7 @@ class SafeSwitch(unittest.TestCase):
         )
         self.public = self.private.replace('team = "example"', 'team = "example"\nnetwork = "public"')
         self.fake = FakeCloudflare()
-        self.go(self.public)  # a working public cluster, as netzero had
+        self.go(self.public)
         self.fake.writes.clear()
         self.fake.calls.clear()
 
@@ -1714,7 +1693,7 @@ class SafeSwitch(unittest.TestCase):
         self.assertEqual(self.fake.writes, [])
 
     def test_a_refused_edit_mid_run_is_exit_2_and_leaves_public_working(self):
-        self.fake.denied_writes = {'/zerotrust/routes'}  # reads fine, own permissions unreadable
+        self.fake.denied_writes = {'/zerotrust/routes'}
         with self.assertRaisesRegex(util.Needs, 'Cloudflare refused to route'):
             self.go(self.private)
         self.public_still_works()
@@ -1733,8 +1712,8 @@ class SafeSwitch(unittest.TestCase):
         self.fake.org = {'auth_domain': 'example.cloudflareaccess.com', 'name': 'netzero', 'created_at': 'x'}
         self.go(self.private)
         self.assertEqual(self.fake.org['warp_auth_session_duration'], '24h')
-        self.assertEqual(self.fake.org['name'], 'netzero')  # the rest of the organization is sent back unchanged
-        self.assertNotIn('allow_authenticate_via_warp', self.fake.org)  # never "for all applications"
+        self.assertEqual(self.fake.org['name'], 'netzero')
+        self.assertNotIn('allow_authenticate_via_warp', self.fake.org)
         self.fake.org['warp_auth_session_duration'] = '8h'
         before = len(self.fake.writes)
         self.go(self.private)
@@ -1747,7 +1726,7 @@ class SafeSwitch(unittest.TestCase):
         with self.assertRaises(util.Needs) as e:
             self.go(self.private)
         self.assertIn('Access: Organizations → Edit', str(e.exception))
-        self.assertEqual(self.fake.writes, [('PUT', '/accounts/acc/access/organizations')])  # the refused one only
+        self.assertEqual(self.fake.writes, [('PUT', '/accounts/acc/access/organizations')])
         self.public_still_works()
 
     def test_people_may_enroll_the_client_and_other_policies_stay(self):
@@ -1768,11 +1747,9 @@ class SafeSwitch(unittest.TestCase):
         ):
             self.go(self.private)
         self.assertIn('session duration', str(e.exception))
-        self.public_still_works()  # the app is made before the tunnel switches
+        self.public_still_works()
 
     def test_an_account_that_allows_client_sign_in_everywhere_needs_no_per_app_flag(self):
-        # #21: the organization had client sessions on for every app, a duration set, and Cloudflare still refused
-        # the per-app flag; the app now inherits the account-wide setting instead of asking for it
         self.fake.org['allow_authenticate_via_warp'] = True
         self.fake.refuse_app_flag = True
         self.go(self.private)
@@ -1783,7 +1760,6 @@ class SafeSwitch(unittest.TestCase):
         self.assertTrue(checks['client-sign-in'])
 
     def test_a_private_app_sends_no_public_domain(self):
-        # #21: Cloudflare refused the private app with "domain not included in destinations" (code 12130)
         self.go(self.private)
         app = next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
         self.assertNotIn('domain', app)
@@ -1794,7 +1770,7 @@ class SafeSwitch(unittest.TestCase):
         self.assertIsNone(cloudflare.refused(e, 'update Access application'))
 
     def test_a_refusal_shows_cloudflares_own_words(self):
-        self.fake.refuse_app_flag = True  # and the account doesn't allow it everywhere
+        self.fake.refuse_app_flag = True
         with self.assertRaises(util.Needs) as e:
             self.go(self.private)
         self.assertIn('Cloudflare said:', str(e.exception))
@@ -1813,7 +1789,6 @@ class SafeSwitch(unittest.TestCase):
         self.assertGreater(min(dns), switch)
 
     def test_netzeros_half_switched_state_finishes_on_the_next_run(self):
-        # what an earlier version left: tunnel private, routes made, public DNS gone, app still public
         self.fake.configs['t1'] = {
             'config': {'ingress': [{'service': 'http_status:404'}], 'warp-routing': {'enabled': True}}
         }
@@ -1821,11 +1796,11 @@ class SafeSwitch(unittest.TestCase):
             self.fake.routes.append({'id': host, 'hostname': host, 'tunnel_id': 't1', 'comment': 'agentlab-test'})
         self.fake.dns.clear()
         self.fake.org.pop('warp_auth_session_duration')
-        self.fake.denied_writes = {'/access/organizations'}  # the token can't set it yet
+        self.fake.denied_writes = {'/access/organizations'}
         with self.assertRaises(util.Needs) as e:
             self.go(self.private)
         self.assertIn('not reachable', str(e.exception))
-        self.fake.denied_writes = set()  # the person added Access: Organizations → Edit
+        self.fake.denied_writes = set()
         self.go(self.private)
         app = next(a for a in self.fake.apps if a['name'] == 'agentlab-test')
         self.assertEqual({d['type'] for d in app['destinations']}, {'private'})
@@ -1847,8 +1822,6 @@ class SafeSwitch(unittest.TestCase):
 
 
 class EnrollmentExposure(unittest.TestCase):
-    """Private mode opens client enrollment to agentlab's people: doctor warns about what else that reaches."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1914,8 +1887,6 @@ class EnrollmentExposure(unittest.TestCase):
 
 
 class HostTunnelCheck(unittest.TestCase):
-    """#23: private mode runs the tunnel in agentlab-core, so doctor doesn't ask for the retired host service."""
-
     def checks(self, text):
         c = doctor.Checks()
         with mock.patch.object(doctor, '_active', return_value=False), mock.patch.object(doctor, '_domain_levels'):
@@ -1937,9 +1908,6 @@ HTTPS = BASE.replace('team = "example"', 'team = "example"\nhttps = true').repla
 
 
 class PrivateHttps(unittest.TestCase):
-    """network = "private" with https: a certificate on the edge, the gate's OIDC application, port 443 only once
-    the certificate is there, and the T3 apps' own names."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -1953,7 +1921,7 @@ class PrivateHttps(unittest.TestCase):
         )
         self.write(self.text)
         self.fake = FakeCloudflare()
-        self.cert = None  # what the edge serves: None (nothing trusted yet) or the days it has left
+        self.cert = None  # None (nothing trusted yet) or the days the edge's certificate has left
         self.enterContext(mock.patch.object(cloudflare, 'edge_certificate', side_effect=lambda h: (self.cert, 'no')))
         self.enterContext(mock.patch.object(cloudflare, 'api_for', return_value=self.fake))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
@@ -1969,7 +1937,7 @@ class PrivateHttps(unittest.TestCase):
 
     def finish(self):
         cfg = config.load(self.config_path)
-        cloudflare.save_gate_secret(cfg, 'key', 'k' * 64)  # apply makes it before it deploys
+        cloudflare.save_gate_secret(cfg, 'key', 'k' * 64)
         cloudflare.finish_https(cfg, util.Plan(False), wait=0)
         return cfg
 
@@ -1990,7 +1958,7 @@ class PrivateHttps(unittest.TestCase):
         self.assertIn('https is for network = "private"', problems(public))
         cfg = resolve(HTTPS)
         self.assertTrue(config.private_https(cfg) and cfg['auth']['cloudflare']['https'])
-        self.assertFalse(resolve(BASE)['auth']['cloudflare']['https'])  # absent: plain HTTP, as before
+        self.assertFalse(resolve(BASE)['auth']['cloudflare']['https'])
 
     def test_the_sign_in_app_and_its_client_come_first_then_port_80_only_until_the_certificate(self):
         self.run_setup()
@@ -2014,14 +1982,14 @@ class PrivateHttps(unittest.TestCase):
         with open(f'{folder}/oidc-client-secret') as f:
             self.assertEqual(f.read(), 'secret' + saas['client_id'][3:])
         self.assertEqual(stat.S_IMODE(os.stat(f'{folder}/oidc-client-secret').st_mode), 0o400)
-        self.assertEqual(self.fake.apps.index(sign_in), 0)  # made before the people's app
-        self.assertEqual({p for _, p in self.ports()}, {'80'})  # no certificate yet: HTTPS isn't offered
+        self.assertEqual(self.fake.apps.index(sign_in), 0)
+        self.assertEqual({p for _, p in self.ports()}, {'80'})
         self.assertFalse(self.live())
         self.assertIn('sara-t3.example.com', [r['hostname'] for r in self.fake.routes])
 
     def test_port_443_and_the_redirect_once_the_certificate_is_trusted(self):
         self.run_setup()
-        self.finish()  # apply right after: Let's Encrypt not done yet
+        self.finish()
         self.assertEqual({p for _, p in self.ports()}, {'80'})
         self.assertFalse(self.live())
         self.cert = 89
@@ -2039,7 +2007,7 @@ class PrivateHttps(unittest.TestCase):
         )
         self.assertTrue(self.live())
         before = len(self.fake.writes)
-        self.cert = None  # a passing failure never takes 443 away again
+        self.cert = None
         self.run_setup()
         self.finish()
         self.assertEqual(self.fake.writes[before:], [])
@@ -2078,14 +2046,13 @@ class PrivateHttps(unittest.TestCase):
         self.assertEqual(checks['certificate-agents.example.com'][4], 'error')
         self.assertTrue(checks['sign-in-app'][1])
         self.assertFalse(checks['https-port'][1])
-        self.assertFalse(checks['gate-secrets'][1])  # no session key until apply
+        self.assertFalse(checks['gate-secrets'][1])
         self.cert = 5
         self.finish()
         checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
-        self.assertFalse(checks['certificate-agents.example.com'][1])  # expiring soon
+        self.assertFalse(checks['certificate-agents.example.com'][1])
         self.assertEqual(checks['certificate-agents.example.com'][4], 'warning')
         self.assertTrue(checks['https-port'][1] and checks['gate-secrets'][1])
-        # #25: the redirect is a real request to the edge, not the marker file
         with mock.patch.object(cloudflare, 'edge_redirect', return_value=(False, 'HTTP 404 without a redirect')):
             checks = {c[0]: c for c in cloudflare.client_only_checks(cfg)}
         self.assertFalse(checks['https-redirect-agents.example.com'][1])
@@ -2095,7 +2062,6 @@ class PrivateHttps(unittest.TestCase):
         self.assertTrue(checks['https-redirect-agents.example.com'][1])
 
     def test_plain_http_has_its_own_router_next_to_the_tls_one(self):
-        # #25: one router with tls on both entrypoints answered plain HTTP with 404
         dynamic = render.edge(resolve(HTTPS))
         routers = dynamic['http']['routers']
         self.assertEqual(routers['in-agent']['entryPoints'], ['websecure'])
@@ -2110,17 +2076,16 @@ class PrivateHttps(unittest.TestCase):
         self.assertIn('--entrypoints.websecure.address=:443', edge['command'])
         self.assertIn('--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare', edge['command'])
         self.assertFalse([c for c in edge['command'] if 'httpchallenge' in c])
-        self.assertEqual(edge['ports'], [f'127.0.0.1:{render.INGRESS_PORT}:80'])  # no host 443
+        self.assertEqual(edge['ports'], [f'127.0.0.1:{render.INGRESS_PORT}:80'])
         self.assertEqual(edge['environment'], {'CF_DNS_API_TOKEN_FILE': render.ACME_TOKEN})
         self.assertIn(f'/srv/agentlab/secrets/cloudflare-api.token:{render.ACME_TOKEN}:ro', edge['volumes'])
         self.assertIn('/srv/agentlab/edge-acme:/acme', edge['volumes'])
         self.assertIn('sara-t3.example.com', edge['networks']['agentlab-edge']['aliases'])
         routers = render.edge(cfg)['http']['routers']
-        self.assertEqual(routers['in-agent']['entryPoints'], ['websecure'])  # plain HTTP: in-agent-http
-        # one wildcard in Let's Encrypt's public log, rather than every agent's name
+        self.assertEqual(routers['in-agent']['entryPoints'], ['websecure'])
         self.assertEqual(routers['in-agent']['tls'], {'certResolver': 'le', 'domains': [{'main': '*.example.com'}]})
         self.assertEqual(routers['pair-sara']['entryPoints'], ['websecure'])
-        self.assertNotIn('gate', routers['pair-sara']['middlewares'])  # T3's own pairing protects it
+        self.assertNotIn('gate', routers['pair-sara']['middlewares'])
         forward = render.edge(cfg)['http']['middlewares']['gate']['forwardAuth']
         self.assertIn('X-Agentlab-Proof', forward['authResponseHeaders'])
         core = render.core(cfg)['services']

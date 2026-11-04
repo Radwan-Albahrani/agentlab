@@ -1,11 +1,4 @@
-"""Pull request review and QA (the generic part is in reviewer/), run in the companion's agent and posted as the companion's GitHub App.
-
-Asked for from the hub (the Review button on a pull request) or in Slack ("@companion review <PR link>").
-Each review is a task like any other: a thread (the owner's DM for page asks, else where they asked) mirroring one
-lead T3 chat, which runs the lanes and QA as T3 child threads and writes review.json into its outbox. The companion then
-posts the result: a comment-only review, the QA report with screenshots, a +1 when clean, and closes its own
-earlier threads that were fixed. Two reviews run at a time (QA starts dev servers and containers); more queue.
-The App's key lives in Secrets; until it is there the page shows how to add it and nothing here runs."""
+"""The companion side of pull request review and QA (generic part in reviewer/): queue, run as tasks, publish."""
 
 import json
 import os
@@ -32,7 +25,7 @@ _app = {'with': None, 'app': None}
 
 
 def app():
-    """The GitHub App from Secrets, rebuilt when its id or key changes; None until both are there."""
+    """The GitHub App from Secrets (rebuilt when they change), or None."""
     ident, pem = optional_secret(APP_ID), optional_secret(APP_KEY)
     if not ident or not pem:
         status.update(ready=False, error='not set up')
@@ -42,9 +35,8 @@ def app():
     return _app['app']
 
 
-# ---------------------------------------------------------------- the open pull requests
 def refresh():
-    """Re-read the open PRs (asked by the page when it opens or on its refresh button; never on a timer)."""
+    """Re-read the open PRs."""
     a = app()
     if not a:
         state['pulls'] = []
@@ -55,22 +47,22 @@ def refresh():
             ready=True, error='', bot=a.slug(), accounts=[i['account'] for i in a.installations()], at=time.time()
         )
         state['pulls'] = found
-    except Exception as e:  # keep the last list; the page shows why it is old
+    except Exception as e:  # keep the last list
         log('pull requests unavailable:', e)
         status.update(error=str(e)[:200], at=time.time())
     save()
 
 
 def latest(pr_id):
-    """The newest review task for this PR, as (key, task), or (None, None)."""
+    """(key, task) of the newest review of this PR, or (None, None)."""
     found = [(k, t) for k, t in state['tasks'].items() if (t.get('review') or {}).get('id') == pr_id]
     return max(found, key=lambda kt: kt[1].get('start', ''), default=(None, None))
 
 
 def rows(card):
-    """The PR list for the page, each with its latest review (card: publish.card, for the same status words)."""
+    """The hub's PR list, each with its latest review (card: publish.card)."""
     queued = {q['id'] for q in state.get('review_queue', [])}
-    newest = {}  # PR id -> (key, task) of its latest review, from one pass over the tasks
+    newest = {}  # PR id -> (key, task) of its latest review
     for k, t in state['tasks'].items():
         pr = (t.get('review') or {}).get('id')
         if pr and (pr not in newest or t.get('start', '') > newest[pr][1].get('start', '')):
@@ -91,17 +83,14 @@ def rows(card):
                 'head': r.get('published') or r['head'],
                 'at': t.get('start', ''),
                 'url': r.get('url', ''),
-                # findings, blocking, open (earlier ones still standing), qa verdict
                 'counts': r.get('counts') or report.counts_of(r.get('summary', '')),
             }
         out.append(dict(p, review=review))
     return out
 
 
-# ---------------------------------------------------------------- asking for one
 def request(repo, number, origin=None):
-    """Queue a review of repo#number. origin: {channel, thread_ts, trigger_ts} when asked in Slack. Returns a
-    problem, or '' when queued."""
+    """Queue a review of repo#number (origin: Slack {channel, thread_ts, trigger_ts}); returns a problem or ''."""
     a = app()
     if not a:
         return 'the GitHub App is not set up yet (Secrets: github-app-id.txt and github-app-key.pem)'
@@ -120,14 +109,12 @@ def request(repo, number, origin=None):
 
 
 def from_slack(channel, thread_ts, trigger_ts, text):
-    """A tag that asks for a review -> a review in that thread. True if taken (else it is an ordinary task).
-    Asking: a PR link on its own ("@companion <link>"), or review/QA words with a link, a "#123" from the list, or
-    under a message that links one PR ("@companion review this" in its thread)."""
+    """Start a review if this Slack tag asks for one; False means treat it as an ordinary task."""
     msg = slack.readable(without_mention(text)).strip()
     rest = re.sub(r'<?https?://\S*github\.com/\S+/pull/\d+\S*', '', msg).strip()
     asked = bool(ASKED.search(rest))
     if not asked and re.search(r'[a-z]{3,}', rest, re.I):
-        return False  # other words: an ordinary task, even with a link in it
+        return False
     pr = _linked(msg)
     if not pr and asked and thread_ts != trigger_ts:
         root = slack.thread_messages(channel, thread_ts, trigger_ts)[:1]
@@ -149,7 +136,7 @@ def from_slack(channel, thread_ts, trigger_ts, text):
 
 
 def _linked(text):
-    """(repo, number) of the one pull request a text links, or None (none, or several)."""
+    """(repo, number) if the text links exactly one pull request, else None."""
     links = {(m.group(1), int(m.group(2))) for m in PR_LINK.finditer(text or '')}
     return next(iter(links)) if len(links) == 1 else None
 
@@ -158,11 +145,11 @@ PRUNE_EVERY = 30 * 86400
 
 
 def prune_tick():
-    """Once a month: drop QA screenshots older than 60 days from the evidence repository (see pulls.prune_evidence)."""
+    """Monthly pulls.prune_evidence of old QA screenshots."""
     a, evidence = app(), evidence_repo()
     if not a or not evidence:
         return
-    if 'evidence_pruned' not in state:  # nothing can be old yet: the first prune is a month from now
+    if 'evidence_pruned' not in state:
         state['evidence_pruned'] = time.time()
         save()
     if time.time() - state['evidence_pruned'] < PRUNE_EVERY:
@@ -285,15 +272,14 @@ def _write(box, name, text, private=False):
     os.chmod(path, 0o600 if private else 0o644)
 
 
-# ---------------------------------------------------------------- the result
 def publish(task, box, data):
-    """review.json from the lead chat -> GitHub, as the App. Every step that fails says so in the thread."""
+    """review.json -> GitHub as the App; failures are reported in the thread."""
     r, ch, tts = task['review'], task['channel'], task['thread_ts']
     a = app()
     if not a:
         slack.post(ch, tts, 'Not posted', md=':warning: The review is ready, but the GitHub App is not set up.')
         return
-    head = r['head']  # the commit the chat was given; comments anchor to it even if the PR moved on since
+    head = r['head']  # the reviewed commit, not the PR's current head
     f = {'repo': r['repo'], 'number': r['number'], 'installation': r['installation'], 'url': r['url']}
     findings = report.clean(data.get('findings'))
     qa = data.get('qa') if isinstance(data.get('qa'), dict) else {}
@@ -307,7 +293,7 @@ def publish(task, box, data):
     extra = report.closing(findings, limitation, qa.get('verdict'), qa_url)
     url = ''
     try:
-        if findings or limitation:  # only what is new: earlier findings live on in their own threads
+        if findings or limitation:
             body, inline = report.build(findings, files, r['repo'], head, extra)
             url = pulls.post_review(a, f, head, body, inline)
         elif not still_open:
@@ -336,8 +322,7 @@ def publish(task, box, data):
 
 
 def _settle_threads(a, f, head, verdicts, mine, problems):
-    """A re-review edits instead of piling up: The companion's own earlier threads are resolved with a one-line reply when
-    fixed or wrong, and rewritten in place when the problem is still there but changed. Returns the ids closed."""
+    """Resolve or rewrite the companion's own earlier threads per the verdicts; returns the ids closed."""
     closed = set()
     for th in verdicts or []:
         if not isinstance(th, dict) or th.get('id') not in mine:
@@ -359,9 +344,7 @@ def _settle_threads(a, f, head, verdicts, mine, problems):
 
 
 def _post_qa(a, f, box, qa, problems):
-    """The QA report as its own comment, its screenshots shown inline: the ones in the review's folder that the report
-    names go to the QA screenshots repository (see pulls.upload_images). If that fails, the report still goes
-    up, each screenshot marked "not attached", and the thread says why."""
+    """Post the QA report comment with its screenshots uploaded to the evidence repository; returns its URL."""
     report_path = os.path.realpath(os.path.join(box, os.path.basename(str(qa['report']))))
     if not os.path.isfile(report_path):
         problems.append('the QA report file is missing')
@@ -388,6 +371,5 @@ def _post_qa(a, f, box, qa, problems):
 
 
 def heartbeat():
-    """What the page needs to know about the App (for the heartbeat)."""
     app()
     return dict(status)

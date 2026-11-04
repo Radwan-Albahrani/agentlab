@@ -1,6 +1,4 @@
-"""The companion bridge into this agent's T3: POST /api/t3/start|send|respond|stop|triage with the X-Agent-Key header.
-Locked with the key in ~/.config/agent/bridge-key (agentctl writes it and gives the companion the same key; no file =
-bridge off)."""
+"""Companion bridge into this agent's T3, keyed by ~/.config/agent/bridge-key (no file = bridge off)."""
 
 import json
 import os
@@ -16,7 +14,6 @@ T3_SETTINGS = os.path.join(HOME, '.t3', 'userdata', 'settings.json')
 
 
 def authorized(key):
-    """-> (ok, error)"""
     try:
         with open(KEY_FILE) as f:
             want = f.read().strip()
@@ -26,7 +23,6 @@ def authorized(key):
 
 
 def handle(path, body):
-    """-> (http status, JSON-able reply)"""
     if path == '/api/t3/triage':
         return _result(*triage(str(body.get('message', ''))[:20000]))
     if path == '/api/t3/respond':
@@ -44,7 +40,6 @@ def _result(ok, out):
 
 
 def _thread_cli(args, body):
-    """`t3 thread start|send`, the message on stdin."""
     try:
         p = subprocess.run(
             ['t3', 'thread', *args],
@@ -73,8 +68,7 @@ def default_model():
 
 
 def triage(prompt):
-    """One quick, read-only model call on whatever this agent's T3 uses by default (Codex: low reasoning;
-    Claude: its quick model) -> (ok, text)."""
+    """One quick read-only model call on the T3 default provider -> (ok, text)."""
     out = f'/tmp/triage-{os.getpid()}-{threading.get_ident()}.txt'
     try:
         if default_model().startswith('claude'):

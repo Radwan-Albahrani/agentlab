@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Stand-in for Playwright MCP (registered with Claude Code and Codex). Every thread spawns its MCP servers and
-Playwright's is ~130 MB even in threads that never browse, so this answers the handshake and tool list from a cache
-and starts the real server on the first browser call, stopping it after BROWSER_MCP_IDLE_MINUTES (15).
-If another thread holds ~/.chrome-profile, this thread gets an in-memory profile instead. Log: ~/logs/browser-mcp.log"""
+"""Lazy stand-in for Playwright MCP: serves the handshake from a cache, starts the real server on first browser call."""
 
 import contextlib
 import json
@@ -40,14 +37,13 @@ def read_json(path):
 
 def playwright_version():
     try:
-        root = os.path.dirname(os.path.realpath(REAL[0]))  # .../@playwright/mcp (bin -> cli.js)
+        root = os.path.dirname(os.path.realpath(REAL[0]))
         return read_json(os.path.join(root, 'package.json')).get('version', '?')
     except (OSError, ValueError):
         return '?'
 
 
 def profile_in_use():
-    """Chrome's SingletonLock points at 'host-PID' while a Chrome has the profile open."""
     try:
         pid = int(os.readlink(os.path.join(PROFILE, 'SingletonLock')).rsplit('-', 1)[1])
         os.kill(pid, 0)
@@ -57,7 +53,7 @@ def profile_in_use():
 
 
 def isolated_command():
-    """Isolated mode refuses a userDataDir, so it gets a copy of the config without one."""
+    """Isolated mode refuses a userDataDir, so it gets a config copy without one."""
     cfg = read_json(REAL[2])
     cfg.get('browser', {}).pop('userDataDir', None)
     path = os.path.join(CACHE_DIR, 'isolated-config.json')
@@ -69,10 +65,10 @@ def isolated_command():
 
 class LazyServer:
     def __init__(self):
-        self.real = None  # running Playwright MCP process
-        self.client_init = None  # the client's initialize params, replayed to each real server
+        self.real = None
+        self.client_init = None  # replayed to each real server
         self.last_use = time.time()
-        self.own = {}  # ids of requests this stand-in sent to the real server -> Event (+ .result)
+        self.own = {}  # id of a request we sent the real server -> Event (+ .result)
         self.out_lock, self.state_lock = threading.Lock(), threading.Lock()
 
     def running(self):
@@ -98,7 +94,7 @@ class LazyServer:
                 event.result = msg
                 event.set()
             else:
-                self.to_client(msg)  # responses, notifications, server requests
+                self.to_client(msg)
         log('real server exited')
 
     def own_request(self, method, params, timeout=90):
@@ -110,7 +106,6 @@ class LazyServer:
         return event.result
 
     def ensure_real(self):
-        """Start Playwright MCP if needed and initialize it with the client's own parameters."""
         with self.state_lock:
             if self.running():
                 return None
@@ -149,7 +144,7 @@ class LazyServer:
             self.real = None
 
     def handshake(self):
-        """Cached initialize result + tool list for this Playwright MCP version (fetched once if missing)."""
+        """Cached initialize result + tool list for this Playwright MCP version and config."""
         try:
             cached = read_json(CACHE)
             if cached.get('version') == playwright_version() and cached.get('config_mtime') == os.path.getmtime(
@@ -162,7 +157,7 @@ class LazyServer:
         init = self.ensure_real()
         tools = self.own_request('tools/list', {})
         if started_here:
-            self.stop_real('only needed for the tool list')  # the thread hasn't browsed yet
+            self.stop_real('only needed for the tool list')
         cached = {
             'version': playwright_version(),
             'config_mtime': os.path.getmtime(REAL[2]),
@@ -197,7 +192,7 @@ class LazyServer:
         elif method == 'ping' and not self.running():
             self.to_client({'jsonrpc': '2.0', 'id': mid, 'result': {}})
         elif method is None and not self.running():
-            pass  # a reply to a server request that no longer exists
+            pass  # reply to a request from a real server that's gone
         else:
             self.last_use = time.time()
             if method == 'tools/call' or self.running():
@@ -215,7 +210,7 @@ class LazyServer:
                 continue
             try:
                 self.dispatch(msg)
-            except Exception as e:  # never leave the client hanging
+            except Exception as e:
                 log(f'error on {msg.get("method")}: {e}')
                 if msg.get('id') is not None:
                     self.to_client(

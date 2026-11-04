@@ -4,7 +4,7 @@ FULL = 1500  # characters of detail kept
 
 
 def plain(text, limit=FULL):
-    """Markdown -> readable notification text, keeping paragraphs and list items on their own lines."""
+    """Markdown -> readable notification text."""
     t = re.sub(r'```.*?```', '[code]', text or '', flags=re.S)
     t = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', t)  # links -> their text
     t = re.sub(r'^\s*[-*+]\s+', '• ', t, flags=re.M)

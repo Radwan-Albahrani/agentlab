@@ -1,5 +1,4 @@
-"""cluster.json (written by `agentctl apply`) for the host services. Its path comes from AGENTLAB_CLUSTER, which
-the systemd units set; a missing file gives {} so the services start with defaults instead of crash-looping."""
+"""cluster.json for the host services; a missing file gives {} so they start with defaults instead of crash-looping."""
 
 import json
 import os

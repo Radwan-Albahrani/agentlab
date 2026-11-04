@@ -1,5 +1,3 @@
-"""An errand's outbox: approvals, replies to whoever asked, temporary logins. Only the owner can press a button."""
-
 import json
 import os
 import secrets
@@ -87,7 +85,7 @@ def test_a_reply_waits_for_send_then_goes_to_whoever_asked(errand, fresh_bot):
 
 def test_a_temporary_login_is_never_shown_and_goes_privately(errand, fresh_bot):
     t, box, _ = errand
-    temp = secrets.token_hex(6)  # made up per run, so no credential-looking literal sits in the repo
+    temp = secrets.token_hex(6)  # not a literal, so secret scanners stay quiet
     drop(box, 'credential.json', {'for': 'Salah', 'service': 'ExampleApp', 'username': 'salah', 'password': temp})
     outbox.tick(t)
     assert not os.path.exists(os.path.join(box, 'credential.json'))

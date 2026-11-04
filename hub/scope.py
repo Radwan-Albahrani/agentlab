@@ -1,14 +1,10 @@
-"""Who the current request is for, and what they may see. The hub serves everyone with an agent: people see the
-agents they own (one person may own several) and those agents' companions; admins see everything plus the cluster
-screens. Set once per request by hub.py (each request runs in its own thread, so a context variable keeps requests
-apart); every screen and route asks here."""
+"""Who the current request is for and what they may see: their own agents and companions; admins see everything."""
 
 import contextvars
 from dataclasses import dataclass
 
 import cluster
 
-# Cluster-wide screens and switches: admins only. (Storage is open to everyone, scoped to their own disk.)
 ADMIN_ONLY = {'page.services', 'page.config', 'page.secrets', 'page.notifications', 'storage.manage', 'display'}
 
 
@@ -16,7 +12,7 @@ ADMIN_ONLY = {'page.services', 'page.config', 'page.secrets', 'page.notification
 class Viewer:
     email: str
     admin: bool
-    agents: frozenset  # the agents this person owns
+    agents: frozenset
 
     def sees_agent(self, agent_id):
         return self.admin or agent_id in self.agents
@@ -29,7 +25,7 @@ class Viewer:
         return self.admin or (email or '').lower() == self.email
 
     def sees(self, key):
-        """A display key ('page.services', 'profile.<id>', 'companion.<name>', ...) within this person's scope."""
+        """Whether a display key ('page.services', 'profile.<id>', 'companion.<name>', ...) is in scope."""
         if key in ADMIN_ONLY:
             return self.admin
         kind, _, name = key.partition('.')
@@ -43,11 +39,10 @@ class Viewer:
 
 
 ADMIN = Viewer('local', True, frozenset())
-_current = contextvars.ContextVar('viewer', default=ADMIN)  # code outside a request (watcher, tests) sees everything
+_current = contextvars.ContextVar('viewer', default=ADMIN)  # outside a request (watcher, tests): everything
 
 
 def of(email, admin=None):
-    """The viewer for a signed-in email: admin from cluster.json (auth.admins), their agents by owner."""
     email = (email or '').strip().lower()
     admins = {a.lower() for a in cluster.auth().get('admins') or []}
     owned = frozenset(a['id'] for a in cluster.agents().values() if (a.get('owner') or '').lower() == email)

@@ -18,7 +18,6 @@ import { When } from '../../ui/When';
 
 const seconds = (iso: string) => (iso ? Date.parse(iso) / 1000 : null);
 
-/** Pair the T3 desktop or phone app with this agent (a one-time link, also as a QR code), and the devices that are. */
 export function Devices({ agent }: { agent: string }) {
   const devices = useDevices(agent);
   const [link, setLink] = useState<PairLink | null>(null);

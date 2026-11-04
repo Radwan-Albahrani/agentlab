@@ -161,8 +161,7 @@ const styles = stylex.create({
   panel: { marginTop: space.sm },
 });
 
-/** One choice out of a few, as a segmented control (filters, show / hide modes). An option with an icon shows just
- * the icon; its label becomes the tooltip. */
+/** An option with an icon shows just the icon; its label becomes the tooltip. */
 export function Segments<V extends string>({
   value,
   options,
@@ -199,7 +198,7 @@ export function Segments<V extends string>({
   );
 }
 
-/** Pick one of several tags, or none: clicking the selected chip clears it (e.g. "used by" filters). */
+/** Clicking the selected chip clears it. */
 export function ChipFilter({
   value,
   options,
@@ -228,7 +227,6 @@ export function ChipFilter({
   );
 }
 
-/** One choice out of a few, as cards with a line of help each (a companion's mode). */
 export function ChoiceCards({
   value,
   options,
@@ -274,7 +272,6 @@ export function Switch({ on, label, onToggle }: { on: boolean; label: string; on
   );
 }
 
-/** A small ⓘ that opens a note. */
 export function InfoTip({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Popover.Root>
@@ -290,7 +287,6 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
   );
 }
 
-/** A "show more" line that opens a panel below it. */
 export function Disclosure({ label, children }: { label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (

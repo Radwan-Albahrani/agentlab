@@ -1,5 +1,4 @@
-"""`agentctl install`: one-time host setup, by the numbered steps in host/install/. Each step checks before it
-changes anything and prints what it changed, so re-running is safe; then the images are built (or pulled)."""
+"""`agentctl install`: one-time host setup via the host/install/ steps, then the images."""
 
 import glob
 import os
@@ -25,12 +24,12 @@ def step_env(cfg, config_path):
         'AGENTLAB_ANDROID': '1' if cfg['android']['enabled'] else '',
         'AGENTLAB_SYSTEM_IMAGE': cfg['android']['system_image'],
         'AGENTLAB_MEMORY_MAX': str(total),
-        'AGENTLAB_MEMORY_HIGH': str(max(total - 2 * 2**30, int(total * 0.9))),  # where the kernel starts reclaiming
+        'AGENTLAB_MEMORY_HIGH': str(max(total - 2 * 2**30, int(total * 0.9))),
         'AGENTLAB_BACKUP_TIME': cfg['backups']['time'],
         'AGENTLAB_BACKUPS': '1' if cfg['backups']['enabled'] else '',
         'AGENTLAB_UPDATE_TIME': cfg['updates']['time'],
         'AGENTLAB_UPDATES': '1' if cfg['updates']['agentlab'] == 'daily' else '',
-        'AGENTLAB_SERVE': '' if config.ports_only(cfg) else '1',  # published-ports setups never touch tailscale serve
+        'AGENTLAB_SERVE': '' if config.ports_only(cfg) else '1',
         'AGENTLAB_COOLIFY_TOKEN': cfg['coolify']['token_file'],
         'AGENTLAB_COOLIFY_URL': cfg['coolify']['url'],
         'AGENTLAB_COOLIFY_DOMAIN': cfg['coolify_domain'],
@@ -40,12 +39,11 @@ def step_env(cfg, config_path):
 
 
 def tunnel_first(cfg, env, config_path):
-    """The cloudflared step needs the tunnel token that `cloudflare setup` writes; with the API token saved that's
-    agentctl's own job, so do it here instead of stopping for a person."""
+    """Create the tunnel token before the cloudflared step when the API token is saved."""
     if cfg['auth']['ingress'] != 'cloudflared' or os.path.exists(env['AGENTLAB_TUNNEL_TOKEN']):
         return
     if not os.path.exists(cfg['cloudflare']['api_token_file']):
-        return  # the step itself asks for the API token
+        return
     say('  creating the Cloudflare tunnel first (agentctl cloudflare setup)')
     cloudflare.setup(cfg, Plan(False), config_path)
 
@@ -68,7 +66,6 @@ def install(cfg, config_path, only=None, skip_images=False):
         say(f'== {name}')
         if name == 'cloudflared':
             tunnel_first(cfg, env, config_path)
-        # People watch long steps (Docker, the Android SDK) live; agents get the output in the JSON at the end.
         p = subprocess.run(['bash', path], env=env, check=False, capture_output=OUT.json, text=True)
         for line in ((p.stdout or '') + (p.stderr or '')).splitlines():
             say(f'  {line}')

@@ -1,7 +1,7 @@
 import { useNow } from '../lib/useNow';
 import { Text } from './text';
 
-/** "expires in 4 min", ticking every second; "expired" once `until` (an ISO time) has passed. */
+/** `until` is an ISO time. */
 export function Countdown({ until }: { until: string }) {
   const now = useNow(1000);
   const ms = Date.parse(until) - now * 1000;

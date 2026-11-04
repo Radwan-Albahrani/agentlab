@@ -46,7 +46,6 @@ describe('companion tasks', () => {
     expect(taskAge(tasks[0]!, now)).toBe('30 min');
     expect(taskAge(tasks[2]!, now)).toBe('1 h 00 m');
     expect(taskAge(task({ endedAt: null, status: 'done' }), now)).toBe('');
-    // picked up again after an earlier turn ended: counts until now
     expect(taskAge(task({ status: 'working', startedAt: now - 660, endedAt: now - 480 }), now)).toBe('11 min');
   });
 });

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-/** One page of a list at a time. The page stays in range when the list shrinks (data refreshes every few seconds). */
+/** One page of a list; the page stays in range when the list shrinks. */
 export function usePages<T>(items: T[], size: number) {
   const [page, setPage] = useState(0);
   const pages = Math.max(1, Math.ceil(items.length / size));

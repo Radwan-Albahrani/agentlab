@@ -1,7 +1,4 @@
-"""The gate's pages: the /_agentlab/ menu (your agent's tools; admins also switch agents and open the hub) and the
-"not available" page. Self-contained, no external assets: it must load even when nothing else does. Tool links are
-relative because everyone's agent lives on the same domain (which one you reach depends on who you are); sign-ins,
-onboarding and app pairing live on the person's hub."""
+"""The gate's own pages; no external assets, so they load even when nothing else does."""
 
 from html import escape
 from urllib.parse import quote
@@ -65,8 +62,7 @@ def _rows(ids, current):
 
 
 def menu(cfg, email, admin, current, pending=False):
-    """The picker and switcher. `current` is the agent this domain reaches for this person right now (NONE when they
-    have several and haven't picked, or none at all); `pending` means it is theirs and onboarding isn't finished."""
+    """The picker and switcher; `current` is the agent this domain reaches now, or NONE."""
     hub, own = cfg.hub_url(), cfg.owned(email)
     out = ' &middot; <a href="/_agentlab/oidc/logout">Sign out</a>' if cfg.https else ''
     body = f'<h1>{escape(cfg.name)} agents</h1><p class="who">Signed in as {escape(email)}{out}</p>'

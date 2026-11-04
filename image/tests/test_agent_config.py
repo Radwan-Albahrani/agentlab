@@ -28,7 +28,7 @@ def test_older_entries_are_replaced_and_other_blocks_kept():
     )
     once = agent_config.codex_with_browser(old, BROWSER)
     twice = agent_config.codex_with_browser(once, BROWSER)
-    assert once == twice  # idempotent across restarts
+    assert once == twice
     config = tomllib.loads(once)
     assert config['model'] == 'gpt-5' and config['mcp_servers']['linear']['command'] == 'mcp-remote'
     assert config['mcp_servers']['playwright']['command'] == BROWSER
@@ -86,7 +86,7 @@ OLD_END = '<!-- END agent-environment -->'
     ('before', 'after', 'nl'),
     [
         ('', '\n# my memories\n- likes tabs\n', '\n'),
-        ('# notes first\r\n', '\r\nmine\r\n', '\r\n'),  # CRLF file: endings kept everywhere
+        ('# notes first\r\n', '\r\nmine\r\n', '\r\n'),
         ('', '\nno trailing newline', '\n'),
     ],
 )
@@ -97,13 +97,13 @@ def test_only_the_marked_block_is_replaced(tmp_path, monkeypatch, before, after,
         (tmp_path / rel).parent.mkdir(exist_ok=True)
         (tmp_path / rel).write_bytes((before + stale + after).encode())
     agent_config.write_notes('example', str(tmp_path))
-    agent_config.write_notes('example', str(tmp_path))  # a second start changes nothing more
+    agent_config.write_notes('example', str(tmp_path))
     for rel, body in (
         ('.claude/CLAUDE.md', f'@{tmp_path}/.config/agent/environment.md'),
         ('.codex/AGENTS.md', 'Current notes for example' + nl + 'second line'),
     ):
         data = (tmp_path / rel).read_bytes().decode()
-        assert data.startswith(before) and data.endswith(after), rel  # every byte outside the block kept
+        assert data.startswith(before) and data.endswith(after), rel
         inner = data[len(before) : len(data) - len(after)]
         assert inner == nl.join([agent_config.BLOCK_BEGIN, body, OLD_END]), rel
         assert 'stale' not in data

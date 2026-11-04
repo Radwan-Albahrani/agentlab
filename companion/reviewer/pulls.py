@@ -1,5 +1,4 @@
-"""Pull requests as the App sees them: the open list (one GraphQL search per installation, so the page costs a
-handful of calls however many repos), the facts a review starts from, and what a finished review publishes."""
+"""Pull requests via the App: the open list, a review's starting facts, and publishing the result."""
 
 import base64
 
@@ -53,8 +52,7 @@ def open_pulls(app):
 
 
 def facts(app, repo, number):
-    """What a review starts from: the PR, its changed files (with patches, for placing comments) and its review
-    threads (whose are the companion's, which are resolved, what people reacted)."""
+    """What a review starts from: the PR, its changed files with patches, and its review threads."""
     inst = app.installation_for(repo)
     if inst is None:
         raise GitHubError(404, f'the App is not installed on {repo.split("/")[0]}')
@@ -112,10 +110,8 @@ def _thread(t, bot):
     }
 
 
-# ---------------------------------------------------------------- publishing
 def post_review(app, f, head, body, comments):
-    """One comment-only review on `head`. A comment GitHub won't place moves into the body and it is tried once
-    more, so a review is never lost to one bad anchor. Returns its URL."""
+    """Post one comment-only review on `head`, retrying with unplaceable comments moved to the body; returns its URL."""
     path = f'/repos/{f["repo"]}/pulls/{f["number"]}/reviews'
     payload = {'commit_id': head, 'event': 'COMMENT', 'body': body, 'comments': comments}
     try:
@@ -144,7 +140,7 @@ def thumbs_up(app, f):
 
 
 def close_thread(app, f, thread_id, note):
-    """Answer one of the companion's own threads ("fixed in …" / "retracting: …") and resolve it."""
+    """Reply to one of the companion's own threads and resolve it."""
     app.graphql(
         """mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input:
            {pullRequestReviewThreadId: $id, body: $body}) { clientMutationId } }""",
@@ -160,7 +156,7 @@ def close_thread(app, f, thread_id, note):
 
 
 def update_comment(app, f, comment_id, body):
-    """Rewrite one of the companion's own review comments in place (a re-review found the problem changed)."""
+    """Rewrite one of the companion's own review comments in place."""
     app.graphql(
         """mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input:
            {pullRequestReviewCommentId: $id, body: $body}) { clientMutationId } }""",
@@ -171,15 +167,11 @@ def update_comment(app, f, comment_id, body):
 
 
 EVIDENCE_BRANCH = 'main'
-KEEP_DAYS = 60  # screenshots older than this are pruned from the evidence repository
+KEEP_DAYS = 60
 
 
 def upload_images(app, evidence, f, paths, folder):
-    """Screenshots for a QA report, committed in one commit to `evidence`, a private repository kept for them (under
-    <folder>/), never to the product repository: its clones stay free of images. GitHub's attachment upload takes no
-    GitHub App token, so this is how a bot shows images: a github.com/<repo>/raw/<commit>/<path> link renders inline
-    for everyone who can read that repository and nobody else, and pinning the commit keeps old comments' images
-    unchanged. Returns {file name: url}."""
+    """Commit screenshots to the `evidence` repo (never the product repo); returns {file name: commit-pinned raw url}."""
     inst = app.installation_for(evidence)
     if inst is None:
         raise GitHubError(404, f'the App is not installed on {evidence}')
@@ -206,8 +198,7 @@ def upload_images(app, evidence, f, paths, folder):
 
 
 def _evidence_head(app, evidence, inst):
-    """The evidence branch's head commit; a new, empty repository gets its first commit (a README) here, since the
-    Git Data API cannot write to a repository with no commits."""
+    """The evidence branch head; seeds an empty repo with a README (the Git Data API needs a first commit)."""
     try:
         return app.call('GET', f'/repos/{evidence}/git/ref/heads/{EVIDENCE_BRANCH}', installation=inst)['object']['sha']
     except GitHubError as e:
@@ -229,15 +220,13 @@ def _evidence_head(app, evidence, inst):
         )
         return r['commit']['sha']
     except GitHubError as e:
-        if e.status != 422:  # 422: something else wrote the first commit meanwhile; build on that one
+        if e.status != 422:  # 422: another writer made the first commit
             raise
     return app.call('GET', f'/repos/{evidence}/git/ref/heads/{EVIDENCE_BRANCH}', installation=inst)['object']['sha']
 
 
 def prune_evidence(app, evidence, now):
-    """Drop runs older than KEEP_DAYS from the evidence repository and its history: the branch is rewritten as one
-    fresh commit holding only what is kept, so the repository stops growing (GitHub collects the old objects later,
-    and images in comments that old stop loading). Returns how many files were dropped."""
+    """Rewrite the evidence branch as one parentless commit without runs older than KEEP_DAYS; returns files dropped."""
     inst = app.installation_for(evidence)
     if inst is None:
         raise GitHubError(404, f'the App is not installed on {evidence}')
@@ -271,7 +260,7 @@ def prune_evidence(app, evidence, now):
 
 
 def _run_time(path):
-    """The epoch in a run-<epoch> folder of the path; files outside runs (the README) are always kept."""
+    """The epoch of the path's run-<epoch> folder; inf outside runs, so they are always kept."""
     for part in path.split('/'):
         if part.startswith('run-') and part[4:].isdigit():
             return int(part[4:])
@@ -282,8 +271,7 @@ QA_MARK = '<!-- companion-qa-report -->'
 
 
 def qa_comment(app, f, body):
-    """The QA report: one comment per PR, edited in place on every re-review (found by its hidden mark), so the PR
-    shows the current report instead of a pile of old ones. Returns the comment URL."""
+    """Create or edit (found by QA_MARK) the PR's single QA report comment; returns its URL."""
     body = f'{QA_MARK}\n{body}'[:65000]
     bot = f'{app.slug()}[bot]'
     mine = [

@@ -1,6 +1,5 @@
 #!/bin/bash
-# Android emulator: needs /dev/kvm. Under Sysbox the agent's uid inside is not in the host's kvm group, so the device
-# is made usable by everyone (what CI runners do); unconfined agents get the kvm group instead (group_add).
+# /dev/kvm is 0666 under Sysbox since the agent's uid isn't in the host's kvm group (unconfined uses group_add).
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 [ -n "${AGENTLAB_ANDROID}" ] || { ok "Android off"; exit 0; }

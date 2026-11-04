@@ -5,7 +5,6 @@ import { SubmitField } from '../../ui/inputs';
 import { Empty } from '../../ui/page';
 import { Setting, Settings } from '../../ui/Settings';
 
-/** The settings a companion publishes, each with the control its type calls for; changes apply live. */
 export function CompanionSettings({ name, display, fields }: { name: string; display: string; fields: SettingField[] }) {
   const act = useAct();
   const set = (key: string, value: unknown) => act(`/api/companions/${name}/settings`, { key, value });

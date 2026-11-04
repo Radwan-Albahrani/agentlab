@@ -6,15 +6,13 @@ import { Icon } from './Icon';
 
 const cls = (...s: stylex.StyleXStyles[]) => stylex.props(...s).className ?? '';
 
-// Apple's easing for things that move into place: quick out of the gate, settling softly
 const settle = 'cubic-bezier(0.32, 0.72, 0, 1)';
 const still = '@media (prefers-reduced-motion: reduce)';
 const rise = stylex.keyframes({ from: { opacity: 0, transform: 'translateY(6px)' }, to: { opacity: 1, transform: 'none' } });
 
 const styles = stylex.create({
-  // may shrink below the tab list's width, so on a phone the list scrolls inside instead of widening the page
+  // minWidth 0: on phones the tab list scrolls instead of widening the page
   root: { display: 'grid', gap: space.lg, minWidth: 0 },
-  // the bar stays reachable while a long tab scrolls, on a frosted strip of the page's own background
   bar: {
     minWidth: 0,
     position: 'sticky',
@@ -38,7 +36,6 @@ const styles = stylex.create({
     borderStyle: 'solid',
     borderColor: colors.line,
   },
-  // the raised pill under the selected tab; it slides from tab to tab
   indicator: {
     position: 'absolute',
     zIndex: 0,
@@ -102,13 +99,11 @@ export interface TabItem {
   value: string;
   label: string;
   icon?: string;
-  count?: number; // shown faint next to the label
-  alert?: boolean; // the count needs you: shown as a red badge
+  count?: number;
+  alert?: boolean; // shows the count as a red badge
   content: ReactNode;
 }
 
-/** A page split into views: a segmented control whose selected pill slides between tabs, staying at the top while
- * the view scrolls, and the selected view fading in under it. Motion is off when the system asks for less. */
 export function Tabs({
   items,
   value,

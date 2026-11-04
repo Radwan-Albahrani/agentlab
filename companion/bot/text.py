@@ -20,7 +20,7 @@ def quote(text):
 
 
 def no_emoji(text):
-    """':seedling: thinking' -> 'thinking': notification and fallback text shouldn't show emoji codes."""
+    """':seedling: thinking' -> 'thinking'."""
     return re.sub(r':[a-z0-9_+-]+:\s*', '', text or '')
 
 
@@ -30,7 +30,7 @@ def without_mention(text):
 
 
 def to_slack(md, limit=3500):
-    """Agent markdown -> Slack mrkdwn (for places that can't take a markdown block)."""
+    """Agent markdown -> Slack mrkdwn."""
     t = md or ''
     t = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<\2|\1>', t)
     t = re.sub(r'^#{1,6}\s*(.+)$', r'*\1*', t, flags=re.M)
@@ -40,6 +40,6 @@ def to_slack(md, limit=3500):
 
 
 def clock(ts, date=False):
-    """A time people read in Slack, 12-hour: "Thu 2:00 PM", or "Thu Oct 30, 2:00 PM" with the date."""
+    """12-hour time: "Thu 2:00 PM", or "Thu Oct 30, 2:00 PM" with the date."""
     d = datetime.fromtimestamp(ts)
     return d.strftime('%a %b %d, ' if date else '%a ') + d.strftime('%I:%M %p').lstrip('0')

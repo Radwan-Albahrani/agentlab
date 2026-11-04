@@ -1,6 +1,4 @@
-"""The gate end to end over real HTTP. Pass 1 requests carry what the edge sends to /verify (X-Forwarded-Host/-Port/
--Uri plus the identity headers of the mode); pass 2 page requests carry pass 1's X-Agentlab-* answer. A test RSA key
-stands in for Cloudflare's and a fake Accounts API answers the onboarding question."""
+"""The gate end to end over real HTTP: pass 1 (/verify) and pass 2 (pages)."""
 
 import base64
 import hashlib
@@ -131,7 +129,7 @@ class Base(unittest.TestCase):
         with open(self.path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(raw if raw is not None else json.dumps(data))
         self.writes += 1
-        t = time.time() + self.writes * 10  # every write gets a new mtime, however fast the test runs
+        t = time.time() + self.writes * 10  # a new mtime per write, however fast the test runs
         os.utime(self.path, (t, t))
 
     def http(self, path, headers, method='GET'):
@@ -146,7 +144,7 @@ class Base(unittest.TestCase):
             return e.code, dict(e.headers), e.read().decode()
 
     def verify(self, *, host=DOMAIN, port=None, uri='/', view=None, site=None, method='GET', **identity):
-        """A pass 1 call. `identity` holds the mode's headers by name, e.g. tok=, said=, cookie=, login=, remote=."""
+        """A pass 1 call; `identity` holds the mode's headers: tok=, said=, cookie=, login=, remote=."""
         headers = {
             'X-Forwarded-Host': host,
             'X-Forwarded-Port': port,
@@ -181,7 +179,6 @@ class Base(unittest.TestCase):
         site=None,
         method='GET',
     ):
-        """A pass 2 call, as the edge forwards it with pass 1's answer."""
         headers = {
             'Host': host,
             'X-Agentlab-User': user,
@@ -197,7 +194,6 @@ class Base(unittest.TestCase):
         return headers['X-Agentlab-Agent']
 
 
-# ---------------------------------------------------------------- pass 1: cloudflare-access
 class Cloudflare(Base):
     def test_owner_gets_own_agent(self):
         status, headers, _ = self.verify(tok=token())
@@ -210,8 +206,6 @@ class Cloudflare(Base):
         self.assertEqual(self.agent_of(self.verify(tok=token('omar@example.com'))), 'omar')
 
     def test_a_cloudflare_one_client_session_token_works_the_same(self):
-        # Signed in through the client session (private network / allow_authenticate_via_warp): the token carries the
-        # same email plus device claims; only the signed email decides who it is
         tok = token(device_id='3f1c-device', identity_nonce='n0nce', type='app', country='SA', warp=True)
         status, headers, _ = self.verify(tok=tok)
         self.assertEqual(
@@ -332,7 +326,6 @@ class Cloudflare(Base):
         self.assertEqual(self.verify(tok=token(), method='POST')[0], 200)
 
 
-# ---------------------------------------------------------------- the edge's X-Agentlab-Site stamp
 class Site(Base):
     def test_site_decides_over_host(self):
         self.assertEqual(self.agent_of(self.verify(site='agent', tok=token())), 'sara')
@@ -355,7 +348,6 @@ class Site(Base):
         self.assertEqual(self.verify(site='coolify', tok=token('admin@example.com'))[0], 403)
 
     def test_email_header_check_follows_site(self):
-        # On the agent site Cloudflare's email header must match the token, whatever the host says.
         self.assertEqual(
             self.verify(host=HUB, site='agent', tok=token('omar@example.com'), said='sara@example.com')[0], 403
         )
@@ -366,7 +358,6 @@ class Site(Base):
         self.assertEqual(self.page(host=HUB, site='agent')[0], 200)
 
 
-# ---------------------------------------------------------------- pass 1: other modes
 class Tailscale(Base):
     mode = 'tailscale'
 
@@ -437,7 +428,6 @@ class ModeNone(Base):
             self.assertEqual(gate_main.main(), 2)
 
 
-# ---------------------------------------------------------------- onboarding
 class Onboard(Base):
     def test_redirects_t3_paths_of_own_agent(self):
         self.done['sara'] = False
@@ -467,7 +457,7 @@ class Onboard(Base):
         self.done['sara'] = False
         self.assertEqual(self.verify(tok=token())[0], 302)
         self.done['sara'] = True
-        self.assertEqual(self.verify(tok=token())[0], 302)  # still cached
+        self.assertEqual(self.verify(tok=token())[0], 302)
         self.assertEqual(len(self.asked), 1)
         with mock.patch.object(onboarding, 'NOT_DONE_TTL', 0):
             self.assertEqual(self.verify(tok=token())[0], 200)
@@ -477,10 +467,9 @@ class Onboard(Base):
         self.done['sara'] = OSError('connection refused')
         self.assertEqual(self.agent_of(self.verify(tok=token())), 'sara')
         self.assertEqual(self.agent_of(self.verify(tok=token())), 'sara')
-        self.assertEqual(len(self.asked), 2)  # errors aren't cached
+        self.assertEqual(len(self.asked), 2)
 
 
-# ---------------------------------------------------------------- several agents per person
 class Several(Base):
     def setUp(self):
         super().setUp()
@@ -528,7 +517,6 @@ class Several(Base):
         self.assertIn('/_agentlab/view/sara-lab', body)
 
 
-# ---------------------------------------------------------------- pass 2: pages
 class Pages(Base):
     def test_need_pass1_headers(self):
         self.assertEqual(self.page(user=None)[0], 403)

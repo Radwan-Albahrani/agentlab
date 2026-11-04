@@ -1,12 +1,4 @@
-"""The gate: the agent never sends anything itself. It leaves things in /workspace/.companion/outbox/<task>/ and the companion
-picks them up on every poll:
-  approval.json    a sensitive change it prepared            -> Approve / Reject (files previewed first)
-  credential.json  a temporary first-login password           -> Send login / Don't send (removed at once)
-  manifest.json    files and/or a reply, written LAST         -> files to the owner's DM, the reply to whoever asked
-  post.json        a message or poll for a channel            -> preview with Post it / Don't post (see posts)
-  poll-change.json the owner's change to an open poll         -> applied at once (see polls.change)
-  review.json      a finished pull request review, written LAST -> posted on GitHub as the App (see reviews)
-Files only leave if they are inside that folder, of a document/image type, and under the size cap."""
+"""The gate: the agent never sends anything itself; its outbox/<task>/ JSON files are picked up here each poll."""
 
 import json
 import os
@@ -18,11 +10,11 @@ from .state import key, save
 
 OUTBOX = os.path.join(FILES, 'outbox')
 DELIVER_TYPES = {'.pdf', '.png', '.jpg', '.jpeg', '.webp', '.csv', '.xlsx', '.xls', '.docx', '.doc', '.zip'}
-DELIVER_MAX = 50 * 1024 * 1024  # per file
+DELIVER_MAX = 50 * 1024 * 1024  # bytes per file
 
 
 def gate(box, names):
-    """Which of these files may leave: inside this errand's outbox, an allowed type, under the size cap."""
+    """(ok paths, refused reasons): only files inside `box`, of an allowed type, under the size cap may leave."""
     ok, refused = [], []
     for f in names:
         p = os.path.realpath(os.path.join(box, os.path.basename(str(f))))
@@ -38,7 +30,7 @@ def gate(box, names):
 
 
 def _take(path):
-    """A JSON file the agent finished writing, or None (missing or still being written)."""
+    """The parsed JSON file, or None if missing or still being written."""
     if not os.path.isfile(path):
         return None
     try:
@@ -59,7 +51,7 @@ def tick(task):
     _preview(task, box)
     c = _take(os.path.join(box, 'credential.json'))
     if c is not None:
-        os.remove(os.path.join(box, 'credential.json'))  # the password lives only in the companion's memory from here
+        os.remove(os.path.join(box, 'credential.json'))  # the password must not stay on disk
         errands.ask_credential(task, c)
     p = _take(os.path.join(box, 'post.json'))
     if p is not None:
@@ -75,14 +67,12 @@ def tick(task):
         reviews.publish(task, box, r)
     m = _take(os.path.join(box, 'manifest.json'))
     if m is not None:
-        os.replace(
-            os.path.join(box, 'manifest.json'), os.path.join(box, f'delivered-{int(time.time())}.json')
-        )  # never twice
+        os.replace(os.path.join(box, 'manifest.json'), os.path.join(box, f'delivered-{int(time.time())}.json'))
         _deliver(task, box, m)
 
 
 def _preview(task, box):
-    """Attach to the approval thread exactly the files that would be sent, so the owner sees them before tapping."""
+    """Upload to the approval thread the files that would be sent, once."""
     a = task.get('approval') or {}
     if not a or a.get('decided') or a.get('previewed'):
         return
@@ -105,7 +95,7 @@ def _preview(task, box):
 
 
 def _deliver(task, box, m):
-    """Files go to the owner's DM (in the errand thread when it is one); a reply goes to whoever asked."""
+    """Files to the owner's DM; the reply, if any, to whoever asked."""
     ok, refused = gate(box, m.get('files') or [])
     ch, tts = task['channel'], task['thread_ts']
     link = slack.permalink(ch, tts)
@@ -118,7 +108,7 @@ def _deliver(task, box, m):
     in_thread = tts if ch == dm else None
     if ok:
         slack.upload(dm, in_thread, ok, head)
-    elif refused:  # nothing deliverable: only worth a line if something was held
+    elif refused:
         slack.post(dm, in_thread, what, md=head)
     if dm != ch and (ok or refused):
         slack.note_only(
@@ -127,8 +117,8 @@ def _deliver(task, box, m):
             f":package: Sent {len(ok)} file{'s' if len(ok) != 1 else ''} to {slack.name(OWNER)}'s DM"
             + (f' ({len(refused)} held back)' if refused else ''),
         )
-    if m.get('reply') and task.get('requester'):  # an answer for whoever asked (no approval needed)
-        approved = task.pop('reply_pending', None) is not None  # replaces the one stored at approval: one reply only
+    if m.get('reply') and task.get('requester'):
+        approved = task.pop('reply_pending', None) is not None
         errands.reply_requester(task, str(m['reply'])[:3000], ok, approved=approved)
     log('outbox delivered', task.get('outbox'), len(ok), 'files,', len(refused), 'held')
     if ok or refused:

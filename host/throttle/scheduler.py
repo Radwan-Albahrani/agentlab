@@ -1,10 +1,4 @@
-"""Which queued heavy jobs may start now. A job must fit both its agent's room (its mem_limit) and the shared
-pool (agentlab.slice), counting what running jobs still have left of their estimates, and the disk must not be congested:
-nothing new starts while disk pressure is high, and starts are spaced so pressure can show a new job's load before
-the next one goes. Fair across agents (the one with the fewest running jobs goes next, oldest job first), in order
-(a job too big for the pool isn't overtaken; one too big for its own agent only holds up that agent), learning first
-(a job never measured runs one at a time until its peak is known), and always making progress (with nothing running
-anywhere, the next job starts whatever the numbers say; the kernel limits are the backstop)."""
+"""Which queued heavy jobs may start now; with nothing running, the next job always starts."""
 
 from .settings import ADMIT_GAP_S, AGENT_HEADROOM_MB, IO_PRESSURE_MAX, POOL_HEADROOM_MB, SWAP_CAP_MB
 
@@ -40,12 +34,10 @@ def to_admit(jobs, pool, agents, swap_mb, io_pressure, since_last_start_s):
 
 
 def _still_to_use(jobs):
-    """MB the running jobs will still grow by, going by their estimates."""
     return sum(max(0, j.estimate_mb - j.rss_mb) for j in jobs)
 
 
 def _free_room(running, pool, agents):
-    """Free MB in the pool and in each agent, minus headroom and what running jobs have yet to use of their estimate."""
     free = {'pool': pool[1] - POOL_HEADROOM_MB - pool[0] - _still_to_use(running)}
     for agent, usage in agents.items():
         if usage:

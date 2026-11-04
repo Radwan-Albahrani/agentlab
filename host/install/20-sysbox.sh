@@ -1,7 +1,5 @@
 #!/bin/bash
-# Sysbox CE: agents get their own user namespace and run Docker inside without --privileged or unconfined profiles.
-# Each container gets Sysbox's fixed 65536-id range; the agent's dockerd runs as container root inside it (see the
-# image's agent-dockerd), so sysbox-mgr needs no options of its own.
+# Sysbox CE: agents run Docker inside without --privileged; sysbox-mgr needs no options of its own.
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 v=0.7.1
@@ -26,8 +24,7 @@ install_sysbox() {
   changed "installed Sysbox CE ${v}"
 }
 
-# Earlier agentlab versions added a sysbox-mgr drop-in with --subid-range-size, a flag Sysbox doesn't have: sysbox-mgr
-# then refuses to start. Remove exactly that file of ours, and only if it is ours.
+# Our old drop-in passed --subid-range-size, which Sysbox lacks, so sysbox-mgr would not start.
 remove_old_dropin() {
   local dropin=$1
   [ -f "${dropin}" ] || return 0

@@ -3,7 +3,6 @@ import { defineConfig } from '@playwright/test';
 const desktop = { viewport: { width: 1400, height: 1000 } };
 const phone = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true };
 
-// Every test runs in dark (what the owner uses) and light; the phone layout test runs only on phones.
 export default defineConfig({
   testDir: '.',
   timeout: 60_000,

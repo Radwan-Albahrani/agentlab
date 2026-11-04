@@ -1,12 +1,4 @@
-"""Where agents' files live ([storage] mode). `shared`: every agent under <data>/agents, a plain folder or, with
-pool_size, one sparse ext4 image so agents together can't fill the host. `per-person`: one sparse ext4 image per
-owner (<data>/disks/<person>.img at <data>/people/<person>), so one person filling theirs stops no one else.
-Images grow when the size rises (online, resize2fs) and never shrink: shrinking an ext4 in use risks the data. An
-image that already has a filesystem is never formatted, and a mount someone else made (e.g. fstab) is left alone.
-
-Ownership: agent folders are owned by uid/gid 1000, the agent user inside the image. With Sysbox the container's
-root is a high host uid, but Sysbox ID-maps bind mounts (kernel >= 5.12, ext4 supports it), so a host file owned by
-1000 is seen as 1000 inside; without Sysbox uid 1000 is uid 1000. The same ownership works in both modes."""
+"""Agent storage ([storage] mode): a shared folder or pool image, or one sparse ext4 image per person; images only grow."""
 
 import os
 import shutil
@@ -80,7 +72,6 @@ def ensure_unit(u, plan):
 
 
 def ensure(cfg, plan):
-    """Every storage image mounted, and every agent's folders present and owned by the agent user."""
     for u in units(cfg):
         ensure_unit(u, plan)
     for a in cfg['agents']:
@@ -95,7 +86,7 @@ def _create(img, size, name):
     if os.path.exists(img) and has_filesystem(img):
         raise Failed(f'{img} already holds a filesystem; refusing to format it')
     with open(img, 'wb') as f:
-        f.truncate(size)  # sparse: takes space only as agents write
+        f.truncate(size)
     run(['mkfs.ext4', '-q', '-m', '0', '-L', label(name), img])
 
 
@@ -104,8 +95,8 @@ def _grow(img, mnt, size):
         f.truncate(size)
     dev = loop_device(img) if os.path.ismount(mnt) else None
     if dev:
-        run(['losetup', '-c', dev])  # the loop device picks up the new file size
-        run(['resize2fs', dev])  # ext4 grows online
+        run(['losetup', '-c', dev])
+        run(['resize2fs', dev])
     else:
         run(['e2fsck', '-f', '-p', img], check=False)
         run(['resize2fs', img])

@@ -69,7 +69,6 @@ interface FeedProps {
   empty?: string;
 }
 
-/** Things that happened, newest first. */
 export function Feed({ events, showSource = false, empty = 'Activity shows up here as it happens.' }: FeedProps) {
   if (!events.length) return <Empty title="Nothing yet" text={empty} icon="clock" />;
   return (
@@ -104,7 +103,6 @@ export function Feed({ events, showSource = false, empty = 'Activity shows up he
 
 const PAGE = 8;
 
-/** A titled section holding one feed, a page at a time. */
 export function FeedSection({ title, sub, events, ...feed }: FeedProps & { title: string; sub?: string }) {
   const pages = usePages(events, PAGE);
   return (

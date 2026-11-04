@@ -26,7 +26,6 @@ function TaskLinks({ t, primary = false }: { t: Task; primary?: boolean }) {
   );
 }
 
-/** Tasks waiting on the owner (approvals, replies, logins); shown only when there are some. */
 export function WaitingTasks({ tasks }: { tasks: Task[] }) {
   const waiting = tasks.filter((t) => t.status === 'waiting');
   if (!waiting.length) return null;
@@ -79,7 +78,6 @@ export function WorkingTasks({ tasks, now }: { tasks: Task[]; now: number }) {
   );
 }
 
-/** Every task, newest first, with filters. */
 export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
   const [filter, setFilter] = useState<TaskFilter>('all');
   const pages = usePages(filterTasks(tasks, filter), PAGE);

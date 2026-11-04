@@ -1,5 +1,4 @@
-"""The companion under test: fake secrets and a throwaway data folder (set before the companion is imported, since its config is read
-at import), Slack replaced by a recording client, background jobs run inline. Nothing reaches Slack or T3."""
+"""Fake secrets and data folder (set before importing bot: config reads at import), recording Slack, inline jobs."""
 
 import json
 import os
@@ -52,7 +51,7 @@ NAMES = {OWNER: 'Sam', 'U_SALAH': 'Salah', 'U_ALI': 'Ali Example'}
 
 
 class FakeSlack:
-    """The bot client: remembers every message, update and upload, answers the lookups the companion makes."""
+    """Fake bot client recording messages, updates and uploads."""
 
     token = 'xoxb-test'
 
@@ -116,7 +115,6 @@ class FakeSlack:
     reactions_remove = reactions_add
 
     def actions(self):
-        """The button ids of every message, in order."""
         return [
             [e['action_id'] for b in m.get('blocks') or [] if b.get('type') == 'actions' for e in b['elements']]
             for m in self.messages
@@ -127,7 +125,7 @@ class FakeSlack:
 
 
 class FakeUserClient(FakeSlack):
-    """The owner's read-only token: what they can see in conversations the companion isn't in."""
+    """Fake owner user-token client."""
 
     root_user = 'U_SALAH'
 
@@ -140,7 +138,6 @@ class FakeUserClient(FakeSlack):
 
 @pytest.fixture(autouse=True)
 def fresh_bot(monkeypatch):
-    """Every test starts with no tasks, default settings, a fresh fake Slack and inline background jobs."""
     bot, user = FakeSlack(), FakeUserClient()
     monkeypatch.setattr(slack.app, '_client', bot)
     monkeypatch.setattr(slack, 'USER', user)
@@ -167,7 +164,7 @@ def fresh_bot(monkeypatch):
 
 
 def set_settings(values):
-    """What the hub writes; the bumped mtime makes the companion re-read it at once."""
+    """Write settings.json with a bumped mtime so it is re-read at once."""
     path = os.path.join(COMPANION_DIR, 'settings.json')
     with open(path, 'w') as f:
         json.dump(values, f)
@@ -177,7 +174,7 @@ def set_settings(values):
 
 @pytest.fixture
 def t3_quiet(monkeypatch):
-    """T3 that answers nothing interesting; tests override what they need."""
+    """Idle fake T3; tests override what they need."""
     monkeypatch.setattr(t3, 'busy', lambda tid: False)
     monkeypatch.setattr(t3, 'waiting_question', lambda tid: False)
     monkeypatch.setattr(t3, 'has_open_run', lambda tid: False)

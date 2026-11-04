@@ -1,5 +1,3 @@
-"""`agentctl status`: one screen of the cluster — each agent's container, memory and disk, plus the core."""
-
 import json
 import os
 
@@ -59,8 +57,7 @@ def collect(cfg):
 
 
 def _own_status(path, name):
-    """What the companion says about itself (its launcher's status.json): a container that exited because it isn't
-    configured yet is waiting for its secrets, not broken."""
+    """The companion's status.json; an exited container that isn't configured yet is waiting, not broken."""
     try:  # an agent-owned file: never follow a symlink there as root
         fd = os.open(f'{path}/workspace/.companion/{name}/status.json', os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(fd) as f:

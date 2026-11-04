@@ -1,5 +1,4 @@
-"""cluster.json as the gate needs it, re-read whenever the file changes so `agentctl apply` never needs a restart.
-A missing or broken file leaves the last good one in place, or an empty config that denies everything."""
+"""cluster.json, re-read on change; a broken file keeps the last good one (or an empty, deny-all config)."""
 
 import json
 import logging
@@ -8,14 +7,13 @@ import re
 import threading
 
 log = logging.getLogger('gate')
-TEAM = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')  # ends up in the certs URL, so nothing else gets through
+TEAM = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')  # ends up in the certs URL
 GATE, NONE = 'gate', 'none'  # X-Agentlab-Agent values that aren't agents: the gate's own pages / no agent
 SITES = {'agent': 'domain', 'hub': 'hub', 'coolify': 'coolify'}  # X-Agentlab-Site -> place
 
 
 def host_of(raw):
-    """'Agents.Example.com:443' -> 'agents.example.com'. Hostnames are case-insensitive, so every comparison goes
-    through here: matching them case-sensitively lets a mixed-case host slip past its rule (tinyauth CVE-2026-77560)."""
+    """'Agents.Example.com:443' -> 'agents.example.com'; every host comparison must go through here."""
     host = (raw or '').split(',')[0].strip().lower()
     if host.startswith('['):
         return host.split(']')[0] + ']'
@@ -23,7 +21,6 @@ def host_of(raw):
 
 
 def port_of(raw_host, forwarded_port):
-    """The port the person connected to: X-Forwarded-Port, else the one in the Host header, else ''."""
     port = (forwarded_port or '').split(',')[0].strip()
     if port:
         return port
@@ -44,7 +41,6 @@ class Config:
         self._apply({})
 
     def fresh(self):
-        """Reload when the file changed; cheap enough (one stat) to call on every request."""
         try:
             mtime = os.stat(self.path).st_mtime_ns
         except OSError:
@@ -69,7 +65,6 @@ class Config:
         self.mode = auth.get('mode') or 'cloudflare-access'
         self.team = team if TEAM.match(team) else ''
         self.audience = str(cf.get('audience') or '').strip()
-        # private HTTPS: requests over HTTPS sign in through Access's OIDC provider (oidc.py)
         self.https = self.mode == 'cloudflare-access' and cf.get('https') is True
         self.hub_port = str(auth.get('hub_port') or 8443)
         self.admins = {_email(e) for e in auth.get('admins') or []} - {''}
@@ -80,30 +75,25 @@ class Config:
         self.name = raw.get('name') or 'agentlab'
 
     def hub_url(self):
-        """Where the hub is for people: its own name, or on Tailscale the same name on auth.hub_port."""
         if self.mode == 'tailscale' and (not self.hub_domain or self.hub_domain == self.domain):
             return f'https://{self.domain}:{self.hub_port}'
         return f'https://{self.hub_domain or self.domain}'
 
     def owned(self, email):
-        """The agents this person owns, by id. A person may own several."""
         return [i for i in sorted(self.agents) if self.agents[i]['owner'] == email]
 
     def may_open(self, email, admin):
         return sorted(self.agents) if admin else self.owned(email)
 
     def chosen(self, email, view, admin):
-        """The agent the main domain reaches: the `agentlab_view` cookie if it names one you may open, else your only
-        agent, else '' (the gate's picker). A cookie naming anything else is ignored, never an error."""
+        """The `agentlab_view` cookie's agent if you may open it, else your only agent, else '' (the picker)."""
         if view and view in self.may_open(email, admin):
             return view
         own = self.owned(email)
         return own[0] if len(own) == 1 else ''
 
     def where(self, host, port, site=None):
-        """'hub', 'coolify', 'domain' or '' (refuse) for a request. The edge stamps which site was asked for
-        (X-Agentlab-Site: agent | hub | coolify), which is how Tailscale serves agents and hub on one name; the host
-        must still be one of the cluster's names. Without the header, the host (and on Tailscale the port) decides."""
+        """'hub', 'coolify', 'domain' or '' (refuse); X-Agentlab-Site wins over host/port but the host must still match."""
         host = host_of(host)
         names = {self.domain, self.hub_domain, self.coolify_domain} - {''}
         if not host or host not in names:
@@ -120,7 +110,7 @@ class Config:
         return 'domain' if host == self.domain else ''
 
     def decide(self, place, email, view, admin):
-        """(allowed, why, agent) for a verified email at a place from where(). `agent` becomes X-Agentlab-Agent."""
+        """(allowed, why, agent); `agent` becomes X-Agentlab-Agent."""
         own = self.owned(email)
         if place == 'hub':
             ok = admin or bool(own)

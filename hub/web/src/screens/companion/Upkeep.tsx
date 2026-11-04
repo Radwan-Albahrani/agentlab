@@ -29,7 +29,6 @@ const styles = stylex.create({
   },
 });
 
-/** The companion's own tokens and keys: set or replace each; values are never shown here. */
 export function CompanionSecrets({ name, display }: { name: string; display: string }) {
   const query = useCompanionSecrets(name);
   return (
@@ -87,7 +86,6 @@ function SecretList({ name, d }: { name: string; d: Data }) {
   );
 }
 
-/** The end of the companion's log (written in its agent's workspace), refreshed every few seconds. */
 export function CompanionLogs({ name }: { name: string }) {
   const query = useCompanionLogs(name);
   const logs = query.data;

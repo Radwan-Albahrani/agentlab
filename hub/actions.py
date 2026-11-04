@@ -1,5 +1,4 @@
-"""Everything the page's buttons change. Each action returns the toast text; ValueError carries a message for the user.
-Host work (restarts, logs, deploys, cleanups) is a request file the watcher picks up within a second."""
+"""The page's button actions: each returns the toast text; ValueError carries a message for the user."""
 
 import re
 
@@ -19,7 +18,7 @@ def companion(name, what, b):
         store.watch.request(f'restart~{c}')
         return f'{cluster.display_name(name)} is restarting.'
     if what == 'remove':
-        store.watch.request(f'remove~companion~{name}')  # the watcher stops it and archives its data
+        store.watch.request(f'remove~companion~{name}')
         return f'Removing {cluster.display_name(name)}; it stops within a minute.'
     if what == 'poll':
         store.companions.poll_change(name, b.get('poll', ''), b)
@@ -52,8 +51,6 @@ def service(what, b):
 
 
 def config_deploy(b):
-    """Stacks are rendered by agentctl from cluster.toml, so the page redeploys them as they are; changes go into
-    cluster.toml and `agentctl apply`."""
     if b.get('id') not in {s['id'] for s in store.stacks.stacks()}:
         raise ValueError('Unknown stack.')
     store.watch.request('deploy~' + b['id'])
@@ -91,7 +88,7 @@ def _toggle(setting):
 
 
 def _device_key(b):
-    key = re.sub(r'^https?://[^/]+/', '', b.get('deviceKey', '').strip()).split('/')[0]  # a pasted Bark URL works too
+    key = re.sub(r'^https?://[^/]+/', '', b.get('deviceKey', '').strip()).split('/')[0]  # accepts a pasted Bark URL
     if re.fullmatch(r'[0-9a-f]{64}', key):
         raise ValueError("That is the phone's Apple push token. Paste the short key shown under the server in Bark.")
     notify.update(device_key=key)
@@ -109,7 +106,7 @@ def _encryption_key(b):
 def _test_push(_b):
     body = 'If you can read this, agent notifications work.'
     first = next(iter(cluster.ids()), '')
-    url = notify.newest_chat_link(first) if first else ''  # tapping it tries the tap-through into the T3 app
+    url = notify.newest_chat_link(first) if first else ''
     notify.send('Agents · Test', body, 'Sent from the hub', 'timeSensitive', group='test', kind='test', url=url)
     return 'Test sent.'
 

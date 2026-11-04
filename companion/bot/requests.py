@@ -1,15 +1,4 @@
-"""Requests aimed at the owner, seen through their read-only user token (Slack also sends the companion what that token sees).
-
-Restricted mode ("tag", the default): only the owner's own tags count.
-  - "@companion" bare, on someone else's message (in their DMs or under their channel message) = an errand for them.
-  - "@companion <instructions>" under someone else's channel message = a task right there (once the companion is invited);
-    in one of their DMs = a task in their DM with the companion, the conversation as its context.
-Team mode adds colleagues asking them (a DM to them, or tagging them): after a short pause for the rest of their
-message, one quick model call on the agent's own provider classifies it:
-  errand  (strict: an unmistakable small thing such as invoices, access, a document) -> started as an errand
-  task    (real work) -> a one-line heads-up in their DM, nothing else
-  nothing -> ignored
-Dry-run mode ("owner") is team mode where the owner plays the colleague (their self-DM / self-mention)."""
+"""The owner's tags on others' messages, and (team / dry-run modes) colleagues asking the owner, via their user token."""
 
 import json
 import re
@@ -24,11 +13,8 @@ _pending = {}  # conversation -> request being collected
 _known = {}  # cached lookups: channel kinds, members
 
 
-# ---------------------------------------------------------------- what kind of conversation is this?
 def own_dm(ch):
-    """Is this DM channel one of the companion's own (vs a DM of the owner's that their user token sees)? Its DM with the
-    owner is known directly; other people's DMs with the companion are found by asking Slack, which only answers for
-    conversations the companion is in. Failures aren't cached, so a hiccup can't hide the companion's own DM."""
+    """Is this DM the companion's own (not one the owner's token sees)? Failures are deliberately not cached."""
     if ch in _known:
         return _known[ch]
     try:
@@ -38,7 +24,7 @@ def own_dm(ch):
     except Exception as e:
         log('owner DM lookup failed:', e)
     try:
-        r = slack.app.client.conversations_members(channel=ch, limit=10)  # fails if the companion isn't in it
+        r = slack.app.client.conversations_members(channel=ch, limit=10)
         _known[ch] = slack.bot_user() in r.get('members', [])
     except Exception:
         return False
@@ -57,7 +43,7 @@ def _self_dm(ch):
 
 
 def team_member(uid):
-    """A full member of the workspace (not a bot, guest or Slack Connect user)."""
+    """Not a bot, deactivated, guest or Slack Connect user."""
     k = 'member:' + uid
     if k not in _known:
         try:
@@ -71,7 +57,7 @@ def team_member(uid):
 
 
 def thread_root_user(ch, tts):
-    """Who started this thread (read as the owner, so it works in channels the companion isn't in)."""
+    """Who started this thread, read with the owner's token."""
     try:
         m = slack.USER.conversations_replies(channel=ch, ts=tts, limit=1)['messages'][0]
         return None if m.get('bot_id') else m.get('user')
@@ -80,14 +66,12 @@ def thread_root_user(ch, tts):
 
 
 def bare_tag(text):
-    """Just "@companion" (maybe with punctuation): errand mode. Anything more is an instruction: task mode."""
+    """Just "@companion", maybe with punctuation (an errand, not a task)."""
     return not re.sub(r'<@[A-Z0-9]+>|[\s\W_]+', '', text or '')
 
 
-# ---------------------------------------------------------------- the owner's tags
 def tagged_in_thread(ev):
-    """The owner tagged @companion under someone else's channel message: bare = errand for them, "review" under a PR
-    link = a review of that PR, other words = task."""
+    """The owner tagged @companion under someone else's channel message: errand, review or task."""
     ch, thr = ev['channel'], ev['thread_ts']
     if bare_tag(ev.get('text')):
         log('bare tag in thread', ch, thr, '-> errand')
@@ -100,9 +84,7 @@ def tagged_in_thread(ev):
 
 
 def tagged_in_dm(ev):
-    """The owner tagged @companion in one of their DMs (the companion isn't in it): bare = errand for the other person, with
-    words = a task for them. The companion can't post there, so the task gets a thread in their DM with the companion, with the
-    conversation as its context."""
+    """The owner tagged @companion in one of their DMs: errand, or a task run in the owner's DM with the companion."""
     if bare_tag(ev.get('text')):
         owner_tagged(ev)
         return
@@ -113,7 +95,7 @@ def tagged_in_dm(ev):
             msgs = msgs['messages']
         else:
             msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
-            msgs.reverse()  # oldest first
+            msgs.reverse()
         c = slack.USER.conversations_info(channel=ch)['channel']
         who = slack.name(c['user']) if c.get('user') else c.get('name') or 'a group'
     except Exception as e:
@@ -134,9 +116,7 @@ def tagged_in_dm(ev):
 
 
 def owner_tagged(ev):
-    """The owner tagged @companion on someone else's request, in one of their DMs (the companion isn't in it; their user token sees
-    the tag) or under their channel message. No triage: start on what they asked (their messages since their last
-    one); everything comes to their DM, and replies to them wait for their Send."""
+    """Bare owner tag on someone else's request: start an errand on their messages since the owner's last one."""
     ch, ts, thr = ev['channel'], ev['ts'], ev.get('thread_ts')
     try:
         if thr:
@@ -148,9 +128,7 @@ def owner_tagged(ev):
                 )
             )
         else:
-            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)[
-                'messages'
-            ]  # newest first
+            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
     except Exception as e:
         log('tagged conversation unreadable:', e)
         msgs = []
@@ -181,8 +159,7 @@ def owner_tagged(ev):
 
 
 def await_invite(ev):
-    """Tagged in a channel the companion isn't in: Slack offers the owner to invite it. Keep the tag and start as soon as
-    the companion is a member (checked by the poller); dropped after a day. Never moved to a DM instead."""
+    """Tagged in a channel it isn't in: keep the tag until invited (invite_tick), for up to a day."""
     with lock:
         state.setdefault('awaiting_invite', {})[ev['ts']] = {
             'ch': ev['channel'],
@@ -209,15 +186,14 @@ def invite_tick():
             jobs.run_later(tasks.start, w['ch'], w['thread_ts'] or ts, ts, w['text'])
 
 
-# ---------------------------------------------------------------- colleagues asking the owner (team / dry run)
 def notice(ev):
-    """A message the companion wasn't addressed in: is it someone asking the owner for something?"""
+    """Collect a message not addressed to the companion if it may be someone asking the owner."""
     m = mode()
     if m not in ('owner', 'team') or not slack.USER:
         return
     ch, ts, user, text = ev['channel'], ev['ts'], ev.get('user'), ev.get('text') or ''
     im = ch.startswith('D')
-    if m == 'owner':  # dry run: the owner plays the colleague
+    if m == 'owner':  # dry run
         ok = user == OWNER and ((im and _self_dm(ch)) or (not im and f'<@{OWNER}>' in text))
     else:
         ok = user != OWNER and (im or f'<@{OWNER}>' in text) and team_member(user)
@@ -244,7 +220,7 @@ def pending_tick():
 
 
 def triage(p):
-    """Most messages are just conversation: one quick model call decides, and only clear errands start an agent."""
+    """One model call classifies the request: errand, task (heads-up) or nothing."""
     who, owner = slack.name(p['user']), slack.name(OWNER)
     try:
         msgs = list(reversed(slack.USER.conversations_history(channel=p['ch'], latest=p['ts'], limit=8)['messages']))
@@ -264,7 +240,7 @@ def triage(p):
         errands.start(p, what)
     elif kind == 'task':
         _heads_up(p, who, what)
-    elif not kind:  # triage broke: tell the owner rather than drop it
+    elif not kind:
         slack.post(
             slack.dm_owner(),
             None,
@@ -275,7 +251,6 @@ def triage(p):
 
 
 def _heads_up(p, who, what):
-    """A bigger ask: the owner decides. One line in their DM; the companion does nothing unless they tag it there."""
     link = slack.permalink(p['ch'], p['ts'], slack.USER)
     slack.post(
         slack.dm_owner(),

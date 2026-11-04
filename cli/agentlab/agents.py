@@ -1,6 +1,3 @@
-"""`agentctl agent add | remove | list`. Add and remove edit cluster.toml as text (comments survive) and then apply,
-so the edge, Cloudflare Access and the agent's stack all follow from the one file."""
-
 import os
 
 from . import apply, config, deploy, disks, render, tomledit
@@ -24,7 +21,6 @@ def adopt(cfg, agent_id):
 
 
 def _checked(text):
-    """The resolved config of edited text; raises with the problems before anything is written."""
     return config.loads(text)
 
 

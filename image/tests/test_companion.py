@@ -17,7 +17,7 @@ def home(tmp_path, monkeypatch):
     for attr, sub in (('REQUESTS', 'requests'), ('RESULTS', 'results'), ('STATE', 'state'), ('CODE', 'code')):
         monkeypatch.setattr(companion, attr, str(tmp_path / sub))
     monkeypatch.setattr(companion, 'LIVE', str(tmp_path / 'companions.json'))
-    # generous: a busy CI box can starve the fake watcher thread for a few seconds; answered requests return at once
+    # generous: a busy CI box can starve the fake watcher thread
     monkeypatch.setattr(companion, 'WAIT_S', 15)
     monkeypatch.setattr(companion, 'CREATE_WAIT_S', 15)
     monkeypatch.setenv('AGENTLAB_COMPANIONS', 'helper, bad/name,other')
@@ -26,8 +26,6 @@ def home(tmp_path, monkeypatch):
 
 
 def watcher(home, base, answer, seen):
-    """A stand-in for the host's watcher: takes the request (keeping what it said) and answers it."""
-
     def run():
         request = home / 'requests' / base
         while not request.exists():
@@ -37,7 +35,7 @@ def watcher(home, base, answer, seen):
         request.unlink()
         tmp = home / 'results' / f'.{base}.tmp'
         tmp.write_text(json.dumps(answer))
-        tmp.replace(home / 'results' / f'{base}.json')  # like the real watcher: never a half-written answer
+        tmp.replace(home / 'results' / f'{base}.json')
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
@@ -61,7 +59,7 @@ def test_restart_writes_the_request_and_prints_the_answer(home, capsys):
 
 def test_a_failed_action_exits_nonzero_and_silence_times_out(home):
     (home / 'results' / 'stop~companion~helper.json').write_text('{"ok": false}')
-    with pytest.raises(SystemExit):  # the stale result is removed first, so this one times out
+    with pytest.raises(SystemExit):  # the stale result is removed first
         companion.cmd_action('stop', 'helper')
     assert (home / 'requests' / 'stop~companion~helper').exists()
 

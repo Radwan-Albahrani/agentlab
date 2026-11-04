@@ -1,7 +1,4 @@
-"""The hub's buttons. The hub (in a container) drops requests/<action>~<target> files; the watcher, which can reach
-Docker and systemd, carries them out within a second:
-rescan · cleanup · restart~<container> · logs~<container> · deploy~<stack> · remove~companion~<name>.
-The hub has already checked the person may do it; these checks keep a bad name from reaching a command line."""
+"""The hub's buttons: requests/<action>~<target> files; checks here keep a bad name off a command line."""
 
 import os
 import re
@@ -17,7 +14,6 @@ STACK = re.compile(r'^agentlab-[a-z0-9-]+$')
 
 
 def parse(filename):
-    """(action, target) of a request file, or None if it isn't one."""
     action, _, target = filename.partition('~')
     if action not in ACTIONS:
         return None
@@ -25,11 +21,8 @@ def parse(filename):
 
 
 def allowed(action, target, containers):
-    """Restart and logs only for known containers; Coolify's own containers are never restarted from the hub;
-    deploy only for agentlab's own stacks (the name ends up on agentctl's command line)."""
     if action in ('restart', 'logs'):
         known = containers.get(target) or {}
-        # Only containers of agentlab's stacks and [hub] extra_stacks: anything else on the server stays out of reach.
         return bool(known.get('stack')) and (action == 'logs' or known['stack'] != 'coolify')
     if action == 'deploy':
         return bool(STACK.match(target))
@@ -62,7 +55,6 @@ def _logs(target, _container):
 
 
 def _deploy(target, _container):
-    """The hub can't edit cluster.toml; a deploy re-applies it and forces this stack to be redeployed."""
     rc, out = host.run(['python3', AGENTCTL, 'apply', '--stack', target], timeout=1800)
     store.event('deploy', f'{target} deployed' if rc == 0 else f'{target} deploy failed', out[-400:], ok=rc == 0)
 
@@ -91,7 +83,7 @@ def handle_pending():
     pending = sorted(os.listdir(folder))
     if not pending:
         return
-    containers = {c['name']: c for c in store.load('containers.json', {}).get('items') or []}  # docker ps is slow
+    containers = {c['name']: c for c in store.load('containers.json', {}).get('items') or []}
     for filename in pending:
         os.remove(os.path.join(folder, filename))
         request = parse(filename)

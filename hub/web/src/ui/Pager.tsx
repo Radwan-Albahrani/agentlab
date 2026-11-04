@@ -2,7 +2,7 @@ import { Button } from './Button';
 import { Inline } from './layout';
 import { Text } from './text';
 
-/** ‹ 2 / 5 ›, for a section's header; nothing when everything fits on one page. */
+/** Renders nothing when everything fits on one page. */
 export function Pager({ page, pages, setPage }: { page: number; pages: number; setPage: (p: number) => void }) {
   if (pages < 2) return null;
   return (

@@ -34,7 +34,6 @@ interface BarPart {
   bytes: number;
 }
 
-/** How a total splits into parts: one coloured bar plus a legend with sizes. */
 export function StackedBar({ parts, total }: { parts: BarPart[]; total: number }) {
   return (
     <>

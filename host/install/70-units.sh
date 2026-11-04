@@ -1,5 +1,4 @@
 #!/bin/bash
-# The host services as systemd units, rendered from host/systemd with this cluster's paths and limits.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 src=${AGENTLAB_REPO}/host/systemd
@@ -23,14 +22,12 @@ done
 [ -n "${any}" ] && systemctl daemon-reload
 systemctl start agentlab.slice
 enable=(agentlab-disks.service agentlab-throttle.service agentlab-watch.service agentlab-janitor.timer)
-# Nightly backups are optional ([backups] enabled); `agentctl backup run` works either way.
 if [ -n "${AGENTLAB_BACKUPS}" ]; then
   enable+=(agentlab-backup.timer)
 elif systemctl is-enabled -q agentlab-backup.timer 2>/dev/null; then
   systemctl disable -q --now agentlab-backup.timer
   changed "agentlab-backup.timer off ([backups] enabled = false)"
 fi
-# Nightly self-update is opt-in ([updates] agentlab = "daily"); `agentctl update` works either way.
 if [ -n "${AGENTLAB_UPDATES}" ]; then
   enable+=(agentlab-update.timer)
 elif systemctl is-enabled -q agentlab-update.timer 2>/dev/null; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The agent firewall (rules rendered by agentctl apply). ufw can't stand in: Docker's forwarding bypasses its chains.
+# ufw can't stand in: Docker's forwarding bypasses its chains.
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 rules=${AGENTLAB_DATA}/rendered/firewall/agentlab.nft

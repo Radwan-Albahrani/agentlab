@@ -1,8 +1,4 @@
-"""The polling thread: what happened in each agent's T3 since last time, and which of it is worth a ping.
-
-A job is a top-level chat's burst of runs (an orchestrator wakes once per worker report). It ends after a quiet
-settle period with no worker in its project still running, and then pings once: done / stopped, or "reply" when the
-agent ended on a question. Delegated worker chats never ping. Pending questions and approvals ping right away."""
+"""The polling thread: reads each agent's T3 database and pings once per finished top-level job or pending request."""
 
 import threading
 import time
@@ -13,11 +9,11 @@ from .t3 import IS_WORKER, connect, describe_approval, describe_question, last_t
 from .text import ends_with_question, first_sentence, last_question, plain, short
 
 POLL = 4
-SETTLE = 120  # orchestrator: no new run for this long = done
-QUICK_SETTLE = 10  # a chat without workers is done almost at once
-PER_THREAD_GAP = 30  # seconds between done/stopped pings for one chat
+SETTLE = 120  # s without a new run before an orchestrator's job is done
+QUICK_SETTLE = 10
+PER_THREAD_GAP = 30
 HOURLY_CAP = 40
-KINDS = {  # kind -> (icon, action in the title, Bark level; active = sound + lit screen, passive would be silent)
+KINDS = {  # kind -> (icon, action in the title, Bark level)
     'question': ('❓', 'Answer needed', 'timeSensitive'),
     'approval': ('✋', 'Approval needed', 'timeSensitive'),
     'reply': ('💬', 'Reply needed', 'timeSensitive'),
@@ -30,12 +26,12 @@ KINDS = {  # kind -> (icon, action in the title, Bark level; active = sound + li
 class Watcher(threading.Thread):
     def __init__(self, profiles):
         super().__init__(daemon=True)
-        self.profiles = profiles  # callable: the agent ids now (agents come and go with cluster.json)
+        self.profiles = profiles  # callable returning the current agent ids
         self.mark = {}  # agent -> (runs watermark, requests watermark)
-        self.status = {}  # agent -> 'watching' / error text
+        self.status = {}
         self.jobs = {}  # agent -> {thread: job running or settling}
-        self.sent_at = {}  # thread -> last ping
-        self.hour = []  # ping times in the last hour
+        self.sent_at = {}
+        self.hour = []
 
     def run(self):
         bark.load_recent()
@@ -44,7 +40,7 @@ class Watcher(threading.Thread):
                 try:
                     self.check(p)
                     self.status[p] = 'watching'
-                except Exception as e:  # agent stopped, DB busy, schema change
+                except Exception as e:
                     self.status[p] = f'{type(e).__name__}: {e}'[:120]
             time.sleep(POLL)
 
@@ -52,7 +48,7 @@ class Watcher(threading.Thread):
         con = connect(p)
         try:
             q = con.execute
-            if p not in self.mark:  # start from now: no backlog after a restart
+            if p not in self.mark:  # start from now: no backlog
                 self.mark[p] = (
                     q("select coalesce(max(completed_at),'') from orchestration_v2_projection_runs").fetchone()[0],
                     q(
@@ -86,7 +82,7 @@ class Watcher(threading.Thread):
             run_mark = max(run_mark, done)
             if worker:
                 continue
-            if status == 'cancelled':  # you pressed stop: you know already
+            if status == 'cancelled':
                 jobs.pop(tid, None)
                 continue
             job = jobs.setdefault(tid, {'start': started})
@@ -96,7 +92,7 @@ class Watcher(threading.Thread):
             elif ends_with_question(last_text(q, rid)) and not self.busy(q, tid, job):
                 events.append(self.outcome(q, tid, jobs.pop(tid), 'reply'))
         now = time.time()
-        for tid, job in list(jobs.items()):  # settled jobs -> one ping
+        for tid, job in list(jobs.items()):
             if now - ts(job['end']) < self.settle(q, job) or self.busy(q, tid, job):
                 continue
             jobs.pop(tid)
@@ -118,7 +114,7 @@ class Watcher(threading.Thread):
             (req_mark,),
         ):
             req_mark = max(req_mark, created)
-            if status != 'pending':  # already answered
+            if status != 'pending':
                 continue
             item = request_item(q, tid, rqid)
             if kind == 'user_input':
@@ -129,7 +125,7 @@ class Watcher(threading.Thread):
 
     @staticmethod
     def settle(q, job):
-        """Orchestrators are woken once per worker report, so wait longer between their runs."""
+        """Seconds of quiet before a job is done: longer for orchestrators, woken once per worker report."""
         if not job.get('workers'):
             job['workers'] = bool(
                 q(
@@ -143,7 +139,7 @@ class Watcher(threading.Thread):
 
     @staticmethod
     def busy(q, tid, job):
-        """The chat has a run going, or workers delegated in its project since the job began are still working."""
+        """The chat, or a worker in its project since the job began, still has a run going."""
         if q(
             'select 1 from orchestration_v2_projection_runs where thread_id = ? and completed_at is null limit 1',
             (tid,),
@@ -161,7 +157,6 @@ class Watcher(threading.Thread):
 
     @staticmethod
     def outcome(q, tid, job, kind):
-        """(thread, kind, chat title, project, headline, details) for a finished job."""
         text = last_text(q, job['rid'])
         if kind == 'reply':
             return tid, 'reply', job['title'], job['proj'], last_question(plain(text, 10**6)), plain(text)

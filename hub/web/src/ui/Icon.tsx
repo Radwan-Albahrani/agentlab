@@ -2,7 +2,6 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactElement } from 'react';
 import { text } from '../theme/tokens.stylex';
 
-// 24px stroke icons, plus the brand marks used on sign-in and connector rows.
 const PATHS: Record<string, string> = {
   home: 'M3.5 10.5 12 4l8.5 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5A1.5 1.5 0 0 1 3.5 19z',
   more: 'M6.5 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM13 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM19.5 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0z',
@@ -130,7 +129,6 @@ const BRANDS: Record<string, ReactElement> = {
   ),
 };
 
-/** A brand mark if there is one, else the name's first letter. */
 export function Brand({ name, label }: { name: string; label?: string }) {
   const mark = BRANDS[name];
   if (!mark) return <b {...stylex.props(styles.letter)}>{(label || name).charAt(0).toUpperCase()}</b>;

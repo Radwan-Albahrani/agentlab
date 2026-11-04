@@ -1,7 +1,4 @@
-"""Which commands need root, and getting it. Commands that change the host re-run themselves through sudo, so nobody
-types `sudo agentctl`; read-only ones never elevate. AI agents drive agentctl without a terminal: there sudo must not
-sit on a password prompt, so it runs with -n and, when that is refused, agentctl stops with exit 2 and
-{needs: "sudo"} for the human to run or to allow."""
+"""Which commands need root; host-changing ones re-run via sudo -n, exit 2 when a password is needed."""
 
 import os
 import shlex
@@ -34,8 +31,7 @@ def readable(path):
 
 
 def dry_run_needs_root(args):
-    """A dry run only reads, so it runs as the caller when the caller can read everything it reads: the config,
-    Docker, and the Cloudflare token when Cloudflare is set up."""
+    """Whether a dry run needs root: only when the caller can't read the config, Docker or the Cloudflare token."""
     from . import config  # noqa: PLC0415 - config imports util only; kept lazy so --help stays instant
 
     if not readable(args.config):
@@ -49,7 +45,7 @@ def dry_run_needs_root(args):
     token = cfg['cloudflare'].get('api_token_file')
     folder = os.path.dirname(token)
     if os.path.isdir(folder) and not os.access(folder, os.R_OK | os.X_OK):
-        return True  # the secrets folder is root-only: whether a token is saved can't even be seen
+        return True
     return os.path.exists(token) and not readable(token)
 
 
@@ -64,18 +60,18 @@ def _backups_readable(args):
 
 
 def needs_root(args):
-    """True when this command must run as root. Read-only commands never do."""
+    """True when this command must run as root."""
     cmd, action = command(args)
     if cmd in ('doctor', 'status', 'config') or (cmd, action) == ('agent', 'list'):
         return False
     if (cmd, action) == ('backup', 'list'):
-        return not _backups_readable(args)  # they hold everyone's chats, so the folder is root-only
+        return not _backups_readable(args)
     if cmd == 'images':
         return not docker_ok()
     if getattr(args, 'dry_run', False):
         return dry_run_needs_root(args) if cmd == 'apply' else not readable(args.config)
     if (cmd, action) == ('agent', 'remove') and not (args.yes or args.keep_data):
-        return not readable(args.config)  # only prints the plan and stops for --yes
+        return not readable(args.config)
     return True
 
 
@@ -84,14 +80,13 @@ def interactive(args):
 
 
 def sudo_argv(args, argv):
-    """The same command again as root. sudo resets the environment, so --config travels as an absolute path."""
+    """The same command again as root (--config made absolute, since sudo resets the environment)."""
     flags = [] if interactive(args) else ['-n']
     return ['sudo', *flags, sys.executable, SCRIPT, '--config', os.path.abspath(args.config), *argv]
 
 
 def elevate(args, argv, execv=None, probe=None):
-    """Return when already root or not needed; otherwise replace this process with the sudo'd one, or raise Needs
-    when sudo can't run without a password and nobody is there to type it."""
+    """Re-exec through sudo when needed; raise Needs when sudo would prompt and nobody can type."""
     if is_root() or not needs_root(args):
         return
     execv, probe = execv or os.execv, probe or subprocess.run  # looked up per call so tests can patch them

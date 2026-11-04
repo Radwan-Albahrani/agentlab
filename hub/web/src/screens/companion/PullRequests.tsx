@@ -101,8 +101,6 @@ const styles = stylex.create({
   running: { color: colors.warn },
 });
 
-/** The open pull requests a companion's GitHub App can see, mine first, each with a Review button that sends the
- * companion's agent to review and QA it (the result is posted on the PR). */
 export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
   const { github } = pulls;
   const [refreshing, refresh] = usePullsRefresh(name, github.at);
@@ -234,11 +232,10 @@ function CiMark({ ci }: { ci: Ci }) {
   );
 }
 
-/** Review it, or where its latest review is: queued, running (with its chat), or what it found. */
 function ReviewCell({ p, name }: { p: Pull; name: string }) {
   const act = useAct();
   const r = p.review;
-  // the review task shown when Review was clicked: "Starting…" until the companion has queued or started a new one
+  // the review task shown at click time; "Starting…" until a newer one is queued or running
   const [clickedOver, setClickedOver] = useState<string | null>(null);
   const starting = clickedOver !== null && r?.status !== 'queued' && (r?.task ?? '') === clickedOver;
   useCompanionPoll(name, starting, () => {
@@ -291,10 +288,9 @@ const QA_CHIP: Record<string, [Tone, string]> = {
   partial: ['warn', 'QA partial'],
 };
 
-/** A finished review at a glance: what it found (blocking first) and how QA went; the sentence is the tooltip. */
 function ResultChips({ r }: { r: PullReview }) {
   const c = r.counts;
-  if (!c) return <Pill tone="idle">Reviewed</Pill>; // what it found is in the tooltip
+  if (!c) return <Pill tone="idle">Reviewed</Pill>;
   const [tone, label]: [Tone, string] = c.blocking
     ? ['bad', `${c.blocking} blocking`]
     : c.findings

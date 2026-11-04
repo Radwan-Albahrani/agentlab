@@ -25,7 +25,6 @@ export function Agent() {
   );
 }
 
-/** One agent and its domain: its card, its companions, its containers. */
 function AgentView({ name, d }: { name: string; d: AgentPage }) {
   const canSee = useCanSee();
   return (
@@ -114,7 +113,6 @@ function AgentView({ name, d }: { name: string; d: AgentPage }) {
   );
 }
 
-/** The owner's own disk (per-person storage): every agent they own shares it. */
 function DiskCard({ disk }: { disk: Pool }) {
   return (
     <Card>

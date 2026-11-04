@@ -59,7 +59,6 @@ export interface ButtonLook {
   iconOnly?: boolean; // the label becomes the tooltip
 }
 
-/** The button look as props, for other elements that should look like a button (a menu trigger). */
 export const look = ({ variant = 'default', small, iconOnly }: ButtonLook, busy = false, disabled = false) =>
   stylex.props(
     styles.btn,
@@ -79,7 +78,7 @@ const inner = ({ icon, label, iconOnly, small }: ButtonLook) => (
 
 const external = (href: string) => /^(https?:|t3code:|slack:)/.test(href);
 
-/** A link that looks like a button: in-app routes stay in the app, everything else opens a new tab. */
+/** In-app routes stay in the app; anything else opens a new tab. */
 export function LinkButton({ to, ...l }: ButtonLook & { to: string }) {
   const title = l.iconOnly ? l.label : undefined;
   if (external(to))
@@ -106,7 +105,7 @@ export function Button({
   onClick?: () => unknown;
   busy?: boolean;
   disabled?: boolean;
-  hint?: string; // tooltip, e.g. why it is disabled
+  hint?: string; // tooltip
   type?: 'button' | 'submit';
 }) {
   const name = l.iconOnly ? l.label : undefined;

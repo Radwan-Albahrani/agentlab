@@ -1,7 +1,4 @@
-"""`agentctl setup`: from a bare server to running agents in one command. It asks a few questions (or takes them as
-flags), writes cluster.toml, then runs init, install, Cloudflare and apply in order, stopping only where a person
-has to act (a token to paste, a login link to open) and carrying on from there when run again. An existing
-cluster.toml is kept unless the answers change it, and then only after a yes (or --yes)."""
+"""`agentctl setup`: guided setup; re-runnable, stops only where a person must act."""
 
 import json
 import os
@@ -27,15 +24,11 @@ FIRST_PORT, PORT_STEP, HUB_PORT = 7101, 10, 7190
 TOOLS = ('t3', 'accounts', 'browser', 'terminal', 'files')
 
 
-# ---------------------------------------------------------------- the machine
-
-
 def machine_name():
     return socket.gethostname().split('.')[0].lower()
 
 
 def tailnet_name():
-    """This machine's MagicDNS name when Tailscale runs here, else ''."""
     cli = doctor.tailscale_cli()
     if not cli:
         return ''
@@ -55,9 +48,6 @@ def facts():
     }
 
 
-# ---------------------------------------------------------------- answers
-
-
 def parse_people(text):
     """'sara@example.com=2, omar@example.com' -> [('sara@example.com', 2), ('omar@example.com', 1)]."""
     out = []
@@ -74,7 +64,6 @@ def parse_people(text):
 
 
 def agent_ids(people, names=None):
-    """Agent ids from the people: their email's name, numbered when they have several."""
     if names:
         return [(people[0][0], n) for n in names]
     out, used = [], set()
@@ -145,7 +134,6 @@ class Asker:
 
 
 def answers(flags, asker, machine):
-    """Every answer cluster.toml needs, from flags, questions and the machine's own facts."""
     a = {'reach': asker.choose('reach', 'How will you reach your agents?', REACH, flags.get('reach') or 'me')}
     reach = a['reach']
     a['admin'] = asker.get('admin', 'Your email (you are the admin)', check=_email)
@@ -164,7 +152,6 @@ def answers(flags, asker, machine):
             a['hub_domain'] = asker.get('hub_domain', 'The address for the dashboard', f'agents-hub.{zone}')
             if reach == 'cloudflare':
                 a['network'] = asker.choose('network', 'Who can reach the addresses?', NETWORK, 'private')
-                # private: HTTPS with a real certificate unless --no-https (plain HTTP inside the tunnel)
                 a['https'] = a['network'] == 'private' and flags.get('https') is not False
                 a['zone'] = zone
             if reach == 'tinyauth':
@@ -218,11 +205,8 @@ def _split(v):
     return [x for x in re.split(r'[,\s]+', str(v or '')) if x and x != '-']
 
 
-# ---------------------------------------------------------------- cluster.toml
-
-
 def toml_text(a):
-    """cluster.toml for these answers: only what differs from the defaults, with a word on each choice."""
+    """cluster.toml for these answers: only what differs from the defaults."""
     q = json.dumps
     lines = ['# Written by `agentctl setup`. Change anything, then run `agentctl apply`.', '', '[cluster]']
     lines.append(f'name = {q(a["name"])}')
@@ -230,10 +214,8 @@ def toml_text(a):
     if a.get('hub_domain') and a['reach'] != 'me':
         lines.append(f'hub_domain = {q(a["hub_domain"])}')
     if a.get('https'):
-        # each agent's T3 desktop and phone apps connect to a name of their own
         lines.append(f'pair_domain = {q("{id}-t3." + a["zone"])}')
     if a['reach'] == 'me':
-        # the dashboard is reached on its own port; without Tailscale the name only has to differ from the domain
         lines.append(f'hub_domain = {q(a["domain"] if a["tailscale"] else "agentlab-hub")}')
         lines.append('publish_address = "0.0.0.0"          # the tools listen on these ports on your network')
     if a['deploy'] != 'compose':
@@ -287,8 +269,7 @@ def summary(a):
 
 
 def write_config(path, text, asker, force):
-    """True when cluster.toml was written. An existing one with other content is replaced only after a yes; the
-    old one is kept next to it."""
+    """True when cluster.toml was written; a different existing one is replaced only after a yes, keeping a backup."""
     try:
         with open(path) as f:
             old = f.read()
@@ -304,9 +285,6 @@ def write_config(path, text, asker, force):
     write_if_changed(path, text, mode=0o640)
     say(f'wrote {path}')
     return True
-
-
-# ---------------------------------------------------------------- the run
 
 
 def needed_secrets(cfg):
@@ -336,7 +314,7 @@ def gather_secrets(cfg, asker):
 
 
 def until_done(step, asker, attempts=10):
-    """Run a step; when it stops for a person (Needs), say what's needed and, at a terminal, wait and try again."""
+    """Run a step; when it needs a person, say what and, at a terminal, wait and retry."""
     for _ in range(attempts):
         try:
             return step()
@@ -369,7 +347,7 @@ def setup(config_path, flags, ask=input, interactive=None, steps=None):
         for line in summary(a):
             say(f'  {line}')
         text = toml_text(a)
-        config.resolve(tomllib.loads(text))  # never write a config agentctl would refuse
+        config.resolve(tomllib.loads(text))
         if flags.get('config_only'):
             write_config(config_path, text, asker, flags.get('yes'))
             return {'config': config_path}
@@ -382,7 +360,7 @@ def setup(config_path, flags, ask=input, interactive=None, steps=None):
     until_done(lambda: steps['install'](cfg), asker)
     if cfg['auth']['mode'] == 'cloudflare-access' or cfg['auth']['ingress'] == 'cloudflared':
         until_done(lambda: steps['cloudflare'](cfg), asker)
-        cfg = config.load(config_path)  # it wrote the team and the Access audience
+        cfg = config.load(config_path)  # reload: setup wrote the team and the Access audience
     steps['apply'](cfg)
     return {'config': config_path, 'open': where(cfg)}
 
@@ -392,7 +370,6 @@ def _has_answers(flags):
 
 
 def where(cfg):
-    """What to open next."""
     if cfg['hub']['publish']:
         hub = f'http://{cfg["domain"]}:{cfg["hub"]["publish"]}'
     elif cfg['auth']['mode'] == 'tailscale':

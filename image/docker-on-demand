@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""docker.sock on demand: the first client starts the agent's engine and is proxied to it; after
-DOCKER_IDLE_MINUTES (15) with no clients or running containers the engine stops (saves ~200 MB per agent)."""
+"""docker.sock proxy that starts the agent's engine on first use and stops it after DOCKER_IDLE_MINUTES idle."""
 
 import asyncio
 import contextlib
@@ -8,8 +7,8 @@ import os
 import subprocess
 import time
 
-SOCK = '/run/user/1000/docker.sock'  # what DOCKER_HOST points at
-ENGINE = '/run/user/1000/dockerd.sock'  # the engine's own socket (supervisord program "dockerd")
+SOCK = '/run/user/1000/docker.sock'  # DOCKER_HOST
+ENGINE = '/run/user/1000/dockerd.sock'
 IDLE_S = int(os.environ.get('DOCKER_IDLE_MINUTES', '15')) * 60
 SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
 

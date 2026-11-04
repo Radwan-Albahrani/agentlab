@@ -1,11 +1,4 @@
-"""T3 pairing and paired devices. T3 answers only paired devices (bearer sessions), and a one-time pairing link
-(`<base>/pair#token=...`) turns a browser or the T3 app into one. The token is redeemed by T3's own page on whatever
-host the link names, so the link must use a host that device can reach:
-  browser  the cluster domain (the person is signed in there already), 5 minutes
-  app      the agent's pair host (cloudflare-access / tinyauth: Access bypass straight to T3), or the cluster domain on a
-           tailnet (identity comes with the connection), 10 minutes; the hub draws the QR from `url`.
-When T3 is published on a host port (one-person setups reached over their own network, AGENTLAB_PUBLISHED), both
-kinds use http://<the host the hub page was opened with>:<that port>, as the hub passes it in `host`."""
+"""T3 pairing links and paired devices; a link must name a host the pairing device can reach."""
 
 import json
 import os
@@ -14,19 +7,19 @@ import re
 from util import published, run, sh_quote
 
 TTL = {'browser': '5m', 'app': '10m'}
-DEVICE_SUBJECT = 'one-time-token'  # sessions made by redeeming a pairing link (not the bridge's short tokens)
+DEVICE_SUBJECT = 'one-time-token'  # sessions from redeemed pairing links
 NO_DEVICE = 'No such device.'
 
 
 def _published(host):
-    """http://host:port when T3 is published and the caller named a plain hostname or IPv4 address, else ''."""
+    """http://host:port when T3 is published on a port and `host` is a plain hostname, else ''."""
     port, host = published('t3'), (host or '').strip().lower()
     ok = bool(port) and 0 < len(host) <= 253 and all(c.isalnum() or c in '.-' for c in host)
     return f'http://{host}:{port}' if ok and not host.startswith(('.', '-')) else ''
 
 
 def _host(kind):
-    """(host, reason it isn't available)."""
+    """-> (host, reason it isn't available)."""
     domain = os.environ.get('AGENTLAB_DOMAIN', '')
     if kind == 'browser' or os.environ.get('AGENTLAB_AUTH_MODE') == 'tailscale':
         return domain, '' if domain else 'AGENTLAB_DOMAIN is not set'
@@ -41,8 +34,7 @@ def _host(kind):
 
 
 def pair(kind, label, host=''):
-    """A fresh pairing link -> {available, url, token, expires, id} or {available: False, reason}. `host`: the host
-    the hub page was opened with (used only when T3 is published on a port)."""
+    """`host`: the host the hub page was opened with (used only when T3 is published on a port)."""
     if kind not in TTL:
         raise ValueError('kind must be browser or app')
     base = _published(host)
@@ -83,7 +75,6 @@ def _sessions():
 
 
 def devices():
-    """Paired browsers and apps, newest first, without their tokens."""
     out = []
     for s in _sessions():
         if s.get('subject') != DEVICE_SUBJECT:
@@ -105,7 +96,7 @@ def devices():
 
 
 def revoke(session_id):
-    """-> '' or why not. Only paired devices can be revoked here."""
+    """-> '' or why not; only paired devices, never other T3 sessions."""
     if session_id not in {d['id'] for d in devices()}:
         return NO_DEVICE
     rc, out = run(f't3 auth session revoke {sh_quote(session_id)}', timeout=20)

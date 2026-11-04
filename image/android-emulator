@@ -1,8 +1,5 @@
 #!/bin/bash
-# Android emulator on demand. The SDK is one shared, read-only copy on the host (agentctl installs it into
-# <data>/shared/android-sdk), mounted at /opt/android-sdk; each agent's phone (AVD) lives in its own ~/.android.
-# A running emulator holds 2-4 GB, so it starts only when asked and `reap` (supervisord program android-reaper) stops
-# it after ANDROID_IDLE_MINUTES (30) without adb use. It draws on the browser's display :99 so the owner can watch it.
+# Android emulator on demand (shared host SDK, AVD in ~/.android), on display :99; reaped after ANDROID_IDLE_MINUTES.
 #   android-emulator start | stop | status | wipe | available | run (supervisord) | reap (supervisord)
 set -u
 SDK=${ANDROID_SDK_ROOT:-/opt/android-sdk}
@@ -89,14 +86,14 @@ status() {
   fi
 }
 
-run() {   # the supervisord program
+run() {
   ensure_avd
   export DISPLAY=:99 ANDROID_SDK_ROOT=${SDK} ANDROID_AVD_HOME=${AVD_HOME}
   exec "${SDK}/emulator/emulator" -avd "${AVD}" -no-audio -no-boot-anim -no-snapshot-save -no-metrics \
     -gpu swiftshader_indirect
 }
 
-reap() {   # the supervisord program android-reaper
+reap() {
   while sleep 60; do
     sv status android | grep -q RUNNING || continue
     [[ -n "$(find "${USED}" -mmin -"${IDLE_MINUTES}" 2>/dev/null)" ]] && continue
@@ -113,5 +110,5 @@ case "${1:-status}" in
   available) available ;;
   run) run ;;
   reap) reap ;;
-  *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

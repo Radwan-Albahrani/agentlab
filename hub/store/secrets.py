@@ -1,8 +1,4 @@
-"""<data>/secrets (mounted at /secrets) and what each file is for (secrets-map.json). Cluster secrets sit at the top;
-each companion's in companions/<name>/ (its folder is mounted into it alone). Edits are written in place (services
-that mount a single file see the change); the watcher then applies them where they are used.
-Optionally, one more folder from the host ([hub] extra_secrets: secrets of other things on the machine) shows as its
-own group under extra/<file>, described by its own map; the screen is admins only either way."""
+"""<data>/secrets (/secrets), each companion's companions/<name>/, the optional extra/ host folder, and their maps."""
 
 import json
 import os
@@ -16,7 +12,7 @@ from .files import keep_version, read_json, read_version, versions, write_in_pla
 
 SECRETS = os.environ.get('SECRETS_DIR', '/secrets')
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'secrets-map.json')
-EXTRA = os.environ.get('HUB_EXTRA_SECRETS', '')  # the mounted host folder, '' when there is none
+EXTRA = os.environ.get('HUB_EXTRA_SECRETS', '')
 EXTRA_MAP = os.environ.get('HUB_EXTRA_SECRETS_MAP', '')
 EXTRA_LABEL = os.environ.get('HUB_EXTRA_SECRETS_LABEL', '') or 'Other secrets'
 EXTRA_PREFIX = 'extra/'
@@ -25,7 +21,7 @@ FILE_OK = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$')
 
 
 def _folders():
-    """Where secrets live, relative to SECRETS: the top and each configured companion's folder (plus extra/)."""
+    """Secret folders as name prefixes: '', companions/<name>/ and extra/."""
     return ['', *(f'companions/{n}/' for n in cluster.companions()), *([EXTRA_PREFIX] if EXTRA else [])]
 
 
@@ -60,7 +56,7 @@ def _expand(value, name):
 
 
 def secrets_map():
-    """{file name: what it is}, with every {companion} entry spelled out for each companion in cluster.json."""
+    """{file name: what it is}, with {companion} entries expanded per companion."""
     out = {}
     for key, info in read_json(MAP, {}).items():
         if key == '_about':
@@ -86,7 +82,7 @@ def all_secrets():
             continue
     for name in names:
         if not FILE_OK.match(name.rpartition('/')[2]):
-            continue  # hidden entries (.versions) and odd names aren't secrets
+            continue
         path = _path(name)
         if not os.path.isfile(path):
             continue
@@ -115,7 +111,7 @@ def secret_versions(name):
 
 
 def save(name, text, create=False):
-    """Write a secret, keeping the old value as a version. False when nothing changed."""
+    """Write a secret, keeping the old value as a version; False when nothing changed."""
     path = _path(name)
     exists = os.path.isfile(path)
     if create and os.path.exists(path):
@@ -123,7 +119,7 @@ def save(name, text, create=False):
     if not create and not exists:
         raise ValueError(f'{name} does not exist.')
     if name.endswith('.json'):
-        json.loads(text)  # refuse broken JSON before it reaches a service
+        json.loads(text)
     if exists and value(name) == text:
         return False
     keep_version(path, _versions_folder(name), VERSIONS_KEPT)

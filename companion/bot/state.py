@@ -1,16 +1,4 @@
-"""The companion's memory: one task per Slack thread it keeps in sync with a T3 chat, plus drafts, refusals and tags
-waiting for an invite. Kept in the companion database's store (one row per task, one per other key); save() writes
-only what changed. The poller and Slack handlers share it under `lock`.
-
-A task (state['tasks'][key(channel, thread_ts)]):
-  thread, title, project, channel, thread_ts, outbox     the T3 chat and the Slack thread mirroring it
-  active, start, ended, outcome, closed                  lifecycle
-  burst_start, seen, step_from, latest, status_ts, ...   the live "thinking" line of the current turn
-  requester, source*, approval, reply_draft, cred_ask    errands: done for someone else, through the owner's DM
-  review, post_draft, poll                               asks from the hub: a post for a channel
-  review                                                 a pull request review: the PR, its head, what was posted
-state['polls'][id]: a poll the companion runs in a channel (see polls).
-state['pulls'], state['review_queue']: the open PRs its GitHub App sees, and reviews waiting for a slot."""
+"""The companion's persisted state (tasks keyed by Slack thread, polls, drafts...); access it under `lock`."""
 
 import json
 import threading
@@ -24,7 +12,7 @@ _written = {}  # store key -> JSON last written
 
 
 def _rows(s):
-    """The state as store rows: task:<key> per task, the other top-level keys as themselves."""
+    """Store rows: task:<key> per task, other top-level keys as themselves."""
     rows = {f'task:{k}': t for k, t in s['tasks'].items()}
     rows.update((k, v) for k, v in s.items() if k != 'tasks')
     return rows
@@ -71,7 +59,7 @@ def task_of(channel, thread_ts):
 
 
 def now_iso():
-    """T3's timestamp format, so they compare as strings with the database's."""
+    """Now in T3's timestamp format; compared as strings with T3's, so keep the format exact."""
     return datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
 
@@ -80,7 +68,6 @@ def parse_iso(iso):
 
 
 def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, project=None, **extra):
-    """Register a task that starts now and is followed by the poller."""
     now = now_iso()
     t = {
         'thread': thread,
@@ -113,7 +100,7 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
 
 
 def prepare_for_start():
-    """After a restart: answered turns never reuse their old "thinking" message."""
+    """Normalise loaded tasks after a restart."""
     for t in state['tasks'].values():
         if not t.get('active'):
             t['status_ts'] = None

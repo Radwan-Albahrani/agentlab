@@ -1,10 +1,4 @@
-"""Requests an agent makes about its own companions, as files on its own disk (it has no network path to anything
-shared): ~/.agentlab/requests/<action>~companion~<name>, the payload (if any) JSON in the file. Actions:
-create {display_name, kind} · remove · secret {key, value} · settings {...} · restart · stop · start.
-Ownership follows from the path: every action but create works only on a companion of the agent whose home holds
-the request. Results go to ~/.agentlab/results/<same name>.json as {ok, message}. A request file is deleted as soon
-as it is read (it may hold a secret), and secret values never reach a result, an event or a log.
-The folders are the agent's, so everything goes through safe.Folder."""
+"""Agents' companion requests from ~/.agentlab/requests; secret values never reach a result, event or log."""
 
 import json
 import os
@@ -37,9 +31,7 @@ def parse(filename):
 
 
 def companion_containers(name):
-    """Asked from Docker itself (stopped ones too): the inventory snapshot is up to 30 s old, and a companion its agent
-    just created, or one down because it isn't configured yet, must still be restartable. The inventory covers stacks
-    Coolify names by its own uuid."""
+    """Asks Docker first (the snapshot may miss new companions), then the inventory (Coolify uuid-named stacks)."""
     stack = f'agentlab-companion-{name}'
     rc, out = host.run(
         ['docker', 'ps', '-a', '--filter', f'label=com.docker.compose.project={stack}', '--format', '{{.Names}}']
@@ -81,7 +73,7 @@ def _secret(_action, name, _agent, payload):
         return False, f'unknown secret {key!r}; known: {", ".join(sorted(SECRET_KEYS))}'
     if not isinstance(value, str) or not value.strip():
         return False, 'the secret value must be a non-empty string'
-    os.makedirs(f'{DATA}/secrets/companions', mode=0o700, exist_ok=True)  # the host's own folder, not the agent's
+    os.makedirs(f'{DATA}/secrets/companions', mode=0o700, exist_ok=True)
     with Folder(f'{DATA}/secrets/companions', name, create=True) as f:
         f.write(key, value.strip() + '\n', mode=0o600)
     return True, f'{key} saved for {name}; it restarts within a minute to pick it up'
@@ -108,7 +100,6 @@ HANDLERS = {
 
 
 def decide(action, name, agent, mine, payload):
-    """(ok, message): the checks every request passes before anything happens."""
     if action != 'create' and name not in mine:
         return False, f'{name} is not one of your companions'
     if action in ('create', 'secret', 'settings') and not isinstance(payload, dict):
@@ -133,7 +124,7 @@ def handle(agent, mine):
         requests = Folder(home, '.agentlab/requests')
     except (FileNotFoundError, NotADirectoryError):
         return
-    except OSError as e:  # a symlink where the folder should be, and the like
+    except OSError as e:
         store.event('agent', f'{agent["id"]}: request folder refused', type(e).__name__, ok=False)
         return
     with requests:

@@ -20,11 +20,10 @@ const styles = stylex.create({
   inner: { maxWidth: 1120, marginInline: 'auto', display: 'grid', gap: space.huge },
 });
 
-/** The frame around every screen: the sidebar on desktop, a pill bar on phones. */
 export function Shell({ children }: { children: ReactNode }) {
   const { data: nav } = useNav();
   const onLogo = usePresentingSwitch();
-  setAgentColors(nav?.colors); // before anything below paints an agent's colour
+  setAgentColors(nav?.colors); // must run before children render
   const menu = nav ? buildMenu(nav) : { main: [], agents: [], system: [] };
   return (
     <div {...stylex.props(styles.app)}>

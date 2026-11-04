@@ -1,5 +1,3 @@
-"""Following a T3 chat: a turn finishing, busy-model retries, errands that need nothing, "status?" questions."""
-
 import pytest
 from bot import state, t3, tasks
 from conftest import set_settings
@@ -78,7 +76,7 @@ def test_an_errand_that_needs_nothing_closes_quietly(monkeypatch, t3_quiet, fres
     tasks.tick(t)
     assert t['outcome'] == 'nothing needed'
     assert t['closed'].endswith('Nothing needed')
-    assert not fresh_bot.messages  # no answer posted, just the lines edited
+    assert not fresh_bot.messages
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,6 @@ import { Badge } from '../../ui/status';
 import { AddConnector, ConnectorRow } from './Connectors';
 import { SignIn } from './SignIn';
 
-// Apple's easing for things that move into place: quick out of the gate, settling softly
 const settle = 'cubic-bezier(0.32, 0.72, 0, 1)';
 const still = '@media (prefers-reduced-motion: reduce)';
 const rise = stylex.keyframes({ from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'none' } });
@@ -128,7 +127,6 @@ function Step({
   );
 }
 
-/** A new agent's first stop: the person's own AI account, their tools, GitHub; then straight into T3. */
 function OnboardingView({ agent, d }: { agent: string; d: AccountsPage }) {
   const done = (id: string) => d.onboarding.steps.some((s) => s.id === id && s.done);
   return (

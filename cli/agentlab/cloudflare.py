@@ -1,26 +1,4 @@
-"""Cloudflare from the config, in one of two networks.
-
-private (the default): the names exist only for devices on the organization's Cloudflare One (WARP) client. Gateway
-sends their traffic over the tunnel by private hostname routes; cloudflared resolves the names on this host and
-connects to the edge on port 80. An Access application for those private hostnames lets in exactly the agent owners
-and admins and, because it is plain HTTP inside the client's encrypted tunnel, issues the signed token the gate
-verifies without Gateway TLS decryption. agentlab's own public DNS records and public apps are removed.
-
-private with https = true: the same, plus port 443. The edge holds a Let's Encrypt certificate for the names, so
-browsers show a padlock with nothing installed on devices. Without TLS decryption Access still admits or refuses each
-connection by who is on the client, but can't add its token to HTTPS requests, so an "Access for SaaS" OIDC
-application (same people) lets the gate sign people in itself. Each agent's T3 apps get their own private name
-(pair_domain), straight to T3. Port 443 joins the Access application only once the edge serves a valid certificate
-(finish_https, after apply deployed it); then the gate redirects plain HTTP to HTTPS.
-
-public: a public hostname per name (proxied CNAME to the tunnel) behind Access's sign-in page, plus a Bypass app for
-the pair hosts (the T3 apps can't do a browser sign-in; T3 accepts only paired sessions there). require_warp adds a
-Gateway device check to the people policy, so only devices on the client get past the sign-in.
-
-Every apply re-syncs the people policy, so adding or removing an agent is also adding or removing their sign-in. Any Zero Trust login method works (the
-one-time PIN by email needs no setup); `[auth.cloudflare] login_method` pins the people's app to one of them, and an
-account with exactly one method gets that one. Only the API token is required: the account, the zone and the Zero
-Trust team are read from the token and the domain, and written into cluster.toml the first time."""
+"""Cloudflare tunnel, DNS and Access setup for network = "private" (default, WARP client only) or "public"."""
 
 import ipaddress
 import json
@@ -89,13 +67,12 @@ def pair_hosts(cfg):
 
 
 def private_hosts(cfg):
-    """Every name routed over the tunnel in private mode: the signed-in ones and (HTTPS only) the T3 apps' own."""
     return signed_in_hosts(cfg) + pair_hosts(cfg)
 
 
-CALLBACK = '/_agentlab/oidc/callback'  # gate/gate/oidc.py
+CALLBACK = '/_agentlab/oidc/callback'  # must match gate/gate/oidc.py
 GATE_FILES = {'client_id': 'oidc-client-id', 'client_secret': 'oidc-client-secret', 'key': 'session.key'}
-LIVE = 'https-live'  # tells the gate Access covers 443: plain HTTP is redirected from then on
+LIVE = 'https-live'
 CERT_WAIT, CERT_WARN_DAYS = 180, 14
 
 
@@ -112,7 +89,7 @@ def gate_secret(cfg, name):
 
 
 def save_gate_secret(cfg, name, value):
-    """Write one of the gate's secrets: a file only the gate's uid reads, in a folder only it may list."""
+    """Write a gate secret readable only by the gate's uid."""
     folder = gate_dir(cfg)
     os.makedirs(folder, mode=0o700, exist_ok=True)
     path = f'{folder}/{GATE_FILES.get(name, name)}'
@@ -125,8 +102,7 @@ def save_gate_secret(cfg, name, value):
 
 
 def edge_certificate(host, address=render.EDGE_IP, port=443, timeout=5):
-    """(days the edge's certificate for `host` is still valid, '') when it is trusted by this machine's CAs and
-    names the host; (None, why) otherwise. Asked of the edge directly, the way the tunnel container connects."""
+    """(days the edge's certificate for `host` stays valid, '') when trusted, else (None, why)."""
     ctx = ssl.create_default_context()
     try:
         with (
@@ -141,8 +117,7 @@ def edge_certificate(host, address=render.EDGE_IP, port=443, timeout=5):
 
 
 def edge_redirect(host, address=render.EDGE_IP, port=80, timeout=5):
-    """(True, '') when plain HTTP for `host` on the edge answers a redirect to https://<host>/; (False, what came
-    back) otherwise. A real request, the way the tunnel container sends it, not a marker file (#25)."""
+    """(True, '') when plain HTTP for `host` on the edge redirects to https, else (False, what came back)."""
     request = f'GET / HTTP/1.1\r\nHost: {host}\r\nAccept: text/html\r\nConnection: close\r\n\r\n'.encode()
     try:
         with socket.create_connection((address, port), timeout=timeout) as raw:
@@ -167,8 +142,6 @@ def configured(cfg):
 
 
 def api_for(cfg, opener=None):
-    """The API with the saved token; the account, zone and team are filled in from it when the config leaves them
-    out."""
     if not configured(cfg):
         raise Needs(
             'a Cloudflare API token is needed: create one (My Profile → API Tokens → Create Token → Custom) with '
@@ -192,8 +165,7 @@ def zone_of(api, host):
 
 
 def discover(cfg, api):
-    """Fill in what the config leaves out, in memory: the zone and its account from the domain (else the token's
-    only account), and the Zero Trust team from the account."""
+    """Fill in the zone, account and Zero Trust team the config leaves out (in memory only)."""
     cf = cfg['cloudflare']
     if not cf['zone'] or not cf['account_id']:
         zone = zone_of(api, cfg['domain'])
@@ -311,7 +283,6 @@ class Setup:
                 self.write(f'add DNS {host} -> tunnel', 'POST', f'/zones/{zone}/dns_records', body)
 
     def policy(self, name, decision, include, describe, require=()):
-        """A reusable Access policy, created or brought back to exactly `include` (and `require`)."""
         body = {'name': self.named(name), 'decision': decision, 'include': include, 'require': list(require)}
         policies = self.api.call('GET', f'/accounts/{self.account}/access/policies') or []
         found = next((p for p in policies if p.get('name') == body['name']), None)
@@ -340,8 +311,7 @@ class Setup:
         return self.policy('', 'allow', include + domains, describe, require)
 
     def gateway_check(self):
-        """The account's Gateway device posture check (traffic filtered by this organization's Gateway): Access
-        policies require it by id. Made when missing; it changes nothing for other apps until a policy uses it."""
+        """The account's Gateway device posture check that Access policies require by id; created when missing."""
         try:
             checks = self.api.call('GET', f'/accounts/{self.account}/devices/posture') or []
         except ApiError as e:
@@ -365,8 +335,7 @@ class Setup:
             if private
             else [{'type': 'public', 'uri': h} for h in hosts]
         )
-        # Devices on the client sign in with their client session, so the T3 desktop and phone apps work too. When
-        # the account already allows that for every application, the app inherits it and doesn't ask for it.
+        # Client sign-in per app, unless the account already enables it for all apps (then the flag is refused, #21).
         warp = (private or self.cfg['auth']['cloudflare']['require_warp']) and not self.account_allows_client_sign_in()
         body = {
             'name': self.named(name),
@@ -375,14 +344,14 @@ class Setup:
             'session_duration': '24h',
             'app_launcher_visible': False,
             'policies': [{'id': policy, 'precedence': 1}],
-            # Empty: every login method of the account is offered (and an earlier pin is cleared on update).
+            # Empty offers every login method and clears an earlier pin.
             'allowed_idps': idps,
             'auto_redirect_to_identity': len(idps) == 1,
             'allow_authenticate_via_warp': True if warp else None,
         }
-        if not private:  # Cloudflare requires `domain` to be one of the public destinations; private apps have none
+        if not private:  # private apps have no public destination to name as `domain`
             body['domain'] = hosts[0]
-        body = {k: v for k, v in body.items() if v is not None}  # send only what is meant; a PUT replaces the rest
+        body = {k: v for k, v in body.items() if v is not None}  # a PUT replaces the rest
         apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
         found = next((a for a in apps if a.get('name') == body['name']), None)
         if not found:
@@ -419,13 +388,11 @@ class Setup:
         return self._org_sign_in
 
     def named(self, name):
-        """Everything agentlab makes is named agentlab-<cluster> (plus a suffix): it only ever touches those."""
+        """agentlab only touches resources named agentlab-<cluster>[-suffix]."""
         return f'{self.name} {name}' if name else self.name
 
     def access(self, sign_in=False):
-        """The people's application (and, public only, the pair hosts' Bypass app). Removing a Bypass app left from
-        a public setup is left to `cleanup`, after the new way in works. Private HTTPS: with `sign_in`, the OIDC
-        application first; port 443 joins once https_ready()."""
+        """The people's Access application (public: plus the pair hosts' Bypass app); 443 joins once https_ready()."""
         providers = self.api.call('GET', f'/accounts/{self.account}/access/identity_providers') or []
         idps = login_methods(self.cfg, providers)
         private = config.private_network(self.cfg)
@@ -438,7 +405,6 @@ class Setup:
             destinations = [
                 {'type': 'private', 'hostname': h, 'port_range': p} for h in signed_in_hosts(self.cfg) for p in ports
             ]
-            # the T3 apps' names: HTTPS only, and only once 443 is ready for everyone
             destinations += [
                 {'type': 'private', 'hostname': h, 'port_range': '443'} for h in pair_hosts(self.cfg) if '443' in ports
             ]
@@ -448,15 +414,12 @@ class Setup:
             self.app('apps', pair_hosts(self.cfg), bypass, [])
         return aud
 
-    # ---------------------------------------------------------------- private HTTPS
     def people_app(self):
         apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
         return next((a for a in apps if a.get('name') == self.name), None)
 
     def https_ready(self):
-        """Whether port 443 may join the people's application: it already has (never taken back while https is on,
-        so a passing hiccup can't flap it), or the edge now serves a trusted certificate for every signed-in name.
-        Until then HTTPS isn't offered to anyone, so nobody meets a certificate warning."""
+        """Whether 443 may join the people's app: already joined (never taken back), or every signed-in name has a trusted cert."""
         if not hasattr(self, '_ready'):
             app = self.people_app() or {}
             has = any(d.get('port_range') == '443' for d in app.get('destinations') or [])
@@ -464,9 +427,7 @@ class Setup:
         return self._ready
 
     def sign_in_app(self, policy, idps):
-        """The Access for SaaS OIDC application the gate signs people in with: same people, same login methods,
-        client sign-in on so devices on the client go through without a prompt. Its client secret is shown only when
-        it is created, so a lost one means a new application: made and saved first, the old one removed after."""
+        """The Access for SaaS OIDC app the gate signs in with; its secret is shown only at creation, so a lost one means a new app."""
         hosts = signed_in_hosts(self.cfg)
         warp = not self.account_allows_client_sign_in()
         saas = {
@@ -492,7 +453,7 @@ class Setup:
         mine = gate_secret(self.cfg, 'client_id')
         found = next((a for a in named if mine and (a.get('saas_app') or {}).get('client_id') == mine), None)
         if found and not gate_secret(self.cfg, 'client_secret'):
-            found = None  # its secret is lost: replaced below
+            found = None
         if found:
             have = found.get('saas_app') or {}
             if (
@@ -539,8 +500,7 @@ class Setup:
             self.write(f'remove Access application {app["name"]} (https is off)', 'DELETE', path)
 
     def mark_live(self, on):
-        """The gate redirects plain HTTP to HTTPS only while this file exists: written once Access covers 443 for
-        every name and the gate has its client, removed when https is off."""
+        """The gate redirects HTTP to HTTPS only while this marker file exists."""
         path = f'{gate_dir(self.cfg)}/{LIVE}'
         if not on:
             if os.path.exists(path):
@@ -567,9 +527,7 @@ class Setup:
                 f'remove Access policy {p["name"]}', 'DELETE', f'/accounts/{self.account}/access/policies/{p["id"]}'
             )
 
-    # ---------------------------------------------------------------- private network
     def private_ingress(self, tunnel):
-        """No public hostnames on the tunnel; Gateway sends the client's traffic by the hostname routes below."""
         want = {'ingress': [{'service': 'http_status:404'}], 'warp-routing': {'enabled': True}}
         path = f'/accounts/{self.account}/cfd_tunnel/{tunnel}/configurations'
         current = None if tunnel.startswith('<') else self.api.call('GET', path)
@@ -579,8 +537,7 @@ class Setup:
             self.write('set the tunnel to private routing only (no public hostnames)', 'PUT', path, {'config': want})
 
     def hostname_routes(self, tunnel):
-        """A private hostname route per name to this tunnel; agentlab's own routes (by comment) for names it no
-        longer serves go. Someone else's route for one of the names stops setup instead of being taken over."""
+        """A private hostname route per name; stale agentlab routes go, another owner's route on a name stops setup."""
         path = f'/accounts/{self.account}/zerotrust/routes/hostname'
         try:
             routes = self.api.call('GET', path) or []
@@ -604,8 +561,7 @@ class Setup:
                 self.write(f'remove the route for {r["hostname"]}', 'DELETE', f'{path}/{r["id"]}')
 
     def drop_public_dns(self, tunnel):
-        """Private names must not resolve publicly: remove the DNS records agentlab made (its comment, pointing at its
-        tunnel). Records anyone else made stay."""
+        """Remove the public DNS records agentlab made (by comment, pointing at its tunnel); others stay."""
         zone_name = self.cfg['cloudflare']['zone']
         zones = (self.api.call('GET', f'/zones?name={zone_name}') or []) if zone_name else []
         if not zones:
@@ -618,8 +574,7 @@ class Setup:
                 self.write(f'remove the public DNS record {r["name"]}', 'DELETE', path)
 
     def remember(self, config_path, values):
-        """Write what setup found or made into cluster.toml: the gate reads the team and audience from there, and
-        later commands skip the lookups."""
+        """Write discovered values into cluster.toml (the gate reads team and audience from there)."""
         with open(config_path) as f:
             text = f.read()
         current, new = tomllib.loads(text), text
@@ -644,7 +599,7 @@ class Setup:
         except ApiError as e:
             if e.status not in (401, 403):
                 raise
-            return  # never had them: the token can't even list routes
+            return
         for r in routes:
             if r.get('comment') == self.name:
                 self.write(f'remove the private route for {r["hostname"]}', 'DELETE', f'{path}/{r["id"]}')
@@ -664,10 +619,7 @@ class Setup:
         return 'private' if (conf.get('warp-routing') or {}).get('enabled') else ''
 
     def preflight(self):
-        """Everything this run will need, checked read-only before it changes anything (dry runs too): a gap is
-        exit 2 with the exact fix, never a half-switched tunnel. Reads stand in for edits (they can't be proved
-        without editing) unless the token may read its own permissions; the change steps are ordered so that a
-        refused edit still leaves the old way in working."""
+        """Read-only check of everything the run needs, before any change (dry runs too); a gap is exit 2 with the fix."""
         gaps, cfg, account = [], self.cfg, self.account
         private = config.private_network(cfg)
         warp = private or cfg['auth']['cloudflare']['require_warp']
@@ -705,11 +657,8 @@ class Setup:
                 gaps.append(f'add "{PERMISSIONS["org"]}" to the token (for the client session setting)')
         return list(dict.fromkeys(gaps))
 
-    # ---------------------------------------------------------------- account settings agentlab turns on itself
     def prerequisites(self):
-        """What the organization needs before clients can use agentlab, turned on through the token only when it is
-        off or unset: the client session duration (never shortened or changed once set, and never "client
-        authentication for all applications") and, for private, Gateway's TCP and UDP proxy (never turned off)."""
+        """Turn on the account settings clients need, only when off or unset (never shorten the session or disable the proxy)."""
         private = config.private_network(self.cfg)
         if not (private or self.cfg['auth']['cloudflare']['require_warp']):
             return
@@ -745,8 +694,7 @@ class Setup:
                 )
 
     def enrollment(self, policy):
-        """Everyone agentlab's policy admits may enroll the Cloudflare One client: its policy is appended to the
-        account's device enrollment application, after every policy already there (kept, in their order)."""
+        """Append agentlab's policy to the account's device enrollment app, after the existing ones (kept in order)."""
         apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
         app = next((a for a in apps if a.get('type') == 'warp'), None)
         if app is None:
@@ -804,7 +752,6 @@ def refused(e, what):
 
 
 def permission_for(text):
-    """Which PERMISSIONS entry a refused call's path belongs to."""
     for fragment, key in (
         ('/zerotrust/routes', 'routes'),
         ('/cfd_tunnel', 'tunnels'),
@@ -819,8 +766,7 @@ def permission_for(text):
     return ''
 
 
-# The token's own permission groups, when it may read them, prove the edits read probes can't: name fragments that
-# mean "may change" each area (generous on purpose: an unrecognised name never blocks, only a missing area does).
+# Permission-group name fragments meaning "may change" each area; generous on purpose, so unknown names never block.
 EDIT_GROUPS = {
     'tunnels': ('tunnel', 'connector', 'cloudflared'),
     'dns': ('dns',),
@@ -852,8 +798,7 @@ def own_permission_groups(api, account):
 
 
 def missing_edit_permissions(api, account, keys):
-    """Areas the token may read but provably not change (from its own permission list); [] when that list is
-    unreadable, which the ordering of setup's steps makes safe."""
+    """Areas the token may read but provably not change; [] when its permission list is unreadable."""
     groups = own_permission_groups(api, account)
     if not groups:
         return []
@@ -887,8 +832,7 @@ def setup(cfg, plan, config_path, opener=None):
     except Needs as e:
         raise Needs(stuck_message(s, known_tunnel(s, tunneled), [str(e)])) from None
     tunnel = s.tunnel() if tunneled else ''
-    # Make before break: the new way in (routes or DNS, then the Access app) exists before the tunnel switches,
-    # and the old way's leftovers (public DNS, the pair hosts' Bypass app, or private routes) go last.
+    # Make before break: the new way in exists before the tunnel switches; the old way's leftovers go last.
     if tunneled:
         (s.hostname_routes if private else s.dns)(tunnel)
     cf = cfg['cloudflare']
@@ -896,7 +840,7 @@ def setup(cfg, plan, config_path, opener=None):
     https = config.private_https(cfg)
     if access:
         auth = cfg['auth']['cloudflare']
-        # HTTPS: the sign-in application and the gate's client exist before port 443 joins the people's app
+        # the sign-in app and the gate's client must exist before 443 joins the people's app
         auth['audience'] = s.access(sign_in=https) or auth['audience']
         if private:
             s.enrollment(s.people_policy())
@@ -929,8 +873,7 @@ def known_tunnel(s, tunneled):
 
 
 def stuck_message(s, tunnel, gaps):
-    """The preflight's gaps, and, when an earlier run left the tunnel switched without its way in finished, that
-    the agents are unreachable right now and what brings them back."""
+    """The preflight's gaps, plus a note when an earlier run left the tunnel switched without its way in."""
     msg = (
         'before Cloudflare can be set up: '
         + '; '.join(gaps)
@@ -952,9 +895,7 @@ def stuck_message(s, tunnel, gaps):
 
 
 def finish_https(cfg, plan, opener=None, wait=CERT_WAIT, sleep=time.sleep):
-    """After apply (the edge now listens on 443): once its certificate is issued and trusted, port 443 joins the
-    people's application and the gate starts redirecting plain HTTP. Waits a little for Let's Encrypt on the first
-    run; anything missing is a warning, and plain HTTP keeps working meanwhile."""
+    """After apply: once the edge's certificate is trusted, add 443 to the people's app and start redirecting HTTP."""
     if not config.private_https(cfg) or not configured(cfg) or plan.dry:
         return
     if not all(gate_secret(cfg, k) for k in ('client_id', 'client_secret')):
@@ -962,11 +903,11 @@ def finish_https(cfg, plan, opener=None, wait=CERT_WAIT, sleep=time.sleep):
         return
     s = Setup(cfg, api_for(cfg, opener), plan)
     if s.people_app() is None:
-        return  # `cloudflare setup` hasn't made it yet
+        return
     deadline = time.monotonic() + wait
     while not s.https_ready() and time.monotonic() < deadline:
         sleep(10)
-        del s._ready  # ask the edge again
+        del s._ready
     if not s.https_ready():
         why = edge_certificate(cfg['domain'])[1]
         say(
@@ -989,10 +930,7 @@ def sync_people(cfg, plan, opener=None):
 
 
 def login_methods(cfg, providers):
-    """The identity provider ids people may use. With [auth.cloudflare] login_method set: exactly that one, so
-    Access sends people straight there and doesn't offer the account's other methods (a one-time PIN meant for
-    other apps, say). With a single method in the account: that one, for the same straight-through sign-in.
-    Otherwise none: Access offers every method the account has."""
+    """Identity provider ids people may use: the pinned login_method, else the account's only one, else [] (all)."""
     wanted = cfg['cloudflare'].get('login_method') or ''
     if wanted:
         match = [i['id'] for i in providers if str(i.get('name', '')).strip().lower() == wanted.strip().lower()]
@@ -1004,7 +942,6 @@ def login_methods(cfg, providers):
 
 
 def idp_hosts(cfg, providers):
-    """Where people's browsers sign in, per identity provider type (a one-time PIN needs none)."""
     ids = login_methods(cfg, providers) or [p.get('id') for p in providers]
     hosts = []
     for p in providers:
@@ -1025,9 +962,7 @@ def idp_hosts(cfg, providers):
 
 
 def reauth_gaps(cfg, api, account, org):
-    """Client sessions expire (warp_auth_session_duration), and re-authenticating only works when the team domain and
-    the identity provider go through the client. A profile in Include mode sends only what it lists, so the expired
-    client asks to be connected first and can't be: [(profile, include path, its list, missing hosts)]."""
+    """[(profile, include path, its list, missing hosts)]: Include-mode profiles lacking hosts needed to re-authenticate."""
     if not (config.private_network(cfg) or cfg['auth']['cloudflare']['require_warp']):
         return []
     providers = api.call('GET', f'/accounts/{account}/access/identity_providers') or []
@@ -1041,7 +976,7 @@ def reauth_gaps(cfg, api, account, org):
     gaps = []
     for name, path, profile in profiles:
         have = profile.get('include')
-        if not have or profile.get('exclude'):  # Exclude mode already sends everything else through the client
+        if not have or profile.get('exclude'):
             continue
         missing = [h for h in want if not any(e.get('host') == h for e in have)]
         if missing:
@@ -1049,21 +984,19 @@ def reauth_gaps(cfg, api, account, org):
     return gaps
 
 
-# What each part of `cloudflare setup` needs, named as the token page in the dashboard shows it.
+# Token permissions per area, named as the dashboard's token page shows them.
 PERMISSIONS = {
     'tunnels': 'Account · Cloudflare One Connector: cloudflared → Edit',
     'access': 'Account · Access: Apps and Policies → Edit (newer dashboards: Access: Apps → Edit, Access: Policies → Edit)',
     'idps': 'Account · Access: Identity Providers → Read',
     'org': 'Account · Access: Organizations → Edit (sets the client session duration only while it has none)',
     'dns': 'Zone · DNS → Edit on the zone',
-    # network = "private" (and require_warp): tunnel hostname routes, and the client settings doctor checks
     'routes': 'Account · Cloudflare One Networks → Edit (older dashboards: Cloudflare Tunnel → Edit)',
     'devices': 'Account · Zero Trust → Edit (turns on the Gateway proxy when it is off)',
 }
 
 
 def needed_permissions(cfg):
-    """What this config needs from the token, as PERMISSIONS keys."""
     keys = ['tunnels', 'dns', 'access', 'idps', 'org']
     if config.private_network(cfg):
         keys += ['routes', 'devices']
@@ -1084,8 +1017,7 @@ def verify_token(api, account):
 
 
 def probe_token(cfg, opener=None):
-    """Read-only checks of what the token may do, for doctor: [(capability, ok)]. Each probe is a list call, so it
-    proves the token reaches that area; it can't prove Edit without changing something."""
+    """Read-only probes of what the token may do, for doctor: [(capability, ok)]; can't prove Edit."""
     api, account = api_for(cfg, opener), cfg['cloudflare']['account_id']
     if not verify_token(api, account):
         return None
@@ -1096,7 +1028,7 @@ def probe_token(cfg, opener=None):
     if cfg['auth']['mode'] == 'cloudflare-access':
         probes.append(('access', lambda: api.call('GET', f'/accounts/{account}/access/apps')))
         probes.append(('idps', lambda: api.call('GET', f'/accounts/{account}/access/identity_providers')))
-        if not cfg['auth']['cloudflare']['team']:  # only needed to find the team name
+        if not cfg['auth']['cloudflare']['team']:
             probes.append(('org', lambda: api.call('GET', f'/accounts/{account}/access/organizations')))
         if config.private_network(cfg):
             probes.append(('routes', lambda: api.call('GET', f'/accounts/{account}/zerotrust/routes/hostname')))
@@ -1113,8 +1045,7 @@ def probe_token(cfg, opener=None):
 
 
 def client_only_checks(cfg, opener=None):
-    """Read-only facts doctor shows for network = "private" or require_warp: [(id, ok, message, fix, severity)].
-    Each is what `cloudflare setup` made or what the organization must have on for it to work."""
+    """Read-only doctor facts for network = "private" or require_warp: [(id, ok, message, fix, severity)]."""
     api, account = api_for(cfg, opener), cfg['cloudflare']['account_id']
     s = Setup(cfg, api, Plan(True))
     out, private = [], config.private_network(cfg)
@@ -1270,8 +1201,7 @@ def client_only_checks(cfg, opener=None):
 
 
 def https_checks(cfg, apps, app, s, org_sign_in):
-    """Private HTTPS, read-only: the edge's certificate, the gate's sign-in application and secrets, port 443 on the
-    people's application, and whether plain HTTP is redirected yet."""
+    """Read-only private HTTPS checks: edge certificate, gate sign-in app and secrets, 443 on the people's app, redirect."""
     out = []
     for host in signed_in_hosts(cfg):
         days, why = edge_certificate(host)
@@ -1341,7 +1271,7 @@ def https_checks(cfg, apps, app, s, org_sign_in):
             )
         )
         return out
-    for h in signed_in_hosts(cfg):  # the T3 app names are HTTPS only
+    for h in signed_in_hosts(cfg):
         ok, why = edge_redirect(h)
         out.append(
             (
@@ -1356,9 +1286,7 @@ def https_checks(cfg, apps, app, s, org_sign_in):
 
 
 def enrollment_exposure(cfg, api, account, apps, ours):
-    """Private mode lets everyone agentlab's policy admits enroll the Cloudflare One client. Read-only warnings about
-    what that could open elsewhere in the account: other apps that admit a whole allow_domains domain, and private
-    IP routes on other tunnels that no Access application covers. agentlab never changes any of them."""
+    """Read-only warnings about what open client enrollment could expose elsewhere in the account."""
     out = []
     domains = {d.lower() for d in cfg['auth']['allow_domains']}
     if domains:
@@ -1369,7 +1297,7 @@ def enrollment_exposure(cfg, api, account, apps, ours):
         open_apps = []
         for app in apps:
             if str(app.get('name', '')).startswith(ours) or app.get('type') == 'warp':
-                continue  # agentlab's own, and device enrollment (which admits them on purpose)
+                continue
             rules = [
                 r
                 for ref in app.get('policies') or []

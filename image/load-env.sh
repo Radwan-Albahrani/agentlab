@@ -1,8 +1,5 @@
 # shellcheck shell=bash disable=SC2123  # setting PATH is this file's job
-# Sourced by every bash (BASH_ENV, /etc/profile.d/zz-agent.sh, bash.bashrc, and last in ~/.profile): Homebrew on PATH,
-# the throttle shims first of all (heavy jobs queue for memory and disk: /usr/local/lib/agent-throttle; a tool folder
-# ahead of them, like ~/.local/bin from ~/.profile, would let builds bypass it), then the profile's env vars from the
-# Accounts page. Plain shell only: this runs before every command.
+# Sourced by every bash (keep it plain shell): Homebrew, throttle shims first on PATH, then the owner's env vars.
 case ":${PATH}:" in
   *:/home/linuxbrew/.linuxbrew/bin:*) ;;
   *) PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}" ;;

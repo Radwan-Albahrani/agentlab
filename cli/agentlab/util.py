@@ -1,6 +1,4 @@
-"""Small helpers every command shares: output for people or (--json) for agents, running commands (or only
-printing them on a dry run), sizes, atomic writes. agentctl is driven by AI agents over SSH as much as by people, so
-nothing prompts: exit 0 = done, 1 = failed, 2 = needs --yes or a manual step (the output says which)."""
+"""Shared helpers: output (--json for agents), running commands, dry runs, atomic writes; nothing prompts."""
 
 import json
 import os
@@ -52,8 +50,7 @@ def warn(msg):
 
 
 def run(cmd, *, check=True, capture=True, timeout=600, input_text=None, env=None):
-    """(exit code, output) of an argument list; raises Failed on a non-zero exit when check is set. A program that
-    isn't installed is exit 127, like a shell's, so checks report it instead of crashing."""
+    """(exit code, output); raises Failed on non-zero when check is set; a missing program is exit 127."""
     try:
         p = subprocess.run(
             cmd, capture_output=capture, text=True, timeout=timeout, check=False, input=input_text, env=env

@@ -1,5 +1,3 @@
-"""The host checks install runs before changing anything, and doctor shows: an unsupported host is named up front."""
-
 import os
 import sys
 import tomllib
@@ -43,8 +41,6 @@ def cfg(**changes):
 
 
 class Apt:
-    """apt-cache policy answers: a package has a candidate unless it is listed as missing."""
-
     def __init__(self, missing=()):
         self.missing = set(missing)
 
@@ -77,7 +73,6 @@ class Host(unittest.TestCase):
         self.assertEqual(self.problems(), [])
 
     def test_java_is_the_newest_lts_the_host_has(self):
-        # Debian 13 has no openjdk-17 (issue #16); Ubuntu 24.04 has 17 and 21
         self.assertEqual(preflight.jre(Apt(missing={'openjdk-17-jre-headless'})), 'openjdk-21-jre-headless')
         self.assertEqual(preflight.jre(Apt(missing={'openjdk-21-jre-headless'})), 'openjdk-25-jre-headless')
         self.assertEqual(

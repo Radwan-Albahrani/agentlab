@@ -1,6 +1,4 @@
-"""agentlab's marked block in /etc/hosts. An earlier version pointed the private names at the edge here for a host
-cloudflared; the tunnel now runs as a container that resolves them itself, so apply only removes the block. Nothing
-outside the marked block is ever touched."""
+"""agentlab's marked block in /etc/hosts; apply only removes it now, nothing outside it is touched."""
 
 from .util import write_if_changed
 

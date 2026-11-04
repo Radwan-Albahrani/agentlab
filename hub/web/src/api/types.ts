@@ -1,4 +1,4 @@
-// The JSON the hub's API returns (hub/screens.py and routes.py). Times are epoch seconds. `profile` is an agent id.
+// Hub API shapes (hub/screens.py, routes.py). Times are epoch seconds; `profile` is an agent id.
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'info' | 'idle' | '';
 
@@ -26,7 +26,6 @@ export interface Event {
 export interface Nav {
   attention: number;
   agents: { name: string; up: boolean; companions: { name: string; display: string; live: boolean; waiting: number }[] }[];
-  /** Colours chosen in cluster.toml, by agent id; the rest are picked from the id. */
   colors?: Record<string, string>;
   allAgents: boolean;
   system: { key: string; path: string; label: string; count?: number; note?: string }[];
@@ -70,7 +69,7 @@ export interface Overview {
     agents: { online: number; total: number; link: boolean };
     companions?: { live: number; total: number; waiting: number; link: string };
     disk?: Pool | null;
-    diskLabel?: string; // 'Server disk' (admins, shared pool) or 'Your disk' (a person's own)
+    diskLabel?: string;
     memory?: { usedMB: number; poolMB: number };
   };
   needs?: NeedItem[];
@@ -97,11 +96,9 @@ export interface AgentCard {
   resources?: { usedMB: number; limitMB: number | null; running: string[]; waiting: string[]; paused: number };
 }
 
-/** A one-time T3 pairing link (POST /api/agents/<id>/pair), or why there can't be one. */
 export type PairLink =
   { available: true; kind: 'browser' | 'app'; url: string; expires: string; id: string } | { available: false; reason: string };
 
-/** A browser or T3 app signed in to an agent's chat. */
 export interface Device {
   id: string;
   label: string;
@@ -115,7 +112,7 @@ export interface Device {
 
 export interface Onboarding {
   done: boolean;
-  ready: boolean; // at least one AI account is signed in, so it can be finished
+  ready: boolean; // at least one AI account is signed in
   steps: { id: 'claude' | 'codex' | 'connectors' | 'github'; done: boolean; optional: boolean }[];
 }
 
@@ -129,9 +126,9 @@ export interface AgentPage {
   up: boolean;
   companions: { name: string; display: string; state: CompanionState; tasks: number; working: number; waiting: number }[];
   containers?: Stack[];
-  disk?: Pool | null; // the owner's own disk (per-person storage)
+  disk?: Pool | null;
   owner: string;
-  mine: boolean; // the viewer owns it (else an admin is looking)
+  mine: boolean; // false when an admin views someone else's
 }
 
 export interface Flow {
@@ -174,7 +171,7 @@ export interface AccountsPage {
   keys: { label: string; value: string }[];
   ai: Flow[];
   github: Flow;
-  tools?: Flow[]; // developer CLIs (Expo); absent on agents not yet updated
+  tools?: Flow[]; // absent on older agents
   connectors: Connector[];
   devices: Device[];
   onboarding: Onboarding;
@@ -198,7 +195,7 @@ export interface Task {
   endedAt: number | null;
   slack: string;
   t3: string;
-  poll: string | null; // the poll this task posted, if any
+  poll: string | null;
 }
 
 export interface Poll {
@@ -226,8 +223,8 @@ export interface SettingField {
 
 export interface Companion {
   name: string;
-  display: string; // how it calls itself (cluster.json display_name)
-  problem: string; // the last error its runner reported
+  display: string;
+  problem: string;
   profile: string;
   state: CompanionState;
   since?: number;
@@ -238,14 +235,14 @@ export interface Companion {
   sentThisWeek: Event[];
   delivered?: Event[];
   settings?: SettingField[];
-  channels?: Channel[]; // present when the companion takes asks
+  channels?: Channel[]; // only when the companion takes asks
   polls?: Poll[];
-  pulls?: Pulls; // present when the companion has a GitHub App slot
+  pulls?: Pulls; // only when the companion has a GitHub App slot
 }
 
 export interface Pulls {
   github: { ready: boolean; bot: string; accounts: string[]; at: number; error: string };
-  me: string; // the owner's GitHub username: their PRs are listed first
+  me: string; // the owner's GitHub username
   items: Pull[];
 }
 
@@ -267,7 +264,7 @@ export interface Pull {
   updated: string;
   head: string;
   ci: Ci;
-  review: PullReview | null; // the latest one
+  review: PullReview | null;
 }
 
 export interface PullReview {
@@ -279,11 +276,10 @@ export interface PullReview {
   url?: string;
   t3?: string;
   slack?: string;
-  // what the latest finished review found; open = earlier findings that still stand
+  // open = earlier findings that still stand
   counts?: { findings: number; blocking: number; open: number; qa: string } | null;
 }
 
-/** A companion's own secrets: what each is and whether it is set; values only on request. */
 export interface CompanionSecrets {
   items: { file: string; name: string; label: string; about: string; how: string; set: boolean; modified: number | null }[];
 }
@@ -291,7 +287,7 @@ export interface CompanionSecrets {
 export interface Channel {
   id: string;
   name: string;
-  member: boolean; // the companion is in it, so it can post there
+  member: boolean; // the companion can post there
 }
 
 export interface Services {
@@ -340,13 +336,13 @@ export interface DiskScan {
   profiles: ProfileUsage[];
 }
 
-/** A person's own disk (per-person storage) and their agents on it; no numbers while it is not mounted. */
+/** No numbers while the disk is not mounted. */
 export type PersonDisk = { email: string; agents: string[] } & Partial<Pool>;
 
 export interface Storage {
   reported: boolean;
   mode: 'shared' | 'per-person';
-  manage: boolean; // may rescan and clean up (admins)
+  manage: boolean; // may rescan and clean up
   pool?: Pool | null;
   people: PersonDisk[];
   events: Event[];
@@ -363,11 +359,10 @@ export interface Secret {
   versions: number;
   effect: string;
   kinds: SecretKind[];
-  /** '' for the cluster's own secrets; the label of [hub] extra_secrets for that folder's. */
+  /** '' for cluster secrets, else the extra folder's label. */
   group: string;
 }
 
-/** What changing a secret does (the Secrets screen's filter). */
 export type SecretKind = 'restart' | 'copy' | 'read' | 'unmapped';
 
 export interface Secrets {
@@ -376,7 +371,7 @@ export interface Secrets {
 }
 
 export interface Notifications {
-  configured: boolean; // a Bark server is set (BARK_URL); pushes are off without one
+  configured: boolean; // BARK_URL is set
   barkUp: boolean;
   barkPublic: string;
   agents: number;

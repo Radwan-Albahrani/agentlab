@@ -1,4 +1,4 @@
-"""Small JSON shapes the web app understands: buttons described by the server, and times as epoch seconds."""
+"""JSON shapes the web app understands: server-described buttons and epoch-second times."""
 
 from datetime import datetime
 
@@ -20,7 +20,7 @@ def post(label, url, icon=None, body=None, confirm=None, primary=False):
 
 
 def epoch(value):
-    """Epoch seconds from a number or an ISO time (as companions publish them); 0 when unreadable."""
+    """Epoch seconds from a number or an ISO time; 0 when unreadable."""
     if isinstance(value, int | float):
         return float(value)
     try:

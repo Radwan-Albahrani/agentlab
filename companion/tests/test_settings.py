@@ -1,5 +1,3 @@
-"""Settings the hub changes while the companion runs."""
-
 from bot import config
 from conftest import set_settings
 

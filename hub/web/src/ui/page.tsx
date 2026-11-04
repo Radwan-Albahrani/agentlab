@@ -160,7 +160,6 @@ export function Section({
   );
 }
 
-/** The coloured header of an agent's or companion's own page. */
 export function Hero({
   profile,
   avatar,
@@ -201,7 +200,7 @@ export function Crumb({ profile, here }: { profile: string; here: string }) {
 
 type StatTone = 'ok' | 'warn' | 'bad' | 'info' | 'idle';
 
-/** A key number. `of` adds a quieter "/ total" or unit after it. */
+/** `of` adds a quieter "/ total" or unit after the number. */
 export function Stat({
   label,
   value,
@@ -250,7 +249,6 @@ export function Empty({ title, text, icon = 'check' }: { title: string; text?: s
   );
 }
 
-/** An empty state on its own card. */
 export const EmptyCard = (props: { title: string; text?: string; icon?: string }) => (
   <Card>
     <Empty {...props} />

@@ -1,5 +1,4 @@
-"""Start the gate. Refuses auth.mode "none" unless GATE_ALLOW_NONE=1, so a test config can't silently open a real
-server to everyone."""
+"""Start the gate; auth.mode "none" needs GATE_ALLOW_NONE=1 so a test config can't open a real server."""
 
 import logging
 import os
@@ -24,7 +23,7 @@ def main():
     elif config.mode == 'cloudflare-access' and (not config.team or not config.audience):
         log.warning('auth.cloudflare.team / audience missing: every request will be denied until cluster.json has them')
     folder = os.environ.get('GATE_SECRETS', '')
-    signin = SignIn(folder) if folder else None  # private HTTPS: the OIDC client and session key live there
+    signin = SignIn(folder) if folder else None
     if config.https and not (signin and signin.ready()):
         log.warning('HTTPS sign-in has no client yet: HTTPS requests are refused until agentctl cloudflare setup ran')
     port = int(os.environ.get('GATE_PORT', '8080'))
