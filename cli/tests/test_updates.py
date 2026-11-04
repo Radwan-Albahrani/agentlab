@@ -277,6 +277,16 @@ class Waiting(Stack):
         self.assertEqual((updated, deferred, slept), (['sara', 'omar'], [], []))
 
 
+class Healthy(unittest.TestCase):
+    def test_the_container_from_before_the_deploy_does_not_count(self):
+        ids = iter(['old', 'old', 'new'])
+        with (
+            mock.patch('agentlab.update.agent_container', lambda cfg, agent: next(ids)),
+            mock.patch('agentlab.update.run', return_value=(0, 'healthy\n')),
+        ):
+            self.assertEqual(update.wait_healthy({}, {}, sleep=lambda s: None, replaced='old'), 'new')
+
+
 class OncePerRun(Waiting):
     def test_a_stack_apply_deployed_is_not_deployed_again(self):
         # the home lab saw two concurrent Coolify deploys per agent: apply's, then the wait loop's while the first was

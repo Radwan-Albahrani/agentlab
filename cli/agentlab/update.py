@@ -98,13 +98,16 @@ def agent_container(cfg, agent):
     return ids[0] if ids else ''
 
 
-def wait_healthy(cfg, agent, timeout_s=900, sleep=time.sleep):
-    """Until the agent's container reports healthy (T3 answers). -> container id, or '' on timeout."""
+def wait_healthy(cfg, agent, timeout_s=900, sleep=time.sleep, replaced=''):
+    """Until the agent's container reports healthy (T3 answers). -> container id, or '' on timeout. `replaced`: the
+    container from before a deploy, which doesn't count: Coolify deploys in the background, and the old one answering
+    healthy once made resume look for interrupted chats before the restart had even happened."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         cid = agent_container(cfg, agent)
         if (
             cid
+            and cid != replaced
             and run(['docker', 'inspect', '-f', '{{.State.Health.Status}}', cid], check=False)[1].strip() == 'healthy'
         ):
             return cid
@@ -127,8 +130,9 @@ def send_continue(cid, thread):
 def resume(cfg, agent, kind, key, plan, sleep=time.sleep):
     """Restart a busy agent anyway, then tell each chat whose turn it cut off to carry on. -> threads told"""
     running = inflight(agent)
+    before = agent_container(cfg, agent)
     deploy.deploy(cfg, f'agentlab-agent-{agent["id"]}', kind, key, plan, force=True)
-    cid = wait_healthy(cfg, agent, sleep=sleep)
+    cid = wait_healthy(cfg, agent, sleep=sleep, replaced=before)
     if not cid:
         warn(f'{agent["id"]} did not come back healthy in time; its interrupted chats were not resumed')
         return []
