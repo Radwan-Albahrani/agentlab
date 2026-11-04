@@ -4,7 +4,8 @@ or keep. Inside each running agent:
   Docker leftovers   build cache, images, stopped containers unused for 3+ days, unused volumes
   worktrees          T3 settles a chat but keeps its worktree (several GB with node_modules), and scheduled chats add
                      some every day. One goes when every chat on it has been settled, archived or deleted for 12 h
-                     (one no chat points at: 2 days old), it has no uncommitted changes and no commit that is on no
+                     (one no chat points at: 2 days old). A chat T3 never settles (delegate_task's child chats end
+                     without it) counts from its last finished turn, or they would keep their worktrees for good; it has no uncommitted changes and no commit that is on no
                      remote. `git worktree remove` keeps the branch and refuses local changes itself.
   package caches     only when the storage the agent lives on (the pool image, its owner's image, or the host's
                      disk) is 75 % full or more: npm and bun caches, unreferenced pnpm packages, old Homebrew downloads. They refill on the next install, which only costs download time.
@@ -69,6 +70,9 @@ def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
                 'select distinct thread_id from orchestration_v2_projection_runs where completed_at is null'
             )
         }
+        last_turn = dict(
+            con.execute('select thread_id, max(completed_at) from orchestration_v2_projection_runs group by thread_id')
+        )
         threads = con.execute('select thread_id, payload_json, deleted_at from orchestration_v2_projection_threads')
         done_since = {}  # worktree -> when its last chat finished; None while one is still live
         for tid, payload, deleted in threads:
@@ -81,6 +85,7 @@ def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
                 _epoch(deleted or d.get('deletedAt'))
                 or _epoch(d.get('archivedAt'))
                 or (settled if settled > unsettled else 0)
+                or (_epoch(last_turn.get(tid) or d.get('updatedAt')) if not settled and not unsettled else 0)
             )
             if tid in running or not ended:
                 done_since[wt] = None

@@ -263,6 +263,19 @@ class Waiting(Stack):
         self.assertEqual(resumed, {'omar': ['t1', 't2']})
         self.assertEqual(told, [('c9', 't1'), ('c9', 't2')])
 
+    def test_resume_now_does_not_wait(self):  # agentctl update --resume
+        runs_db(self.sara, [])
+        runs_db(self.omar, [('r2', 't2', 'running')])
+        slept = []
+        with (
+            mock.patch('agentlab.update.wait_healthy', return_value='c9'),
+            mock.patch('agentlab.update.send_continue', return_value=True),
+        ):
+            updated, deferred, _ = update.wait_for_agents(
+                self.cfg, util.Plan(False), 0, 'resume', sleep=slept.append, clock=self.clock
+            )
+        self.assertEqual((updated, deferred, slept), (['sara', 'omar'], [], []))
+
 
 class OncePerRun(Waiting):
     def test_a_stack_apply_deployed_is_not_deployed_again(self):

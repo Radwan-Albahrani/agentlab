@@ -8,6 +8,7 @@
 4. Busy agents are waited for: checked every few minutes for up to [updates] wait_hours, each updated the moment it is
    idle (an idle agent never waits for a busy one). At the end of the window, on_busy decides: "defer" leaves it for
    the next run, "resume" restarts it anyway and then tells each T3 chat whose turn the restart cut off to carry on.
+   `--resume` skips the wait: busy agents are resumed at once (when something waiting on the update can't wait).
 5. (inside apply) Each companion checkout gets template changes merged in when it's clean and they don't conflict
    (template.py).
 
@@ -174,7 +175,8 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
         sleep(CHECK_EVERY_S)
     for a in pending:
         if on_busy == 'resume':
-            say(f'  {a["id"]} still busy after {wait_hours:g} h: restarting it and resuming its chats')
+            waited = f'still busy after {wait_hours:g} h' if wait_hours else 'busy'
+            say(f'  {a["id"]} {waited}: restarting it and resuming its chats')
             kind, key = stacks[f'agentlab-agent-{a["id"]}']
             resumed[a['id']] = resume(cfg, a, kind, key, plan, sleep=sleep)
             updated.append(a['id'])
@@ -187,7 +189,7 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
 
 
 # ---------------------------------------------------------------- the command
-def update(cfg, config_path, scheduled=False, pulled=None, argv=()):
+def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=False):
     need_root('agentctl update')
     u = cfg['updates']
     try:
@@ -205,7 +207,8 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=()):
         else:
             images.pull(cfg, plan)
         applied = apply.apply(cfg, config_path)
-        updated, deferred, resumed = wait_for_agents(cfg, plan, u['wait_hours'], u['on_busy'])
+        wait_hours, on_busy = (0, 'resume') if resume_now else (u['wait_hours'], u['on_busy'])
+        updated, deferred, resumed = wait_for_agents(cfg, plan, wait_hours, on_busy)
     except Failed as e:
         record(cfg, scheduled=scheduled, result='failed', error=str(e), commit=_safe_head())
         raise

@@ -455,20 +455,35 @@ class Janitor(unittest.TestCase):
             now = time.time()
             old = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 20 * 3600))
             fresh = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))
-            for tid, wt, settled in (('t1', 'done', old), ('t2', 'recent', fresh), ('t3', 'live', None)):
+            threads = (
+                ('t1', 'done', old),
+                ('t2', 'recent', fresh),
+                ('t3', 'live', None),
+                ('t4', 'delegated', None),  # delegate_task's child chats are never settled: their last turn counts
+                ('t5', 'delegated-now', None),
+            )
+            for tid, wt, settled in threads:
                 payload = {'worktreePath': f'/workspace/worktrees/app/{wt}', 'settledAt': settled}
                 db.execute(
                     'insert into orchestration_v2_projection_threads values (?, ?, null)', (tid, json.dumps(payload))
                 )
-            db.execute("insert into orchestration_v2_projection_runs values ('t3', null)")
+            db.executemany(
+                'insert into orchestration_v2_projection_runs values (?, ?)',
+                [('t3', None), ('t4', old), ('t4', old), ('t5', old), ('t5', fresh)],
+            )
             db.commit()
             db.close()
-            for wt in ('done', 'recent', 'live', 'orphan'):
+            for wt in ('done', 'recent', 'live', 'orphan', 'delegated', 'delegated-now'):
                 os.makedirs(f'{root}/workspace/worktrees/app/{wt}')
                 open(f'{root}/workspace/worktrees/app/{wt}/.git', 'w').close()
             os.utime(f'{root}/workspace/worktrees/app/orphan', (now - 5 * 86400, now - 5 * 86400))
             self.assertEqual(
-                janitor.idle_worktrees(root, now), ['/workspace/worktrees/app/done', '/workspace/worktrees/app/orphan']
+                janitor.idle_worktrees(root, now),
+                [
+                    '/workspace/worktrees/app/delegated',
+                    '/workspace/worktrees/app/done',
+                    '/workspace/worktrees/app/orphan',
+                ],
             )
 
 

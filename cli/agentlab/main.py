@@ -122,6 +122,9 @@ def parser():
     up = sub.add_parser('update', help='pull agentlab, rebuild the images, apply; busy agents are waited for')
     up.add_argument('--scheduled', action='store_true', help='run by agentlab-update.timer (recorded as such)')
     up.add_argument('--pulled', action='store_true', help=argparse.SUPPRESS)  # the re-run after a pull
+    up.add_argument(
+        '--resume', action='store_true', help="don't wait for busy agents: restart them now and resume their chats"
+    )
     sub.add_parser('status', help='agents, health, memory and disk at a glance')
     cf_ = sub.add_parser('config', help='print the resolved config, or `config edit` to change it')
     cf_.add_argument('action', nargs='?', choices=['show', 'edit'], default='show')
@@ -192,7 +195,9 @@ def dispatch(args):
         return {}
     if args.cmd == 'update':
         argv = [a for a in sys.argv[1:] if a != '--pulled']
-        return update.update(cfg, args.config, args.scheduled, pulled=True if args.pulled else None, argv=argv)
+        return update.update(
+            cfg, args.config, args.scheduled, pulled=True if args.pulled else None, argv=argv, resume_now=args.resume
+        )
     if args.cmd == 'status':
         return status.show(cfg)
     if args.cmd == 'config':
