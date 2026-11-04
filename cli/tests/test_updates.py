@@ -261,6 +261,32 @@ class Waiting(Stack):
         self.assertEqual((updated, deferred, slept), (['sara', 'omar'], [], []))
 
 
+class HostServices(unittest.TestCase):
+    def runs(self, changed, active=('agentlab-watch.service',)):
+        calls = []
+
+        def fake(cmd, **_):
+            calls.append(cmd)
+            if cmd[:2] == ['git', '-C']:
+                return (1 if changed else 0), ''
+            if cmd[1] == 'is-active':
+                return (0 if cmd[-1] in active else 3), ''
+            return 0, ''
+
+        with mock.patch('agentlab.update.run', fake), mock.patch('agentlab.update.say'):
+            done = update.restart_host_services('abc')
+        return done, [c for c in calls if c[1] == 'restart']
+
+    def test_a_running_service_restarts_when_its_code_changed(self):
+        self.assertEqual(
+            self.runs(changed=True),
+            (['agentlab-watch.service'], [['systemctl', 'restart', 'agentlab-watch.service']]),
+        )
+
+    def test_nothing_restarts_when_host_is_unchanged(self):
+        self.assertEqual(self.runs(changed=False), ([], []))
+
+
 class OncePerRun(Waiting):
     def test_a_stack_apply_deployed_is_not_deployed_again(self):
         # the home lab saw two concurrent Coolify deploys per agent: apply's, then the wait loop's while the first was
