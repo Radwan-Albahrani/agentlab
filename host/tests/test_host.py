@@ -490,6 +490,65 @@ class Janitor(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(shutil.which('git'), 'needs git')
+class WorktreeNotice(unittest.TestCase):
+    """Worktrees with unsaved work get a notice period, then go with their state kept as a ref."""
+
+    def git(self, *args, cwd=None):
+        env = {
+            **os.environ,
+            'GIT_AUTHOR_NAME': 'a',
+            'GIT_AUTHOR_EMAIL': 'a@x',
+            'GIT_COMMITTER_NAME': 'a',
+            'GIT_COMMITTER_EMAIL': 'a@x',
+            'GIT_AUTHOR_DATE': self.old_date,
+            'GIT_COMMITTER_DATE': self.old_date,
+        }
+        return subprocess.run(['git', *args], cwd=cwd or self.repo, env=env, check=True, capture_output=True, text=True)
+
+    def test_unsaved_work_is_kept_until_the_notice_ends_then_saved_and_removed(self):
+        tmp = tempfile.mkdtemp(dir=TMP)
+        old = time.time() - 10 * 86400
+        self.old_date = f'{int(old)} +0000'
+        self.repo = f'{tmp}/repo'
+        subprocess.run(['git', 'init', '-q', '--bare', f'{tmp}/origin.git'], check=True)
+        subprocess.run(['git', 'clone', '-q', f'{tmp}/origin.git', self.repo], check=True, capture_output=True)
+        self.git('commit', '-q', '--allow-empty', '-m', 'base')
+        self.git('push', '-q', 'origin', 'HEAD')
+        trees = {}
+        for name in ('clean', 'stale', 'fresh'):
+            trees[name] = f'{tmp}/wt/{name}'
+            self.git('worktree', 'add', '-q', '-b', name, trees[name])
+        for name, when in (('stale', old), ('fresh', time.time())):
+            path = f'{trees[name]}/notes.txt'
+            with open(path, 'w') as f:
+                f.write(name)
+            os.utime(path, (when, when))
+        out = subprocess.run(
+            ['bash', '-c', janitor.REMOVE_WORKTREES],
+            input=''.join(f'{t}\n' for t in trees.values()),
+            env={
+                **os.environ,
+                'NOTICE_DAYS': '7',
+                'DRY': '',
+                'GIT_AUTHOR_NAME': 'a',
+                'GIT_AUTHOR_EMAIL': 'a@x',
+                'GIT_COMMITTER_NAME': 'a',
+                'GIT_COMMITTER_EMAIL': 'a@x',
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertFalse(os.path.exists(trees['clean']))
+        self.assertFalse(os.path.exists(trees['stale']))
+        self.assertTrue(os.path.exists(trees['fresh']))
+        self.assertIn('fresh (1 uncommitted; removed ', out)
+        ref = 'refs/agentlab/removed/' + trees['stale'].replace('/', '-')
+        self.assertIn(f'saved as {ref}', out)
+        self.assertEqual(self.git('show', f'{ref}:notes.txt').stdout, 'stale')  # the untracked file survives too
+
+
 class PickPackage(unittest.TestCase):
     """pick_package under the install steps' pipefail, with an apt-cache that keeps writing after the Candidate line
     (as the real one does): it used to fail when grep -q stopped reading first (#17)."""

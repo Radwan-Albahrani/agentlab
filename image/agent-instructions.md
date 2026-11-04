@@ -60,6 +60,11 @@ and yours to change. Use the `companion` skill for how (test, commit, restart, l
 - Other services (Linear, Sentry, Notion, ...) are available as MCP tools once your owner
   connects them on the Accounts page. If a tool you need is missing, tell them which connector to add.
 
+### Worktrees
+- A finished chat's worktree is removed after a while. One with uncommitted changes or unpushed commits is kept for 7
+  days after the last work in it, then removed too; its state is saved first as `refs/agentlab/removed/<name>` in
+  the repository (`git worktree add <path> <ref>` brings it back). Push or commit what you want to keep.
+
 ### Be careful with
 - Pushing to protected branches, force-pushing, merging, closing issues/PRs, and anything that
   messages other people (Slack, email, comments): do these only when the task clearly asks for it.
