@@ -88,19 +88,8 @@ def tagged_in_dm(ev):
     if bare_tag(ev.get('text')):
         owner_tagged(ev)
         return
-    ch, ts, thr = ev['channel'], ev['ts'], ev.get('thread_ts')
-    try:
-        if thr:
-            msgs = slack.USER.conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=60)
-            msgs = msgs['messages']
-        else:
-            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
-            msgs.reverse()
-        c = slack.USER.conversations_info(channel=ch)['channel']
-        who = slack.name(c['user']) if c.get('user') else c.get('name') or 'a group'
-    except Exception as e:
-        log('tagged DM unreadable:', e)
-        msgs, who = [], 'someone'
+    msgs, c = _conversation(ev)
+    who = slack.name(c['user']) if c.get('user') else c.get('name') or ('a group' if c else 'someone')
     ask = slack.readable(without_mention(ev.get('text'))).strip()
     dm = slack.dm_owner()
     head = slack.post(
@@ -111,8 +100,49 @@ def tagged_in_dm(ev):
         note='Working on it here. Reply in this thread to steer it.',
     )
     if head:
-        log('tag with instructions in a DM', ch, '-> task')
+        log('tag with instructions in a DM', ev['channel'], '-> task')
         tasks.start(dm, head, head, ev.get('text', ''), elsewhere=(f'their Slack DM with {who}', msgs))
+
+
+def _conversation(ev):
+    """(messages oldest first, conversation info) up to the tag, read with the owner's token."""
+    ch, ts, thr = ev['channel'], ev['ts'], ev.get('thread_ts')
+    try:
+        if thr:
+            msgs = slack.USER.conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=60)
+            msgs = msgs['messages']
+        else:
+            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
+            msgs.reverse()
+        return msgs, slack.USER.conversations_info(channel=ch)['channel']
+    except Exception as e:
+        log('tagged conversation unreadable:', e)
+        return [], {}
+
+
+def guest_tagged(ev):
+    """Someone with access tagged @companion where it can't read or post (their DM with the owner, a channel it
+    isn't in): the task runs in their DM with the companion."""
+    user = ev['user']
+    msgs, c = _conversation(ev)
+    if c.get('is_im'):
+        where = f'DM with {slack.name(OWNER)}'
+    elif c.get('is_mpim') or not c:
+        where = 'group DM'
+    else:
+        where = f'#{c.get("name")}'
+    ask = slack.readable(without_mention(ev.get('text'))).strip()
+    dm = slack.app.client.conversations_open(users=user)['channel']['id']
+    head = slack.post(
+        dm,
+        None,
+        f'From your {where}: {first_sentence(ask, 120)}',
+        md=f':inbox_tray: **From your {where}**\n' + quote(ask),
+        note='Working on it here. Reply in this thread to steer it.',
+    )
+    if head:
+        log('guest tag where the bot is not', ev['channel'], '->', dm)
+        tasks.start(dm, head, head, ev.get('text', ''), (f"{slack.name(user)}'s Slack {where}", msgs), user)
 
 
 def owner_tagged(ev):

@@ -118,3 +118,25 @@ def test_someone_given_access_can_dm_it(monkeypatch, started):
     monkeypatch.setattr(requests, 'own_dm', lambda ch: True)
     routing.route({'channel': 'D_SALAHBOT', 'ts': '123.1', 'user': 'U_SALAH', 'text': 'resize the logo'}, False)
     assert started == [('task', '123.1', None, 'U_SALAH')]
+
+
+def test_a_colleague_tagging_it_in_their_dm_with_the_owner_works_in_their_own_dm(fresh_bot, monkeypatch, started):
+    set_settings({'access': ['U_SALAH']})
+    monkeypatch.setattr(requests, 'own_dm', lambda ch: False)
+    asked = {
+        'channel': 'D_SALAH',
+        'channel_type': 'im',
+        'ts': '124.1',
+        'user': 'U_SALAH',
+        'text': '<@BCOMPANION> handle it',
+    }
+    monkeypatch.setattr(slack.USER, 'conversations_history', lambda **kw: {'messages': [asked, *THEIRS]})
+    monkeypatch.setattr(
+        slack.USER, 'conversations_info', lambda channel: {'channel': {'is_im': True, 'user': 'U_SALAH'}}
+    )
+    routing.route(asked, True)
+    ((kind, _, (where, msgs), guest),) = started
+    assert (kind, guest) == ('task', 'U_SALAH')
+    assert 'From your DM with' in fresh_bot.messages[0]['text']
+    assert where.startswith("Salah's Slack DM with")
+    assert [m['ts'] for m in msgs] == ['108.9', '124.1']

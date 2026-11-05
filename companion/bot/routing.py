@@ -25,6 +25,13 @@ def _refuse(channel, thread_ts, user):
     slack.post(channel, thread_ts, f'Hi <@{user}>, I only take tasks from <@{OWNER}>.')
 
 
+def _bot_reads(ev):
+    """Can the bot read and post where this message is?"""
+    if ev.get('channel_type') in ('im', 'mpim') or ev['channel'].startswith('D'):
+        return requests.own_dm(ev['channel'])
+    return slack.bot_in(ev['channel'])
+
+
 def route(ev, mentioned):
     if ev.get('bot_id') or ev.get('subtype') in IGNORED:
         return
@@ -55,6 +62,9 @@ def route(ev, mentioned):
         return
     if user != OWNER:
         task = state['tasks'].get(key(ch, tts))
+        if not task and mentioned and slack.USER and not _bot_reads(ev):
+            jobs.run_later(requests.guest_tagged, ev)
+            return
         if task:
             jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
         elif mentioned or not thr:
