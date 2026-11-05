@@ -8,23 +8,44 @@ import { SubmitField } from '../../ui/inputs';
 import { Empty } from '../../ui/page';
 import { Picker } from '../../ui/Picker';
 import { Setting, Settings } from '../../ui/Settings';
-import { Badge, Chip } from '../../ui/status';
+import { Badge } from '../../ui/status';
 import { colors, radius, space, text } from '../../theme/tokens.stylex';
 
 const styles = stylex.create({
-  people: { display: 'flex', flexDirection: 'column', gap: space.md, minWidth: 0, flexGrow: 1 },
-  chips: { display: 'flex', flexWrap: 'wrap', gap: space.xs },
-  face: { width: 22, height: 22, borderRadius: radius.pill, objectFit: 'cover' },
+  people: { display: 'grid', gap: space.sm, minWidth: 0 },
+  search: { display: 'flex', minWidth: 0 },
+  list: {
+    display: 'grid',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  person: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.md,
+    paddingBlock: space.sm,
+    paddingInline: space.md,
+    minWidth: 0,
+    borderTopWidth: { default: 1, ':first-child': 0 },
+    borderTopStyle: 'solid',
+    borderTopColor: colors.line,
+  },
+  face: { width: 28, height: 28, borderRadius: radius.pill, objectFit: 'cover', flexShrink: 0 },
+  name: { flexGrow: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   remove: {
     appearance: 'none',
     borderWidth: 0,
-    padding: 0,
+    padding: space.xxs,
+    borderRadius: radius.sm,
     display: 'flex',
     cursor: 'pointer',
-    backgroundColor: 'transparent',
+    backgroundColor: { default: 'transparent', ':hover': colors.hover },
     color: { default: colors.faint, ':hover': colors.fg },
   },
-  none: { fontSize: text.sm, color: colors.faint },
+  none: { fontSize: text.sm, color: colors.faint, paddingInline: space.xxs },
 });
 
 export function CompanionSettings({ name, display, fields }: { name: string; display: string; fields: SettingField[] }) {
@@ -63,40 +84,49 @@ function People({ field: f, onChange }: { field: SettingField; onChange: (v: unk
   const items = options.filter((o) => !picked.includes(o.value)).map((o) => ({ value: o.value, label: o.label }));
   return (
     <div {...stylex.props(styles.people)}>
-      <div {...stylex.props(styles.chips)}>
-        {picked.length === 0 && <span {...stylex.props(styles.none)}>Only you</span>}
-        {picked.map((id) => (
-          <Chip key={id} avatar>
-            {byId[id]?.avatar ? (
-              <img src={byId[id].avatar} alt="" {...stylex.props(styles.face)} />
-            ) : (
-              <Badge name={byId[id]?.label ?? id} size="xs" />
-            )}
-            {byId[id]?.label ?? id}
-            <button
-              type="button"
-              aria-label={`Remove ${byId[id]?.label ?? id}`}
-              onClick={() => onChange(picked.filter((p) => p !== id))}
-              {...stylex.props(styles.remove)}
-            >
-              <Icon name="x" size={14} />
-            </button>
-          </Chip>
-        ))}
+      <div {...stylex.props(styles.search)}>
+        <Picker
+          key={round}
+          items={items}
+          value=""
+          label="Add a person"
+          placeholder={options.length ? 'Search people to add…' : 'Waiting for the Slack member list…'}
+          empty="Nobody else matches"
+          onChange={(id) => {
+            if (!id) return;
+            setRound((r) => r + 1);
+            void onChange([...picked, id]);
+          }}
+        />
       </div>
-      <Picker
-        key={round}
-        items={items}
-        value=""
-        label="Add a person"
-        placeholder={options.length ? 'Add a person…' : 'Waiting for the Slack member list…'}
-        empty="Nobody else matches"
-        onChange={(id) => {
-          if (!id) return;
-          setRound((r) => r + 1);
-          void onChange([...picked, id]);
-        }}
-      />
+      {picked.length === 0 ? (
+        <span {...stylex.props(styles.none)}>Only you can tag it right now.</span>
+      ) : (
+        <div {...stylex.props(styles.list)}>
+          {picked.map((id) => {
+            const label = byId[id]?.label ?? id;
+            return (
+              <div key={id} {...stylex.props(styles.person)}>
+                {byId[id]?.avatar ? (
+                  <img src={byId[id].avatar} alt="" {...stylex.props(styles.face)} />
+                ) : (
+                  <Badge name={label} size="sm" />
+                )}
+                <span {...stylex.props(styles.name)}>{label}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${label}`}
+                  title="Remove access"
+                  onClick={() => onChange(picked.filter((p) => p !== id))}
+                  {...stylex.props(styles.remove)}
+                >
+                  <Icon name="x" size={15} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
