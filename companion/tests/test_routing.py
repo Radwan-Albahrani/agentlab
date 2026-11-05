@@ -111,3 +111,10 @@ def test_access_is_off_in_dry_run(fresh_bot, started):
     routing.route(tag('122.1', '<@BCOMPANION> hi', user='U_SALAH', thread=None), True)
     assert not started
     assert 'I only take tasks from' in fresh_bot.messages[0]['text']
+
+
+def test_someone_given_access_can_dm_it(monkeypatch, started):
+    set_settings({'access': ['U_SALAH']})
+    monkeypatch.setattr(requests, 'own_dm', lambda ch: True)
+    routing.route({'channel': 'D_SALAHBOT', 'ts': '123.1', 'user': 'U_SALAH', 'text': 'resize the logo'}, False)
+    assert started == [('task', '123.1', None, 'U_SALAH')]

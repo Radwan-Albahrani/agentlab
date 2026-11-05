@@ -103,21 +103,29 @@ def offer(task, p):
     old = task.pop('post_draft', None)
     if old:
         line = ':pencil2: Replaced by the version below'
-        slack.app.client.chat_update(channel=ch, ts=old['ts'], text=line, blocks=slack.blocks(old['md'], line))
-    md = ':outbox_tray: ' + (f'<@{OWNER}> ' if task.get('guest') else '') + preview_md(post)
+        slack.app.client.chat_update(
+            channel=old.get('at') or ch, ts=old['ts'], text=line, blocks=slack.blocks(old['md'], line)
+        )
+    guest = task.get('guest')
+    md = ':outbox_tray: ' + preview_md(post)
+    if guest:
+        link = slack.permalink(ch, tts)
+        md += f'\n\nAsked by **{slack.name(guest)}**' + (f' · <{link}|open their thread>' if link else '')
+        slack.note_only(ch, tts, f':hourglass_flowing_sand: Waiting for {slack.name(OWNER)} to approve sending it')
+    at, at_thread = errands.approver(task)
     ts = slack.app.client.chat_postMessage(
-        channel=ch,
-        thread_ts=tts,
+        channel=at,
+        thread_ts=at_thread,
         text='Post this?',
         blocks=[
-            *slack.blocks(md, 'Nothing has been posted yet. Reply here to change it.'),
+            *slack.blocks(md, 'Nothing has been posted yet.' + ('' if guest else ' Reply here to change it.')),
             slack.buttons(
                 ('post_send', 'Send it' if post.get('to') else 'Post it', k, 'primary'),
                 ('post_skip', "Don't send" if post.get('to') else "Don't post", k, None),
             ),
         ],
     )['ts']
-    task['post_draft'] = {**post, 'ts': ts, 'md': md}
+    task['post_draft'] = {**post, 'ts': ts, 'md': md, 'at': at}
     COMP.event('approval', f'Asked you to check a message for {where(post)}', task=k)
     save()
 
@@ -127,10 +135,16 @@ def decide(task, k, send_it):
     if not d:
         return
     line = (':white_check_mark: Posting' if send_it else ':no_entry_sign: Not posted') + f' at {clock(time.time())}'
-    slack.app.client.chat_update(channel=task['channel'], ts=d['ts'], text=line, blocks=slack.blocks(d['md'], line))
+    slack.app.client.chat_update(
+        channel=d.get('at') or task['channel'], ts=d['ts'], text=line, blocks=slack.blocks(d['md'], line)
+    )
     if send_it:
         send(task, {f: d[f] for f in ('channel', 'to', 'text', 'poll') if f in d})
     else:
+        if task.get('guest'):
+            slack.note_only(
+                task['channel'], task['thread_ts'], f':no_entry_sign: {slack.name(OWNER)} chose not to send it'
+            )
         COMP.event('skipped', 'You chose not to post it', task=k)
     save()
 

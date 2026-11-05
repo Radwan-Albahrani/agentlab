@@ -124,24 +124,40 @@ def _approval_blocks(md, note, task_key='', buttons=True):
     return b
 
 
+def approver(task):
+    """Where the owner decides: their DM for a colleague's task, else the task's own thread."""
+    return (slack.dm_owner(), None) if task.get('guest') else (task['channel'], task['thread_ts'])
+
+
 def ask_approval(task, a):
-    """approval.json -> a message in the task's thread with owner-only Approve / Reject."""
+    """approval.json -> owner-only Approve / Reject, in the owner's DM when a colleague asked."""
     who = slack.name(task.get('requester') or task.get('guest') or OWNER)
     k = key(task['channel'], task['thread_ts'])
-    ping = f'<@{OWNER}> ' if task.get('guest') else ''
-    md = f':raised_hand: {ping}**Approve?** {a.get("action", "")}\n\n{a.get("details", "")}' + (
-        f'\n\n**Then reply to {who}:**\n' + quote(a['reply']) if a.get('reply') else ''
+    action = a.get('action', '')
+    link = slack.permalink(task['channel'], task['thread_ts']) if task.get('guest') else ''
+    md = (
+        f':raised_hand: **Approve?** {action}\n\n{a.get("details", "")}'
+        + (f'\n\n**Then reply to {who}:**\n' + quote(a['reply']) if a.get('reply') else '')
+        + (f"\n\n<{link}|Open {who}'s thread>" if link else '')
     )
+    ch, tts = approver(task)
     ts = slack.app.client.chat_postMessage(
-        channel=task['channel'],
-        thread_ts=task['thread_ts'],
-        text=f'Approve? {first_sentence(str(a.get("action", "")), 150)}',
+        channel=ch,
+        thread_ts=tts,
+        text=f'Approve? {first_sentence(str(action), 150)}',
         blocks=_approval_blocks(md, f'Asked by {who}. Nothing has changed yet.', k),
     )['ts']
+    note = None
+    if task.get('guest'):
+        note = slack.note_only(
+            task['channel'], task['thread_ts'], f':hourglass_flowing_sand: Waiting for {slack.name(OWNER)} to approve'
+        )
     task['approval'] = {
-        'action': a.get('action', ''),
+        'action': action,
         'reply': a.get('reply', ''),
         'ts': ts,
+        'ch': ch,
+        'note': note,
         'md': md,
         'decided': '',
         'files': a.get('files') or [],
@@ -156,7 +172,7 @@ def decide(task, k, approved):
     a['decided'] = 'approved' if approved else 'rejected'
     when = datetime.now().strftime('%H:%M')
     slack.app.client.chat_update(
-        channel=task['channel'],
+        channel=a.get('ch') or task['channel'],
         ts=a['ts'],
         text=a['decided'],
         blocks=_approval_blocks(
@@ -165,7 +181,10 @@ def decide(task, k, approved):
             buttons=False,
         ),
     )
-    who, owner = slack.name(task.get('requester') or OWNER), slack.name(OWNER)
+    who, owner = slack.name(task.get('requester') or task.get('guest') or OWNER), slack.name(OWNER)
+    if a.get('note'):
+        line = f':white_check_mark: {owner} approved' if approved else f':x: {owner} said no, so nothing changes'
+        slack.update(task['channel'], a['note'], line, note=line)
     if approved:
         task['reply_pending'] = a.get('reply') or ''
         msg = f'APPROVED by {owner}: {a["action"]}. Make the change now, check it worked, and confirm in one line.'
@@ -174,7 +193,7 @@ def decide(task, k, approved):
         close_head(task, ':x: Rejected · nothing changed', 'x')
     COMP.event('approved' if approved else 'rejected', f'You {a["decided"]}: {a["action"]}'[:200], task=k)
     save()
-    jobs.run_later(tasks.follow_up, task, msg, None, a['ts'])
+    jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'])
 
 
 def stop(task, k):

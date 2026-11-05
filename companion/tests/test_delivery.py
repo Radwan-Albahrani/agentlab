@@ -41,12 +41,24 @@ def test_a_new_channel_message_only_when_asked_for(fresh_bot):
     assert sent and sent[0].get('thread_ts') is None
 
 
-def test_a_guests_approval_pings_the_owner(fresh_bot):
+def test_a_guests_approval_goes_to_the_owners_dm(fresh_bot):
     t = task_in(guest='U_SALAH')
     drop(t, 'approval.json', {'action': 'Change the live logo setting', 'details': 'x'})
     outbox.tick(t)
-    assert '<@U_OWNER>' in fresh_bot.text()
+    ask = next(m for m in fresh_bot.messages if m['text'].startswith('Approve?'))
+    assert ask['channel'] == 'D_OWNER'
     assert ['errand_approve', 'errand_reject'] in fresh_bot.actions()
+    waiting = [m for m in fresh_bot.messages if m['channel'] == 'C_TECH' and 'Waiting for' in json.dumps(m)]
+    assert waiting and waiting[0]['thread_ts'] == '300.1'
+
+
+def test_a_guests_post_elsewhere_is_previewed_in_the_owners_dm(fresh_bot):
+    t = task_in(guest='U_SALAH')
+    drop(t, 'post.json', {'channel': 'C_RANDOM', 'text': 'Logo is bigger now'})
+    outbox.tick(t)
+    preview = next(m for m in fresh_bot.messages if m['text'] == 'Post this?')
+    assert preview['channel'] == 'D_OWNER'
+    assert not any(m.get('text', '').startswith('Logo') for m in fresh_bot.messages)
 
 
 def test_a_guests_task_says_who_asked_and_what_needs_approval():

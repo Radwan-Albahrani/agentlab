@@ -72,8 +72,9 @@ SCHEMA = [
         'type': 'people',
         'when': {'mode': ['tag', 'team']},
         'default': [],
-        'help': f'Besides you, these people can tag @{NAME} with work. It works for them in their thread with your '
-        'tools; anything sensitive (access, money, deleting, live data, sharing) still waits for your approval.',
+        'help': f'Besides you, these people can tag or DM @{NAME} with work. It works for them with your tools; '
+        'anything sensitive (access, money, deleting, live data, sharing, posting elsewhere) waits for your '
+        'approval in your DM.',
     },
     {
         'key': 'auto_retry',

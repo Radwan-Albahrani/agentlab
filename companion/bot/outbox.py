@@ -88,8 +88,7 @@ def _preview(task, box):
     ok, refused = gate(box, names)
     if ok:
         slack.upload(
-            task['channel'],
-            task['thread_ts'],
+            *errands.approver(task),
             ok,
             f':mag: Preview: {len(ok)} file{"s" if len(ok) != 1 else ""} that will go out if you approve'
             + (f' ({len(refused)} would be held back: {", ".join(refused)})' if refused else ''),
