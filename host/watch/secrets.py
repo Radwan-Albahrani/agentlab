@@ -48,6 +48,16 @@ def match(rules, name):
     return None, {}
 
 
+def with_agent(names, cfg=None):
+    """Adds {agent_home} for a companion's secret: the home of the agent it belongs to."""
+    if 'companion' not in names:
+        return names
+    cfg = cluster.load() if cfg is None else cfg
+    agent = next((c.get('agent') for c in cfg.get('companions') or [] if c.get('name') == names['companion']), None)
+    path = next((a.get('path') for a in cfg.get('agents') or [] if a.get('id') == agent), None)
+    return {**names, 'agent_home': f'{path}/home'} if path else names
+
+
 def _fill(value, names):
     for k, v in names.items():
         value = value.replace('{' + k + '}', v)
@@ -55,6 +65,8 @@ def _fill(value, names):
 
 
 def _copy(name, dst, _names):
+    if '{' in dst:
+        return False, f'no place to install it ({dst})'
     if not os.path.isdir(os.path.dirname(dst)):
         return False, f'{os.path.dirname(dst)} missing (agent disk not mounted?)'
     shutil.copyfile(os.path.join(SECRETS_DIR, name), dst + '.new')
@@ -165,6 +177,7 @@ def check(state):
     changed, removed = changes(state.get('secrets', {}), current)
     for name, what in changed:
         entry, names = match(rules, name)
+        names = with_agent(names)
         results = [apply(name, rule, names) for rule in (entry or {}).get('apply', [])]
         detail = ' · '.join(('✓ ' if good else '✗ ') + msg for good, msg in results)
         store.event(

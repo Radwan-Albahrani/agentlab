@@ -219,6 +219,15 @@ class Watch(unittest.TestCase):
         self.assertEqual(secrets.match(rules, 'companions/helper/other.txt'), (None, {}))
         self.assertEqual(secrets.changes({}, {'a': '1'}), ([], []))
 
+    def test_a_companion_secret_can_be_installed_in_its_agents_home(self):
+        cfg = {'companions': [{'name': 'helper', 'agent': 'sara'}], 'agents': [{'id': 'sara', 'path': '/p/sara'}]}
+        names = secrets.with_agent({'companion': 'helper'}, cfg)
+        self.assertEqual(names['agent_home'], '/p/sara/home')
+        self.assertEqual(secrets.with_agent({'companion': 'gone'}, cfg), {'companion': 'gone'})
+        good, why = secrets.apply('x', {'copy': '{agent_home}/.config/agent/bridge-key'}, {'companion': 'gone'})
+        self.assertFalse(good)
+        self.assertIn('no place', why)
+
     def test_extra_secrets_apply_only_their_narrow_rules(self):
         home = f'{TMP}/agents/sara/home/.config'
         os.makedirs(home, exist_ok=True)
