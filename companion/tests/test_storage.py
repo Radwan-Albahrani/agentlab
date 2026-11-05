@@ -26,8 +26,10 @@ def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
     with open(os.path.join(COMPANION_DIR, 'settings-schema.json')) as f:
         schema = json.load(f)
     assert heartbeat['name'] == 'companion' and heartbeat['agent'] == 'agent' and heartbeat['mode'] == 'tag'
+    assert [p['name'] for p in heartbeat['people']] == ['Ali', 'Ali Khan']
     assert [field['key'] for field in schema] == [
         'mode',
+        'access',
         'auto_retry',
         'org',
         'default_project',

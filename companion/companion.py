@@ -10,10 +10,12 @@ companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
   pulls(id, repo, number, updated, data)   replaced on each re-read;
     data JSON: title, url, author, avatar, labels, additions, deletions, ci, review (latest)
   store(key, value, updated)   bot's own state as JSON; hub ignores it
-heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "workspace", "channels", "github"};
+heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "workspace", "channels", "people", "github"};
                       channels: [{"id", "name", "member"}] (member: bot can post);
+                      people: [{"id", "name", "avatar"}] the options of "people" settings;
                       github: {"ready", "bot", "accounts", "at", "error"}
-settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text", "options": [{"value", "label", "help"}], "default"}]
+settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text"|"people", "options": [{"value", "label", "help"}],
+                        "default", "when"?: {"<other key>": [values it shows for]}}]; people: a list of user ids
 settings.json         written by the hub; re-read on every setting() call
 asks/<id>.json        written by the hub, removed by take_asks:
                       {"type": "ask", "text", "channel" (an id or ""), "review" (bool), "at"}
@@ -93,6 +95,8 @@ class Companion:
             return field.get('default')
         if field['type'] == 'bool':
             return bool(value)
+        if field['type'] == 'people':
+            return [str(u) for u in value] if isinstance(value, list) else []
         return value
 
     def take_asks(self):

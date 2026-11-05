@@ -11,8 +11,8 @@ from .text import first_sentence, mins, no_emoji, without_mention
 THINKING = ':seedling: thinking…'
 
 
-def start(channel, thread_ts, trigger_ts, text, elsewhere=None):
-    """elsewhere: (where, messages) of a conversation the bot can't post in, given to the chat as context."""
+def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
+    """elsewhere: (where, messages) of a conversation the bot can't post in; guest: who asked, if not the owner."""
     k = key(channel, thread_ts)
     slack.react(channel, trigger_ts, 'eyes')
     folder = f'{channel}-{thread_ts.replace(".", "")}'
@@ -30,16 +30,20 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None):
     here = '' if channel.startswith('D') else channel
     member = [c for c in slack.channels() if c['member']]
     open_polls = polls.for_prompt(channel, thread_ts)
-    prompt = prompts.task(ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls)
+    asker = slack.name(guest or OWNER)
+    prompt = prompts.task(
+        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker
+    )
     tid, err = t3.start_thread(project, title, prompt)
     if not tid:
         slack.post(channel, thread_ts, f":warning: I couldn't start the chat in {AGENT}: {err}")
         slack.react(channel, trigger_ts, 'eyes', remove=True)
         COMP.event('failed', f'Could not start: {title}', task=k, detail=err, ok=False)
         return
-    new_task(channel, thread_ts, tid, title, folder, trigger_ts, slack.note_only(channel, thread_ts, THINKING), project)
-    log('started', k, tid)
-    COMP.event('started', title, task=k, detail=f'task from {slack.name(OWNER)} in ' + (f'#{chan}' if chan else 'a DM'))
+    status = slack.note_only(channel, thread_ts, THINKING)
+    new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **({'guest': guest} if guest else {}))
+    log('started', k, tid, 'for', guest or 'owner')
+    COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))
 
 
 STATUS_ASK = re.compile(
@@ -62,7 +66,7 @@ def is_status_ask(msg):
     return len(msg.split()) <= 8 and not INSTRUCTION.match(msg) and bool(STATUS_ASK.search(msg))
 
 
-def follow_up(task, text, files, ts):
+def follow_up(task, text, files, ts, by=None):
     ch = task['channel']
     msg = slack.readable(without_mention(text)).strip()
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
@@ -71,6 +75,8 @@ def follow_up(task, text, files, ts):
     elif is_status_ask(msg) and not files and t3.busy(task['thread']):
         status_reply(task, ts)
         return
+    if task.get('guest') or (by and by != OWNER):
+        msg = f'{slack.name(by or OWNER)}: {msg}'
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
     between, more = since_last(task, ts, folder)

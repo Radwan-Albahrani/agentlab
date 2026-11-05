@@ -247,7 +247,10 @@ def companion(name):
     if see('companion.ask') and channels is not None:
         out['channels'] = channels
     if see('companion.settings'):
-        out['settings'] = [dict(f, value=v) for f, v in settings]
+        people = [{'value': p['id'], 'label': p['name'], 'avatar': p.get('avatar', '')} for p in hb.get('people') or []]
+        out['settings'] = [
+            dict(f, value=v, **({'options': people} if f['type'] == 'people' else {})) for f, v in settings
+        ]
     return out
 
 

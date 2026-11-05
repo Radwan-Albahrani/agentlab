@@ -489,6 +489,16 @@ class Screens(unittest.TestCase):
         self.assertEqual(c['pulls']['me'], 'example-admin')
         self.assertEqual(c['polls'][0]['question'], 'Lunch on Thursday?')
 
+    def test_people_setting_offers_the_workspace_and_takes_ids(self):
+        field = next(f for f in screens.companion('scout')['settings'] if f['key'] == 'access')
+        self.assertEqual(field['options'][0], {'value': 'U0ALI', 'label': 'Ali', 'avatar': ''})
+        self.assertEqual(field['when'], {'mode': ['review']})
+        store.companions.set_setting('scout', 'access', ['U0ALI', 'U0ALI'])
+        self.assertEqual(store.companions.settings('scout')[2][1], ['U0ALI'])
+        with self.assertRaises(ValueError):
+            store.companions.set_setting('scout', 'access', 'U0ALI')
+        store.companions.set_setting('scout', 'access', [])
+
 
 class Routes(unittest.TestCase):
     def test_unknown_agent_or_companion_is_404(self):

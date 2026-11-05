@@ -67,6 +67,15 @@ SCHEMA = [
         'default': os.environ.get('COMPANION_MODE', 'tag'),
     },
     {
+        'key': 'access',
+        'label': 'People who can tag it',
+        'type': 'people',
+        'when': {'mode': ['tag', 'team']},
+        'default': [],
+        'help': f'Besides you, these people can tag @{NAME} with work. It works for them in their thread with your '
+        'tools; anything sensitive (access, money, deleting, live data, sharing) still waits for your approval.',
+    },
+    {
         'key': 'auto_retry',
         'label': 'Retry when the model is busy',
         'type': 'bool',
@@ -117,6 +126,11 @@ COMP = Companion(ID, AGENT, DATA, SCHEMA)
 
 def mode():
     return COMP.setting('mode')
+
+
+def has_access(user):
+    """The owner, or someone they gave access to (not in dry run)."""
+    return user == OWNER or (mode() != 'owner' and user in (COMP.setting('access') or []))
 
 
 def auto_retry():

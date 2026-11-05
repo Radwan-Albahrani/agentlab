@@ -9,7 +9,10 @@ from .config import COMP, FILES, OWNER, log
 from .state import key, save
 
 OUTBOX = os.path.join(FILES, 'outbox')
-DELIVER_TYPES = {'.pdf', '.png', '.jpg', '.jpeg', '.webp', '.csv', '.xlsx', '.xls', '.docx', '.doc', '.zip'}
+DELIVER_TYPES = {
+    '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.webm',
+    '.csv', '.xlsx', '.xls', '.docx', '.doc', '.txt', '.md', '.zip',
+}  # fmt: skip
 DELIVER_MAX = 50 * 1024 * 1024  # bytes per file
 
 
@@ -95,28 +98,18 @@ def _preview(task, box):
 
 
 def _deliver(task, box, m):
-    """Files to the owner's DM; the reply, if any, to whoever asked."""
+    """Files into the task's own thread; the reply, if any, to whoever asked."""
     ok, refused = gate(box, m.get('files') or [])
     ch, tts = task['channel'], task['thread_ts']
-    link = slack.permalink(ch, tts)
     what = str(m.get('what') or task.get('title') or 'Files')[:200]
-    who = str(m.get('for') or '')[:80]
-    head = f':package: *{what}*' + (f' (for {who})' if who else '') + (f'\n<{link}|From this thread>' if link else '')
+    head = f':package: *{what}*'
     if refused:
         head += '\n:no_entry: Held back: ' + ', '.join(refused)
-    dm = slack.dm_owner()
-    in_thread = tts if ch == dm else None
     if ok:
-        slack.upload(dm, in_thread, ok, head)
+        slack.upload(ch, tts, ok, head)
     elif refused:
-        slack.post(dm, in_thread, what, md=head)
-    if dm != ch and (ok or refused):
-        slack.note_only(
-            ch,
-            tts,
-            f":package: Sent {len(ok)} file{'s' if len(ok) != 1 else ''} to {slack.name(OWNER)}'s DM"
-            + (f' ({len(refused)} held back)' if refused else ''),
-        )
+        slack.post(ch, tts, what, md=head)
+    where = slack.channel_name(ch)
     if m.get('reply') and task.get('requester'):
         approved = task.pop('reply_pending', None) is not None
         errands.reply_requester(task, str(m['reply'])[:3000], ok, approved=approved)
@@ -124,9 +117,9 @@ def _deliver(task, box, m):
     if ok or refused:
         COMP.event(
             'files',
-            f'{len(ok)} file{"s" if len(ok) != 1 else ""} to you: {what}',
+            f'{len(ok)} file{"s" if len(ok) != 1 else ""} in the thread: {what}',
             task=key(ch, tts),
-            to=slack.name(OWNER),
+            to=f'#{where}' if where else slack.name(OWNER),
             ok=not refused,
             detail=('held back: ' + ', '.join(refused)) if refused else ', '.join(os.path.basename(p) for p in ok),
         )

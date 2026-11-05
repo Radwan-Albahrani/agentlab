@@ -125,10 +125,11 @@ def _approval_blocks(md, note, task_key='', buttons=True):
 
 
 def ask_approval(task, a):
-    """approval.json -> a new DM message with Approve / Reject."""
-    who = slack.name(task.get('requester') or OWNER)
+    """approval.json -> a message in the task's thread with owner-only Approve / Reject."""
+    who = slack.name(task.get('requester') or task.get('guest') or OWNER)
     k = key(task['channel'], task['thread_ts'])
-    md = f':raised_hand: **Approve?** {a.get("action", "")}\n\n{a.get("details", "")}' + (
+    ping = f'<@{OWNER}> ' if task.get('guest') else ''
+    md = f':raised_hand: {ping}**Approve?** {a.get("action", "")}\n\n{a.get("details", "")}' + (
         f'\n\n**Then reply to {who}:**\n' + quote(a['reply']) if a.get('reply') else ''
     )
     ts = slack.app.client.chat_postMessage(

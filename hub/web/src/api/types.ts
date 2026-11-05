@@ -215,8 +215,10 @@ export interface SettingField {
   key: string;
   label: string;
   help?: string;
-  type: 'choice' | 'bool' | 'text';
-  options?: { value: string; label: string; help?: string }[];
+  type: 'choice' | 'bool' | 'text' | 'people';
+  options?: { value: string; label: string; help?: string; avatar?: string }[];
+  /** Shown only while each named setting has one of these values. */
+  when?: Record<string, string[]>;
   default?: unknown;
   value: unknown;
 }

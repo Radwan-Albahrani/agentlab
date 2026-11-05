@@ -273,6 +273,7 @@ def companion(root):
                 {'id': 'C1', 'name': 'general', 'member': True},
                 {'id': 'C2', 'name': 'random', 'member': False},
             ],
+            'people': [{'id': 'U0ALI', 'name': 'Ali', 'avatar': ''}],
             'github': {'ready': True, 'bot': 'scout-example', 'accounts': ['example'], 'at': NOW, 'error': ''},
         },
     )
@@ -290,6 +291,7 @@ def companion(root):
                 'default': 'review',
             },
             {'key': 'github_user', 'label': 'Your GitHub username', 'type': 'text', 'default': 'example-admin'},
+            {'key': 'access', 'label': 'People', 'type': 'people', 'when': {'mode': ['review']}, 'default': []},
         ],
     )
     dump(f'{folder}/settings.json', {})

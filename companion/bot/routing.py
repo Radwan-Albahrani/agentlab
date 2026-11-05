@@ -1,7 +1,7 @@
-"""Routes each Slack message; only the owner gives work, anyone else addressing the bot gets one refusal."""
+"""Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
 from . import drafts, jobs, requests, reviews, slack, tasks
-from .config import OWNER
+from .config import OWNER, has_access
 from .state import key, save, state
 
 _seen = []
@@ -49,9 +49,16 @@ def route(ev, mentioned):
     if not (mentioned or (in_dm and requests.own_dm(ch))):
         requests.notice(ev)
         return
-    if user != OWNER:
+    if not has_access(user):
         if not in_dm or requests.own_dm(ch):
             _refuse(ch, tts, user)
+        return
+    if user != OWNER:
+        task = state['tasks'].get(key(ch, tts))
+        if task:
+            jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
+        elif mentioned or not thr:
+            jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''), None, user)
         return
     dkey, draft = drafts.for_thread(ch, tts)
     if draft and thr:

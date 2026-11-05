@@ -50,6 +50,16 @@ def people():
     return _people['list']
 
 
+def colleagues():
+    """[{id, name, avatar}] of full members, sorted by name."""
+    out = [
+        {'id': u['id'], 'name': member_name(u), 'avatar': u.get('profile', {}).get('image_48') or ''}
+        for u in people()
+        if u['id'] != OWNER and not (u.get('is_restricted') or u.get('is_ultra_restricted') or u['id'] == 'USLACKBOT')
+    ]
+    return sorted(out, key=lambda p: p['name'].casefold())
+
+
 def _member(uid):
     people()
     m = _people['by_id'].get(uid)

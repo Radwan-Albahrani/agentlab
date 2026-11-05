@@ -9,25 +9,49 @@ def outbox(folder):
     return f'{AGENT_FILES}/outbox/{folder}'
 
 
-def task(ask, owner, where, lines, files, folder, channel, channels, open_polls):
-    """A task the owner gave in Slack (channel: '' for a DM)."""
-    p = ask + f'\n\n---\nThe Slack thread this came from ({owner} asked in {where}), complete:\n'
+def task(ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None):
+    """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM)."""
+    p = ask + f'\n\n---\nThe Slack thread this came from ({guest or owner} asked in {where}), complete:\n'
     p += '\n'.join(lines[-60:]) or '(no other messages)'
     if files:
         p += '\n\nIts attachments, already downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)
     p += (
         '\n\nThat is the whole thread, so there is no need to open Slack in the browser; if you need more from'
         ' Slack, use your Slack tools with the channel and thread above.'
-        '\nYour replies are posted back to that Slack thread, so make your final message readable on its own.'
+        '\nYour replies are posted back to that Slack thread, so make your final message readable on its own;'
+        ' never use post.json to answer here.'
         ' Gather whatever else you need (issue tracker, GitHub, error monitoring, the code) before you start.'
     )
     default = (
-        f'With no "channel" it goes to this channel ({channel}) as a new message, right away: {owner} asked here.'
+        f'With no "channel", or this channel ({channel}), it goes into this thread right away. Add'
+        ' "new_message": true only when asked to post or announce in the channel itself.'
         if channel
         else 'Name the channel.'
     )
-    then = 'Any other channel gets a preview they approve first.' if channel else f'{owner} approves a preview first.'
-    return p + posting(outbox(folder), owner, channels, default, then, open_polls) + work_accounts(owner, folder)
+    then = (
+        f'Any other channel or DM gets a preview {owner} approves first.'
+        if channel
+        else f'{owner} approves a preview first.'
+    )
+    rules = guest_rules(folder, guest, owner) if guest else ''
+    return (
+        p + rules + posting(outbox(folder), owner, channels, default, then, open_polls) + work_accounts(owner, folder)
+    )
+
+
+def guest_rules(folder, guest, owner):
+    """A colleague's task: work for them, but sensitive steps wait for the owner."""
+    return (
+        f"\n\n{guest} is a colleague {owner} gave access to {NAME}: you work for {guest} here, with {owner}'s tools"
+        f" and logins. Sensitive things need {owner}'s explicit approval first: permissions or access, money,"
+        ' deleting anything, changing settings or data in a live service, sharing anything confidential'
+        f' (contracts, HR, salaries, customer data, credentials), and anything going outside {org()}. Code changes'
+        ' on a branch or pull request need no approval. For the sensitive ones, prepare everything WITHOUT'
+        f' changing anything, then write {outbox(folder)}/approval.json: {{"action": "<one line: exactly what will'
+        ' change>", "details": "<where, who, current vs new>"} and end your turn with one line saying you are'
+        f' waiting for {owner}\'s approval. The decision arrives as your next message: only after "APPROVED" make'
+        ' the change, check it worked and confirm in one line; after "REJECTED" change nothing.'
+    )
 
 
 def posting(box, owner, channels, default, then, open_polls):
@@ -126,8 +150,8 @@ def work_accounts(owner, folder):
         + '\n\nNever send, email, upload or post anything to anyone yourself, and never put a password or code in a'
         ' reply or file.'
         f' To hand over files, put them in {box}/ and write {box}/manifest.json LAST:'
-        f' {{"for": "<who needs it>", "what": "<one line>", "files": ["name.pdf", ...]}}. {NAME} checks and'
-        ' delivers them.'
+        f' {{"what": "<one line>", "files": ["name.png", ...]}}. {NAME} checks them and uploads them into this'
+        ' thread (screenshots, recordings, documents, text).'
         '\nOne exception: a temporary first-login password that a service showed you for an account you just created'
         f' for the person who asked goes ONLY in {box}/credential.json: {{"for": "<their name>", "service": "<name>",'
         ' "url": "<sign-in address>", "username": "...", "password": "...", "note": "<e.g. must be changed at first'

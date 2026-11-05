@@ -8,7 +8,8 @@ What it does:
 
 - **Tasks.** Tag it (`@Companion fix the flaky login test`) or DM it, and it starts a T3 chat with the whole thread
   as context. Reply in the thread to continue. It shows live progress, retries when the model is busy, and splits
-  big work into T3 child threads.
+  big work into T3 child threads. Replies and files (screenshots, documents) go into that thread. Settings →
+  "People who can tag it" lets colleagues give it work too; their sensitive steps wait for your Approve.
 - **Errands.** Tag it bare on someone else's message and it handles their request as you (find a document, give
   access, look something up). Anything sensitive (access, money, deleting, sharing) waits for your Approve; replies to
   them wait for your Send. Team mode also notices colleagues asking you directly; dry-run mode lets you rehearse.

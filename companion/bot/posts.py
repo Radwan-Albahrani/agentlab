@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 
 from . import errands, polls, slack
-from .config import COMP, NAME, log
+from .config import COMP, NAME, OWNER, log
 from .state import key, save
 from .text import clock, first_sentence, quote
 
@@ -37,6 +37,8 @@ def where(post, md=False):
     if post.get('to'):
         people = [f'<@{u}>' if md else slack.name(u) for u in post['to']]
         return ', '.join(people) + ' by DM'
+    if post.get('thread'):
+        return 'the thread'
     return f'<#{post["channel"]}>' if md else '#' + (slack.channel_name(post['channel']) or post['channel'])
 
 
@@ -92,6 +94,8 @@ def offer(task, p):
         slack.post(ch, tts, 'Could not use the post', md=f':warning: The agent prepared a post, but {problem}.')
         return
     asked_here = in_channel(task) and post.get('channel') == ch
+    if asked_here and not post.get('poll') and not p.get('new_message'):
+        post['thread'] = tts
     if asked_here or not task.get('review', True):
         send(task, post)
         return
@@ -100,7 +104,7 @@ def offer(task, p):
     if old:
         line = ':pencil2: Replaced by the version below'
         slack.app.client.chat_update(channel=ch, ts=old['ts'], text=line, blocks=slack.blocks(old['md'], line))
-    md = ':outbox_tray: ' + preview_md(post)
+    md = ':outbox_tray: ' + (f'<@{OWNER}> ' if task.get('guest') else '') + preview_md(post)
     ts = slack.app.client.chat_postMessage(
         channel=ch,
         thread_ts=tts,
@@ -142,6 +146,7 @@ def send(task, post):
             for to in post.get('to') or [post['channel']]:
                 ts = slack.app.client.chat_postMessage(
                     channel=slack.app.client.conversations_open(users=to)['channel']['id'] if post.get('to') else to,
+                    thread_ts=post.get('thread'),
                     text=first_sentence(post['text'], 200),
                     blocks=slack.blocks(post['text']),
                     unfurl_links=False,
@@ -156,7 +161,8 @@ def send(task, post):
     note = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
     if post.get('poll'):
         note += f' · closes {clock(post["poll"]["closes"])}'
-    slack.note_only(ch, tts, note)
+    if not post.get('thread'):
+        slack.note_only(ch, tts, note)
     if post.get('poll'):  # close button goes to the owner's DM only
         dm, dm_thread = (slack.dm_owner(), None) if in_channel(task) else (ch, tts)
         slack.app.client.chat_postMessage(

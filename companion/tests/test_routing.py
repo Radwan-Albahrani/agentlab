@@ -1,14 +1,19 @@
 import pytest
 from bot import requests, routing, slack, tasks
 from bot.state import state
-from conftest import OWNER
+from conftest import OWNER, set_settings
 
 
 @pytest.fixture
 def started(monkeypatch):
     calls = []
     monkeypatch.setattr(requests, 'owner_tagged', lambda ev: calls.append(('errand', ev['ts'])))
-    monkeypatch.setattr(tasks, 'start', lambda ch, tts, ts, text, elsewhere=None: calls.append(('task', ts, elsewhere)))
+
+    def start(ch, tts, ts, text, elsewhere=None, guest=None):
+        calls.append(('task', ts, elsewhere) + ((guest,) if guest else ()))
+
+    monkeypatch.setattr(tasks, 'start', start)
+    monkeypatch.setattr(tasks, 'follow_up', lambda task, text, files, ts, by=None: calls.append(('follow', ts, by)))
     return calls
 
 
@@ -86,3 +91,23 @@ def test_a_tag_with_instructions_in_his_dm_is_a_task_in_his_companion_dm(fresh_b
 
 
 THEIRS = [{'user': 'U_SALAH', 'ts': '108.9', 'text': 'I cannot log in'}]
+
+
+def test_someone_given_access_can_tag_it_with_work(started):
+    set_settings({'access': ['U_SALAH']})
+    routing.route(tag('120.1', '<@BCOMPANION> make the logo bigger', user='U_SALAH', thread=None), True)
+    assert started == [('task', '120.1', None, 'U_SALAH')]
+
+
+def test_their_follow_ups_reach_their_task(started):
+    set_settings({'access': ['U_SALAH']})
+    state['tasks']['C1:121.1'] = {'channel': 'C1', 'thread_ts': '121.1'}
+    routing.route(tag('121.2', '<@BCOMPANION> also on mobile', user='U_SALAH', thread='121.1'), True)
+    assert started == [('follow', '121.2', 'U_SALAH')]
+
+
+def test_access_is_off_in_dry_run(fresh_bot, started):
+    set_settings({'access': ['U_SALAH'], 'mode': 'owner'})
+    routing.route(tag('122.1', '<@BCOMPANION> hi', user='U_SALAH', thread=None), True)
+    assert not started
+    assert 'I only take tasks from' in fresh_bot.messages[0]['text']

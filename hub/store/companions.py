@@ -146,6 +146,10 @@ def _checked(field, value):
         return bool(value)
     if field['type'] == 'text':
         return str(value)[:500]
+    if field['type'] == 'people':
+        if not isinstance(value, list) or not all(isinstance(u, str) and u.isalnum() for u in value):
+            raise ValueError('Expected a list of people.')
+        return list(dict.fromkeys(value))[:100]
     return value
 
 
