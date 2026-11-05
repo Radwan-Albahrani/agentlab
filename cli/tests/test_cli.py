@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import copy
 import io
@@ -27,8 +28,17 @@ from agentlab import (
     render,
     tomledit,
     util,
+    wslhost,
     yaml,
 )
+
+
+def setUpModule():
+    # tests that run apply on a WSL machine must not reach the real Windows task scheduler
+    p = mock.patch.object(wslhost, 'is_wsl', return_value=False)
+    p.start()
+    unittest.addModuleCleanup(p.stop)
+
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EXAMPLE = os.path.join(REPO, 'cluster.example.toml')
@@ -1637,6 +1647,64 @@ class HostsFile(unittest.TestCase):
             hostsfile.ensure([], util.Plan(False), path)
         with open(path) as f:
             self.assertEqual(f.read(), '127.0.0.1 localhost\n::1 localhost\n')
+
+
+class WslAutostart(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cfg = {'data': tmp.name, 'wsl_autostart': True}
+        self.calls = []
+        for p in (mock.patch.object(wslhost, 'is_wsl', return_value=True), mock.patch('os.access', return_value=True)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def ensure(self, answer, env=None):
+        def ps(command):
+            self.calls.append(command)
+            return 0, answer
+
+        warned = []
+        with (
+            mock.patch.object(wslhost, 'ps', side_effect=ps),
+            mock.patch.object(wslhost, 'warn', side_effect=warned.append),
+            mock.patch.dict(os.environ, env or {}, clear=False),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            wslhost.ensure(self.cfg, util.Plan(False))
+        return ' '.join(warned)
+
+    def test_the_task_runs_the_loop_itself_for_this_distro(self):
+        args = wslhost.arguments('Ubuntu-24.04')
+        code = base64.b64decode(args.split()[-1]).decode('utf-16-le')
+        self.assertTrue(code.startswith("$Distro = 'Ubuntu-24.04'\n"))
+        self.assertIn('wsl.exe -d $Distro -u root --exec /bin/sleep infinity', code)
+        self.assertNotIn('# ', code.splitlines()[1])
+
+    def test_one_call_registers_it_and_the_distro_name_is_remembered_for_systemd_runs(self):
+        self.ensure('boot', {'WSL_DISTRO_NAME': 'Ubuntu-24.04'})
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn('-AtStartup', self.calls[0])
+        with mock.patch.dict(os.environ, {'WSL_DISTRO_NAME': ''}):
+            self.assertEqual(wslhost.distro(self.cfg), 'Ubuntu-24.04')
+
+    def test_falling_back_to_sign_in_says_how_to_start_at_boot(self):
+        self.assertIn('administrator', self.ensure('sign-in', {'WSL_DISTRO_NAME': 'Ubuntu'}))
+
+    def test_without_a_distro_name_nothing_is_registered(self):
+        with mock.patch.dict(os.environ, {'WSL_DISTRO_NAME': ''}):
+            self.assertIn('from a WSL terminal', self.ensure('boot'))
+        self.assertEqual(self.calls, [])
+
+    def test_turned_off_removes_an_existing_task(self):
+        self.cfg['wsl_autostart'] = False
+        self.ensure('found')
+        self.assertIn('Unregister-ScheduledTask', self.calls[-1])
+
+    def test_not_wsl_does_nothing(self):
+        with mock.patch.object(wslhost, 'is_wsl', return_value=False):
+            self.ensure('boot', {'WSL_DISTRO_NAME': 'Ubuntu'})
+        self.assertEqual(self.calls, [])
 
 
 class SafeSwitch(unittest.TestCase):

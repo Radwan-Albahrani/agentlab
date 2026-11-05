@@ -8,7 +8,7 @@ import shutil
 import socket
 import urllib.request
 
-from . import cloudflare, config, coolify, deploy, disks, health, preflight, render
+from . import cloudflare, config, coolify, deploy, disks, health, preflight, render, wslhost
 from .util import is_root, run, size_bytes
 
 
@@ -113,6 +113,8 @@ def host(cfg, c):
             'isolation = "sysbox" on WSL',
             'Sysbox cannot run on WSL: set isolation = "unconfined" (one person only) or use a Linux server',
         )
+    if _wsl() and cfg['wsl_autostart']:
+        _wsl_autostart(c)
     owners = {a['owner'] for a in cfg['agents']}
     c.add(
         'isolation',
@@ -132,6 +134,21 @@ def host(cfg, c):
         'error' if want > total else 'warning',
     )
     storage(cfg, c)
+
+
+def _wsl_autostart(c):
+    if not os.access(wslhost.POWERSHELL, os.X_OK):
+        return
+    t = wslhost.task()
+    c.add(
+        'wsl-autostart',
+        t is not None and t[0] == 'Running',
+        f'WSL autostart task: {t[0].lower()}, starts at {t[1]}' if t else 'WSL autostart task: not registered',
+        'sudo agentctl apply, from a WSL terminal (as administrator, so it starts at boot)'
+        if not t
+        else r"Start-ScheduledTask -TaskPath '\agentlab\' -TaskName Autostart (in Windows PowerShell)",
+        'warning',
+    )
 
 
 def storage(cfg, c):

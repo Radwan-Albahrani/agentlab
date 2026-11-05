@@ -7,7 +7,7 @@ import secrets
 import shutil
 import subprocess
 
-from . import cloudflare, config, deploy, disks, health, hostsfile, images, render, template
+from . import cloudflare, config, deploy, disks, health, hostsfile, images, render, template, wslhost
 from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
 
 FIREWALL_UNIT = 'agentlab-firewall.service'
@@ -335,6 +335,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     firewall(cfg, changed, plan)
     host_services(plan)
     hostsfile.ensure([], plan)
+    wslhost.ensure(cfg, plan)
     images.ensure(cfg, plan, force=build)
     for name, (kind, key) in render.stacks(cfg).items():
         if only is not None and name not in only:

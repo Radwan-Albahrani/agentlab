@@ -36,6 +36,7 @@ SCHEMA = {  # section -> {key: default}; None = required
         'deploy': 'compose',
         'isolation': 'sysbox',
         'publish_address': '127.0.0.1',
+        'wsl_autostart': True,
     },
     'hub': {
         'publish': 0,
@@ -422,6 +423,8 @@ def resolve(raw, previous=None, state=None):
         problems.append('[cluster] deploy must be "coolify" or "compose"')
     if c.get('isolation') not in ('sysbox', 'unconfined'):
         problems.append('[cluster] isolation must be "sysbox" or "unconfined"')
+    if not isinstance(c.get('wsl_autostart'), bool):
+        problems.append('[cluster] wsl_autostart must be true or false')
     if not str(c.get('data', '')).startswith('/'):
         problems.append('[cluster] data must be an absolute path')
     c['data'] = str(c.get('data', '')).rstrip('/') or '/'
@@ -567,6 +570,7 @@ def resolve(raw, previous=None, state=None):
         'data': c['data'],
         'deploy': c['deploy'],
         'isolation': c['isolation'],
+        'wsl_autostart': c['wsl_autostart'],
         'auth': {
             'mode': mode,
             'ingress': auth['ingress'],

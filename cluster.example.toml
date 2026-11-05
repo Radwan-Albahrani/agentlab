@@ -14,6 +14,8 @@ data = "/srv/agentlab"
 deploy = "compose"                 # plain Docker Compose; "coolify" if you'd like Coolify's UI for the stacks
 isolation = "sysbox"               # "sysbox" (multi-person servers) or "unconfined" (WSL, one person)
 publish_address = "127.0.0.1"      # where [agents.publish] / [hub] publish ports listen (one-person setups only)
+wsl_autostart = true               # on WSL: a Windows task starts the distro at boot and again whenever it
+                                   # stops (a crash, Windows killing WSL when RAM runs out)
 
 [auth]
 mode = "cloudflare-access"         # "cloudflare-access", "tailscale", "tinyauth" or "none" (local testing only)

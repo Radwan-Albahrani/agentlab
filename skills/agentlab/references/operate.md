@@ -53,6 +53,19 @@ the agent needs to merge it (`git merge template`, resolve, test, commit, restar
 code didn't start (the error is in the line and the companion's log). Don't merge or reset someone's checkout
 yourself.
 
+## After a crash or reboot
+
+On Linux, systemd brings everything back: the storage images mount, then Docker restarts every container. On WSL,
+Windows has to start the distro first, so `apply` registers a Windows task (`\agentlab\Autostart`) that starts it at
+boot and again within 15 s whenever it stops: a crash, Windows killing WSL when RAM runs out, a `wsl --shutdown`. It
+backs off to every 5 minutes while the distro keeps failing; its log is `%LOCALAPPDATA%\agentlab\autostart.log`.
+
+- Registering it to start at boot needs admin: run `apply` once from a WSL terminal opened as administrator.
+  Otherwise it starts when you sign in to Windows, and `doctor` says which.
+- To keep WSL down on purpose (to compact or copy its disk), stop the task first:
+  `Stop-ScheduledTask -TaskPath '\agentlab\' -TaskName Autostart`.
+- If something else already starts the distro (your own boot task), set `[cluster] wsl_autostart = false`.
+
 ## Backups
 
 Each night at `backups.time` agentlab keeps the T3 databases, the companion databases and the config, for
