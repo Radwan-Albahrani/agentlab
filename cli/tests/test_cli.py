@@ -18,6 +18,7 @@ from agentlab import (
     apply,
     cloudflare,
     config,
+    deploy,
     disks,
     doctor,
     hostsfile,
@@ -1626,6 +1627,23 @@ class RequireWarp(unittest.TestCase):
         self.assertIn(
             'require_warp', problems(BASE.replace('team = "example"', 'team = "example"\nrequire_warp = true'))
         )
+
+
+class RemoveNetwork(unittest.TestCase):
+    def test_retries_while_a_stack_deleted_in_the_background_is_still_attached(self):
+        answers = iter([(1, 'has active endpoints'), (0, '')])
+
+        def fake(cmd, check=True):
+            if cmd[:3] == ['docker', 'network', 'inspect']:
+                return 0, json.dumps([{'Containers': {'abc': {}}}])
+            if cmd[:3] == ['docker', 'network', 'rm']:
+                return next(answers)
+            return 0, ''
+
+        with mock.patch.object(deploy, 'run', side_effect=fake) as run:
+            deploy._disconnect_and_remove('agentlab-x', sleep=lambda s: None)
+        rms = [c.args[0] for c in run.call_args_list if c.args[0][:3] == ['docker', 'network', 'rm']]
+        self.assertEqual(len(rms), 2)
 
 
 class HostsFile(unittest.TestCase):

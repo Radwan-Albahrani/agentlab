@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import time
 
 from . import coolify, render
 from .util import Failed, run, say, warn
@@ -348,13 +349,17 @@ def remove_network(name, plan):
         plan.do(f'remove network {name}', fn=lambda: _disconnect_and_remove(name))
 
 
-def _disconnect_and_remove(name):
-    info = json.loads(run(['docker', 'network', 'inspect', name])[1])[0]
-    for cid in info.get('Containers') or {}:
-        run(['docker', 'network', 'disconnect', '-f', name, cid], check=False)
-    rc, out = run(['docker', 'network', 'rm', name], check=False)
-    if rc:
-        raise Failed(f'could not remove network {name}: {out}')
+def _disconnect_and_remove(name, tries=20, sleep=time.sleep):
+    """Retried: Coolify deletes a stack in the background, so its containers can still be leaving."""
+    for _ in range(tries):
+        info = json.loads(run(['docker', 'network', 'inspect', name])[1])[0]
+        for cid in info.get('Containers') or {}:
+            run(['docker', 'network', 'disconnect', '-f', name, cid], check=False)
+        rc, out = run(['docker', 'network', 'rm', name], check=False)
+        if not rc:
+            return
+        sleep(3)
+    raise Failed(f'could not remove network {name}: {out}')
 
 
 def orphans(cfg):
