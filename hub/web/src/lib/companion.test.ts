@@ -1,5 +1,5 @@
 import type { Event, Poll, Task } from '../api/types';
-import { filterTasks, pollSummary, taskAge, weekStats } from './companion';
+import { filterTasks, pollSummary, taskAge, taskWho, weekStats } from './companion';
 
 const now = 1_800_000_000;
 const task = (over: Partial<Task>): Task => ({
@@ -47,6 +47,14 @@ describe('companion tasks', () => {
     expect(taskAge(tasks[2]!, now)).toBe('1 h 00 m');
     expect(taskAge(task({ endedAt: null, status: 'done' }), now)).toBe('');
     expect(taskAge(task({ status: 'working', startedAt: now - 660, endedAt: now - 480 }), now)).toBe('11 min');
+  });
+});
+
+describe('taskWho', () => {
+  it('says who an errand is for and who started a task', () => {
+    expect(taskWho(task({ kind: 'errand', requester: 'Salah' }))).toBe('for Salah');
+    expect(taskWho(task({ kind: 'task', requester: 'Salah' }))).toBe('started by Salah');
+    expect(taskWho(task({ kind: 'task' }))).toBe('started by you');
   });
 });
 

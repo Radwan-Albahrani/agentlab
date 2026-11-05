@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Task } from '../../api/types';
-import { filterTasks, TASK_FILTERS, TASK_PILL, taskAge, WAITING, type TaskFilter } from '../../lib/companion';
+import { filterTasks, TASK_FILTERS, TASK_PILL, taskAge, taskWho, WAITING, type TaskFilter } from '../../lib/companion';
 import { capitalize } from '../../lib/format';
 import { LinkButton } from '../../ui/Button';
 import { Card } from '../../ui/Card';
@@ -40,7 +40,7 @@ export function WaitingTasks({ tasks }: { tasks: Task[] }) {
               icon={WAITING[t.waiting]?.icon ?? 'alert'}
               tone="warn"
               title={t.title}
-              detail={`${WAITING[t.waiting]?.label ?? 'Needs you'}${t.requester ? ` · for ${t.requester}` : ''}`}
+              detail={`${WAITING[t.waiting]?.label ?? 'Needs you'}${t.requester ? ` · ${taskWho(t)}` : ''}`}
               meta={<When t={t.startedAt} />}
               actions={<TaskLinks t={t} primary />}
             />
@@ -64,7 +64,7 @@ export function WorkingTasks({ tasks, now }: { tasks: Task[]; now: number }) {
                 icon={t.poll ? 'poll' : 'clock'}
                 tone="info"
                 title={t.title}
-                detail={t.poll ? t.outcome : `${t.requester ? `for ${t.requester} · ` : ''}running ${taskAge(t, now)}`}
+                detail={t.poll ? t.outcome : `${t.requester ? `${taskWho(t)} · ` : ''}running ${taskAge(t, now)}`}
                 meta={<When t={t.startedAt} />}
                 actions={<TaskLinks t={t} />}
               />
@@ -145,7 +145,7 @@ function TaskRow({ t, now }: { t: Task; now: number }) {
           {t.title}
         </Text>
         <Text tone="muted" size="md" block>
-          {capitalize(t.kind)} · for {t.requester || 'you'}
+          {capitalize(t.kind)} · {taskWho(t)}
           {t.outcome ? ` · ${t.outcome}` : ''}
         </Text>
       </Td>

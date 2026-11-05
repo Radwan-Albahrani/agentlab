@@ -24,6 +24,11 @@ export function taskAge(t: Task, now = Date.now() / 1000): string {
   return duration((going ? now : (t.endedAt ?? now)) - t.startedAt);
 }
 
+/** An errand is done for someone; a task or review was started by them (or by you). */
+export function taskWho(t: Task): string {
+  return `${t.kind === 'errand' ? 'for' : 'started by'} ${t.requester || 'you'}`;
+}
+
 const WEEK = 7 * 86400;
 
 export function weekStats(tasks: Task[], sent: Event[], now = Date.now() / 1000) {

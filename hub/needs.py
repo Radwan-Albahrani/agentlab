@@ -54,7 +54,8 @@ def _companions(comps):
         for t in c['tasks']:
             if t['status'] != 'waiting':
                 continue
-            who = f' · for {t["requester"]}' if t.get('requester') else ''
+            by = 'for' if t.get('kind') == 'errand' else 'started by'
+            who = f' · {by} {t["requester"]}' if t.get('requester') else ''
             title = f'{WAITING_LABEL.get(t["waiting"], "Needs you")}: {t["title"]}'
             open_slack = [link('Open in Slack', t['slack'], 'slack', True)] if t.get('slack') else []
             yield _item(
