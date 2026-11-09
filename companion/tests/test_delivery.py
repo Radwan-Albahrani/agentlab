@@ -1,7 +1,7 @@
 import json
 import os
 
-from bot import outbox, prompts, state
+from bot import outbox, prompts, slack, state
 
 
 def task_in(channel='C_TECH', thread='300.1', **extra):
@@ -65,3 +65,18 @@ def test_a_guests_task_says_who_asked_and_what_needs_approval():
     p = prompts.task('make it bigger', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '', 'Salah')
     assert 'Salah asked in' in p and "Radwan's explicit approval" in p and 'approval.json' in p
     assert 'Salah' not in prompts.task('x', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '')
+
+
+def test_a_new_message_gets_only_recent_context_and_is_not_called_a_thread(monkeypatch, fresh_bot):
+    seen = {}
+
+    def history(**kw):
+        seen.update(kw)
+        return {'messages': [{'ts': '1000.0', 'text': 'hello'}]}
+
+    monkeypatch.setattr(fresh_bot, 'conversations_history', history)
+    assert slack.thread_messages('C1', '1000.0', '1000.0') == [{'ts': '1000.0', 'text': 'hello'}]
+    assert float(seen['oldest']) == 1000.0 - 15 * 60
+    p = prompts.task('hello', 'Radwan', 'Slack channel C1', ['hello'], [], 'f', 'C1', [], '', 'Salah', True)
+    assert 'new message' in p and 'whole thread' not in p
+    assert 'whole thread' in prompts.task('x', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '')

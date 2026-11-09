@@ -53,6 +53,17 @@ def test_a_finished_turn_posts_the_answer(monkeypatch, t3_quiet, fresh_bot):
     assert 'queue is empty' in fresh_bot.text()
 
 
+def test_a_turn_ending_in_a_question_answered_by_message_closes_and_asks(monkeypatch, t3_quiet, fresh_bot):
+    ask = snapshot('completed', 'Could you send a link to the new feedback?')
+    item = {'questions': [{'question': 'Which one?', 'options': [{'label': 'Staging'}, {'label': 'Prod'}]}]}
+    monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**ask(tid, since), 'asked': [item]})
+    t = task()
+    tasks.tick(t)
+    assert not t['active'] and t['outcome'] == 'asked you'
+    assert t['question'] and t['options'] == {'1': 'Staging', '2': 'Prod'}
+    assert 'send a link' in fresh_bot.text() and 'Staging' in fresh_bot.text()
+
+
 def test_a_busy_model_gets_an_automatic_continue(monkeypatch, t3_quiet):
     monkeypatch.setattr(t3, 'snapshot', snapshot('failed'))
     monkeypatch.setattr(t3, 'run_error', lambda tid: '{"message": "Selected model is at capacity"}')

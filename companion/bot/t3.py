@@ -88,6 +88,11 @@ def triage(prompt):
     return bridge('/api/t3/triage', {'message': prompt})
 
 
+# A question the agent ends its turn with, answered by a plain message: T3 doesn't wait on it (non-blocking) and
+# cancels it once the next message arrives.
+REPLY_BY_MESSAGE = "coalesce(json_extract(payload_json, '$.responseCapability.type') = 'message', 0)"
+
+
 def snapshot(tid, since_iso):
     """A chat's current state: runs, new answers, pending questions, workers, PRs."""
     with db() as con:
@@ -106,13 +111,14 @@ def snapshot(tid, since_iso):
                     where thread_id = ? and role = 'assistant' and streaming = 0 and created_at > ? order by created_at""",
             (tid, since_iso),
         ).fetchall()
-        reqs = q(
-            """select runtime_request_id, kind from orchestration_v2_projection_runtime_requests
+        pending = q(
+            f"""select runtime_request_id, kind, {REPLY_BY_MESSAGE} from orchestration_v2_projection_runtime_requests
                     where thread_id = ? and status = 'pending'""",
             (tid,),
         ).fetchall()
+        reqs = [(rid, kind) for rid, kind, by_message in pending if not by_message]
         items = {}
-        for rid, _ in reqs:
+        for rid, _, _ in pending:
             for (pl,) in q(
                 """select payload_json from orchestration_v2_projection_turn_items where thread_id = ?
                               and type like '%request%' order by ordinal desc limit 20""",
@@ -147,6 +153,7 @@ def snapshot(tid, since_iso):
         'last_done': last_run[1] if last_run else None,
         'messages': msgs,
         'requests': [(rid, kind, items.get(rid, {})) for rid, kind in reqs],
+        'asked': [items.get(rid, {}) for rid, _, by_message in pending if by_message],
         'workers': [(w, t, bool(r)) for w, t, r in workers],
         'prs': prs,
     }
@@ -191,10 +198,11 @@ def last_answer(tid):
 
 
 def waiting_question(tid):
+    """An open question box; a question answered by message just takes the next message."""
     return bool(
         query(
-            """select 1 from orchestration_v2_projection_runtime_requests
-                         where thread_id = ? and kind = 'user_input' and status = 'pending' limit 1""",
+            f"""select 1 from orchestration_v2_projection_runtime_requests where thread_id = ?
+                  and kind = 'user_input' and status = 'pending' and not {REPLY_BY_MESSAGE} limit 1""",
             (tid,),
             one=True,
         )

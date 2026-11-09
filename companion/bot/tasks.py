@@ -31,8 +31,9 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
     member = [c for c in slack.channels() if c['member']]
     open_polls = polls.for_prompt(channel, thread_ts)
     asker = slack.name(guest or OWNER)
+    fresh = not elsewhere and thread_ts == trigger_ts
     prompt = prompts.task(
-        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker
+        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker, fresh
     )
     tid, err = t3.start_thread(project, title, prompt)
     if not tid:
@@ -104,7 +105,9 @@ def follow_up(task, text, files, ts, by=None):
     with lock:
         if not task['active']:
             task.update(active=True, burst_start=now, step_from=now, status_ts=None, ended='')
-        task.update(trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, last_status='', last_status_at=0)
+        task.update(
+            trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, question=False, last_status='', last_status_at=0
+        )
         if not task.get('status_ts'):
             task.update(status_ts=slack.note_only(ch, task['thread_ts'], THINKING), line_start=time.time())
     save()
@@ -263,7 +266,7 @@ def tick(task):
     ch, tts = task['channel'], task['thread_ts']
     s = t3.snapshot(task['thread'], task['seen'])
     now = time.time()
-    task['question'] = bool(s['requests'])
+    task['question'] = bool(s['requests'] or s.get('asked'))
     if s['messages']:
         task['seen'] = s['messages'][-1][1]
         task['latest'] = s['messages'][-1][2] or task.get('latest', '')
@@ -292,6 +295,24 @@ def tick(task):
     _finish_turn(task, s)
 
 
+def how_to_answer(task, opts):
+    dm = task['channel'].startswith('D')
+    if opts:
+        return 'Reply with a number or in your own words.' if dm else 'Tag me with a number or your own words.'
+    return 'Reply in this thread.' if dm else 'Tag me in this thread to answer.'
+
+
+def _ask_by_message(task, final, items, foot):
+    """The turn ended on a question answered by a plain message: post it with its numbered options, if any."""
+    opts = {}
+    for item in items:
+        opts.update(question_text(item)[1])
+    task['options'] = opts
+    listed = '\n'.join(f'{n}️⃣ **{label}**' for n, label in opts.items())
+    md = (final or 'The agent is waiting for your answer.') + (f'\n\n{listed}' if listed else '')
+    reply(task, md, ' · '.join(x for x in (how_to_answer(task, opts), foot) if x), 'asked you')
+
+
 def _post_questions(task, s):
     """Post the agent's new questions with numbered options."""
     for rid, kind, item in s['requests']:
@@ -301,13 +322,7 @@ def _post_questions(task, s):
         if kind == 'user_input':
             body, opts = question_text(item)
             task['options'] = opts
-            dm = task['channel'].startswith('D')
-            how = (
-                ('Reply with a number or in your own words.' if dm else 'Tag me with a number or your own words.')
-                if opts
-                else ('Reply in this thread.' if dm else 'Tag me in this thread to answer.')
-            )
-            reply(task, body, how, 'asked you')
+            reply(task, body, how_to_answer(task, opts), 'asked you')
         else:
             reply(task, ':raised_hand: I need your approval for a step.', 'Approve it in the T3 app.', 'needs approval')
 
@@ -381,6 +396,9 @@ def _finish_turn(task, s):
     elif status == 'cancelled':
         reply(task, ':black_square_for_stop: Stopped.', foot, 'stopped')
         outcome = 'stopped'
+    elif s.get('asked'):
+        _ask_by_message(task, final, s['asked'], foot)
+        outcome = 'asked you'
     else:
         reply(task, final or '_(no reply)_', foot)
         outcome = 'answered'

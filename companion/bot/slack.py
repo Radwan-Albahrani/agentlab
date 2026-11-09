@@ -9,7 +9,7 @@ from datetime import datetime
 
 from slack_bolt import App
 
-from .config import AGENT_FILES, FILES, OWNER, log, secret
+from .config import AGENT_FILES, FILES, OWNER, RECENT, log, secret
 from .text import to_slack
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
@@ -314,17 +314,15 @@ def transcript(msgs, folder=None):
 
 
 def thread_messages(channel, thread_ts, trigger_ts):
-    """The whole thread, or recent channel history for a top-level tag."""
+    """The whole thread, or for a new message the ones just before it (older ones are other conversations)."""
     try:
         if thread_ts != trigger_ts:
             return app.client.conversations_replies(channel=channel, ts=thread_ts, limit=200)['messages']
-        return list(
-            reversed(
-                app.client.conversations_history(channel=channel, latest=trigger_ts, inclusive=True, limit=12)[
-                    'messages'
-                ]
-            )
-        )
+        oldest = f'{float(trigger_ts) - RECENT:.6f}'
+        msgs = app.client.conversations_history(
+            channel=channel, latest=trigger_ts, oldest=oldest, inclusive=True, limit=12
+        )['messages']
+        return list(reversed(msgs))
     except Exception as e:
         log('context failed:', e)
         return []

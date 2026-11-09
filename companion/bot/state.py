@@ -105,3 +105,6 @@ def prepare_for_start():
         if not t.get('active'):
             t['status_ts'] = None
         t.setdefault('project', default_project())
+        # older versions left the draft an approved reply replaced, so the task kept waiting for Send
+        if (t.get('closed') or '').startswith(':white_check_mark: Done · sent to ') and not t.get('reply_pending'):
+            t.pop('reply_draft', None)

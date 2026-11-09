@@ -38,6 +38,7 @@ ASKS_POLL = 0.5
 SETTLE = 60  # an orchestrator's wait for more workers before its turn counts as finished
 STATUS_EVERY = 8  # minimum between live edits of a "thinking" line
 REQ_SETTLE = 20  # wait for a burst of messages to the owner to finish
+RECENT = 15 * 60  # a new (non-thread) message's context: the messages this long before it
 
 MODES = [
     {

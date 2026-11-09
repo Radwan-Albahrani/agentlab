@@ -279,6 +279,8 @@ def send_to_requester(task, text, files=()):
     slack.post(
         task['channel'], task['thread_ts'], f'Sent to {who}', md=f':outbox_tray: Sent to **{who}**:\n' + quote(text)
     )
+    task.pop('reply_draft', None)  # what was just sent replaces any draft still waiting for Send
+    save()
     log('sent to requester', req, len(files), 'files')
     COMP.event(
         'sent',

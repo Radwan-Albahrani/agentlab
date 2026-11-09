@@ -2,22 +2,32 @@
 
 from datetime import datetime
 
-from .config import AGENT_FILES, NAME, org, work_tools
+from .config import AGENT_FILES, NAME, RECENT, org, work_tools
 
 
 def outbox(folder):
     return f'{AGENT_FILES}/outbox/{folder}'
 
 
-def task(ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None):
-    """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM)."""
-    p = ask + f'\n\n---\nThe Slack thread this came from ({guest or owner} asked in {where}), complete:\n'
+def task(ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None, fresh=False):
+    """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM).
+    fresh: asked in a new message, not in a thread, so `lines` are only what came just before it."""
+    who = guest or owner
+    if fresh:
+        p = ask + f'\n\n---\n{who} asked this in a new message in {where}, not in a thread. For context only,'
+        p += f' the messages there in the {RECENT // 60} minutes before it (the last one is the request):\n'
+    else:
+        p = ask + f'\n\n---\nThe Slack thread this came from ({who} asked in {where}), complete:\n'
     p += '\n'.join(lines[-60:]) or '(no other messages)'
     if files:
         p += '\n\nIts attachments, already downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)
     p += (
-        '\n\nThat is the whole thread, so there is no need to open Slack in the browser; if you need more from'
+        '\n\nAnything not about the request is an earlier conversation: leave it alone unless the request points to it.'
+        if fresh
+        else '\n\nThat is the whole thread, so there is no need to open Slack in the browser; if you need more from'
         ' Slack, use your Slack tools with the channel and thread above.'
+    )
+    p += (
         '\nYour replies are posted back to that Slack thread, so make your final message readable on its own;'
         ' never use post.json to answer here.'
         ' Gather whatever else you need (issue tracker, GitHub, error monitoring, the code) before you start.'

@@ -3,7 +3,7 @@ import os
 import secrets
 
 import pytest
-from bot import errands, outbox, state, tasks
+from bot import errands, outbox, publish, state, tasks
 from conftest import OWNER
 
 
@@ -103,3 +103,46 @@ def test_files_outside_the_allowed_types_are_held_back(errand):
     ok, refused = outbox.gate(box, ['inv.pdf', 'run.sh', 'missing.pdf', '../../etc/passwd'])
     assert [os.path.basename(p) for p in ok] == ['inv.pdf']
     assert len(refused) == 3
+
+
+def test_an_approved_reply_replaces_the_draft_still_waiting_for_send(errand, fresh_bot):
+    t, _, _ = errand
+    errands.reply_requester(t, 'Old instructions')
+    t['active'] = False
+    assert publish.card('test', t)['waiting'] == 'send'
+    errands.reply_requester(t, 'Approved confirmation', approved=True)
+    assert 'reply_draft' not in t
+    assert publish.card('test', t)['status'] == 'done'
+    count = len(fresh_bot.messages)
+    press('send')
+    assert len(fresh_bot.messages) == count
+
+
+def test_a_failed_delivery_keeps_the_draft(errand, fresh_bot, monkeypatch):
+    t, _, _ = errand
+    errands.reply_requester(t, 'Old instructions')
+    original = fresh_bot.chat_postMessage
+
+    def unreachable(**kw):
+        if kw['channel'] == 'D_U_SALAH':
+            raise RuntimeError('unavailable')
+        return original(**kw)
+
+    monkeypatch.setattr(fresh_bot, 'chat_postMessage', unreachable)
+    errands.reply_requester(t, 'Approved confirmation', approved=True)
+    assert t['reply_draft']['text'] == 'Old instructions'
+
+
+@pytest.mark.parametrize(
+    ('closed', 'pending', 'removed'),
+    [
+        (':white_check_mark: Done · sent to Salah at 10:51', '', True),
+        ('', '', False),
+        (':white_check_mark: Done · sent to Salah at 10:51', 'Not sent yet', False),
+    ],
+)
+def test_a_restart_drops_drafts_left_behind_by_a_sent_reply(errand, closed, pending, removed):
+    t, _, _ = errand
+    t.update(reply_draft={'ts': '100.0'}, closed=closed, reply_pending=pending)
+    state.prepare_for_start()
+    assert ('reply_draft' not in t) == removed
