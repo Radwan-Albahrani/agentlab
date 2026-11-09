@@ -48,6 +48,7 @@ write_cluster()
 
 import janitor.__main__ as janitor  # noqa: E402
 import safe  # noqa: E402
+from janitor.dedupe import dedupe  # noqa: E402
 from throttle import scheduler, spool  # noqa: E402
 from throttle.peaks import Peaks  # noqa: E402
 from throttle.settings import ADMIT_GAP_S, DEFAULT_MB, IO_PRESSURE_MAX, PEAK_MARGIN, SWAP_CAP_MB  # noqa: E402
@@ -450,6 +451,47 @@ class AgentRequests(unittest.TestCase):
         agent_requests.handle_all()
         self.assertEqual(os.listdir(folder), [])
         self.assertEqual(self.calls, [])
+
+
+class Dedupe(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ws = self.tmp.name
+
+    def put(self, rel, data, age=7200):
+        p = os.path.join(self.ws, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, 'wb') as f:
+            f.write(data)
+        t = time.time() - age
+        os.utime(p, (t, t))
+        return p
+
+    def test_identical_package_files_across_worktrees_become_one(self):
+        big = b'x' * 8192
+        a = self.put('worktrees/app/t3-1/node_modules/react/index.js', big)
+        b = self.put('worktrees/app/t3-2/node_modules/react/index.js', big)
+        c = self.put('app/packages/ui/node_modules/react/index.js', big)
+        other = self.put('worktrees/app/t3-2/node_modules/vue/index.js', b'y' * 8192)
+        linked, freed = dedupe(self.ws)
+        self.assertEqual((linked, freed), (2, 2 * 8192))
+        self.assertEqual(len({os.stat(p).st_ino for p in (a, b, c)}), 1)
+        self.assertNotEqual(os.stat(other).st_ino, os.stat(a).st_ino)
+        self.assertEqual(dedupe(self.ws), (0, 0))
+
+    def test_source_files_fresh_installs_and_dry_runs_are_left_alone(self):
+        big = b'z' * 8192
+        src = [self.put('worktrees/app/t3-1/src/data.json', big), self.put('worktrees/app/t3-2/src/data.json', big)]
+        new = [
+            self.put('worktrees/app/t3-1/node_modules/x/a.js', big, age=10),
+            self.put('worktrees/app/t3-2/node_modules/x/a.js', big, age=10),
+        ]
+        old = [self.put('a/node_modules/y/b.js', big + b'1'), self.put('b/node_modules/y/b.js', big + b'1')]
+        self.assertEqual(dedupe(self.ws, dry=True), (1, 8193))
+        for pair in (src, new):
+            self.assertNotEqual(os.stat(pair[0]).st_ino, os.stat(pair[1]).st_ino)
+        self.assertNotEqual(os.stat(old[0]).st_ino, os.stat(old[1]).st_ino)
 
 
 class Janitor(unittest.TestCase):

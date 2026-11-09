@@ -1,4 +1,5 @@
-"""Per-agent tidy: Docker leftovers, idle worktrees, and package caches when storage is full; DRY=1 only lists."""
+"""Per-agent tidy: Docker leftovers, idle worktrees, shared package files, and caches when storage is full; DRY=1 only
+lists."""
 
 import json
 import os
@@ -9,6 +10,8 @@ import time
 from datetime import datetime
 
 import cluster
+
+from janitor.dedupe import dedupe
 
 SETTLED_HOURS = 12
 ORPHAN_DAYS = 2
@@ -59,7 +62,9 @@ done
 [ -n "${DRY}" ] || for r in /workspace/*/; do [ -d "${r}.git" ] && git -C "${r}" worktree prune; done
 echo "$([ -n "${DRY}" ] && echo "would remove" || echo removed) ${n} idle worktrees:${removed:- none}${kept:+; kept:${kept}}"'''
 
-CLEAR_CACHES = """npm cache clean --force 2>/dev/null; command -v bun >/dev/null && bun pm cache rm >/dev/null 2>&1
+# Not bun's cache: its files are hardlinked into every node_modules, so removing it frees nothing and the next
+# install would make full copies again.
+CLEAR_CACHES = """npm cache clean --force 2>/dev/null
 command -v pnpm >/dev/null && (cd /workspace && pnpm store prune >/dev/null 2>&1)
 command -v brew >/dev/null && brew cleanup -s >/dev/null 2>&1; true"""
 
@@ -188,6 +193,11 @@ def tidy(data, agent):
         stdin=trees,
     )
     lines.append(f'{agent_id}: {out.splitlines()[-1] if out else "no worktrees"}')
+    n, saved = dedupe(f'{root}/workspace', dry=DRY)
+    if n:
+        lines.append(
+            f'{agent_id}: {"would share" if DRY else "shared"} {n} identical package files ({saved / 1e9:.1f} GB)'
+        )
     u, size = used(unit)
     if not DRY and size and 100 * u / size >= CACHES_AT:
         _run(['docker', 'exec', '-u', 'agent', cid, 'bash', '-lc', CLEAR_CACHES])

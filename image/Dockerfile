@@ -85,6 +85,9 @@ ENV HOME=/home/agent \
     # the engine publishes container ports on this container's localhost
     TESTCONTAINERS_HOST_OVERRIDE=localhost \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    # on the projects' own mount, so installs hardlink from the cache instead of copying into every worktree
+    BUN_INSTALL_CACHE_DIR=/workspace/.cache/bun-install \
+    NPM_CONFIG_STORE_DIR=/workspace/.cache/pnpm-store \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     ANDROID_HOME=/opt/android-sdk \
     ANDROID_AVD_HOME=/home/agent/.android/avd \
