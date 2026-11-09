@@ -215,7 +215,8 @@ customize its companions: add a feature, change the persona, remove a behaviour.
   untouched), merged into the checked-out branch only when the tree is clean and the merge has no conflicts (a
   conflicted file whose template version already contains all of the checkout's changes to it counts as clean). Then
   the companion restarts and must come up (running, or "not configured"); if not, exactly that merge commit is undone
-  and it restarts again. Conflicts are aborted and reported as "needs merging". Git runs as the checkout's owner, never
+  and it restarts again. Conflicts are aborted, reported as "needs merging" and handed to the agent (a T3 chat asking
+  it to merge, once per template version). Git runs as the checkout's owner, never
   root, and a checkout or `.git` that is a symlink is skipped. Results: `<data>/state/companions-template.json`,
   `<data>/companions/<name>/template.json` (the hub's `templateUpdate`), `update.json`, `agentctl status`.
 - **The companion runs that code.** `agentlab/companion` is a base image (Python + the template's dependencies); the

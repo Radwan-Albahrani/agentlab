@@ -49,7 +49,8 @@ dashboard, or an admin with `agentctl secret set companion/<name>/bot-token.txt`
 Template updates arrive on their own: every `apply` and `update` merges a changed companion template into each
 checkout as a commit, restarts the companion, and undoes that merge if it then won't start. `agentctl status` lists
 the ones that aren't current: `skipped` means the agent had uncommitted work (tried again next time), `conflict` means
-the agent needs to merge it (`git merge template`, resolve, test, commit, restart), and `reverted` means the merged
+the agent needs to merge it (`git merge template`, resolve, test, commit, restart; `update` starts a chat in the agent
+asking it to, once per template version), and `reverted` means the merged
 code didn't start (the error is in the line and the companion's log). Don't merge or reset someone's checkout
 yourself.
 

@@ -212,7 +212,11 @@ def update_one(cfg, comp, dry=False):
         if co.rev('HEAD') != pre or not co.clean():
             warn(f'{name}: the checkout is not back at {short(pre)} after aborting the merge; look at {path}')
         files = ', '.join(conflicts) or text[-200:]
-        return out | {'result': 'conflict', 'detail': f'template update needs merging (conflicts in: {files})'}
+        return out | {
+            'result': 'conflict',
+            'detail': f'template update needs merging (conflicts in: {files})',
+            'files': files,
+        }
     merged = co.rev('HEAD')
     if kept:
         say(f"  {name}: kept the template version of {', '.join(kept)} (it already had this checkout's changes)")
@@ -262,8 +266,36 @@ def _contains(co, rev):
     return co.git('merge-base', '--is-ancestor', rev, 'HEAD', check=False)[0] == 0
 
 
+MERGE_ASK = """agentlab's companion template has an update for {name} that conflicts with your own changes in: {files}.
+Merge it in /workspace/companions/{name}: `git merge template`, then resolve each conflict so that your behaviour stays
+and every template fix lands too. Where both sides fix the same thing, take the template's version, so later updates
+merge cleanly. Then `companion test {name}`, commit, `companion restart {name}`, and check `companion status {name}`
+and `companion logs {name}`. If a conflict needs a decision only the person can make, stop and ask them."""
+
+
+def ask_agent(cfg, comp, files):
+    """Start a chat in the companion's agent asking it to merge; True once started."""
+    agent = render.agent_of(cfg, comp)
+    ids = deploy.containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
+    if not ids:
+        return False
+    rc, out = run(
+        [
+            *('docker', 'exec', '-i', '-u', 'agent', '-w', '/workspace', ids[0], 't3', 'thread', 'start', '--json'),
+            *('--title', f'Merge the {comp["name"]} template update', '/workspace', '-'),
+        ],
+        input_text=MERGE_ASK.format(name=comp['name'], files=files),
+        check=False,
+        timeout=120,
+    )
+    if rc:
+        warn(f'{comp["name"]}: could not ask the {agent["id"]} agent to merge the template: {out[-200:]}')
+    return rc == 0
+
+
 def update_all(cfg, plan):
     results = {}
+    before = {} if plan.dry else load_json(state_path(cfg), {}) or {}
     for comp in cfg['companions']:
         try:
             r = update_one(cfg, comp, dry=plan.dry)
@@ -274,6 +306,15 @@ def update_all(cfg, plan):
             if r['result'] == 'would-update':
                 plan.do(f'merge the template into {comp["name"]} (from {r["template_from"]})')
             continue
+        if r['result'] == 'conflict':
+            # once per template version: the agent owns the checkout, so it does the merge
+            asked = (before.get(comp['name']) or {}).get('asked_agent')
+            if asked != r['template_to'] and ask_agent(cfg, comp, r.get('files') or 'see git status'):
+                asked = r['template_to']
+            if asked == r['template_to']:
+                r['asked_agent'] = asked
+                r['detail'] += f'; its agent was asked to merge it ({render.agent_of(cfg, comp)["id"]})'
+        r.pop('files', None)
         r['at'] = _now()
         if r['result'] not in ('up-to-date',):
             say(f'  {comp["name"]}: template {r["result"]}{": " + r["detail"] if r["detail"] else ""}')

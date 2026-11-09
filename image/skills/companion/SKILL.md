@@ -81,8 +81,14 @@ the host commits it to the checkout's `template` branch and merges that into you
 `chore: merge agentlab template <from>..<to>`, then restarts the companion and checks it comes up (if it doesn't, that
 merge is undone). It only does this when your checkout has no uncommitted changes and the merge has no conflicts, so
 your work is never touched; commit your changes to get updates. When the hub or `agentctl status` says the template
-update **needs merging** (conflicts), do it yourself: `git merge template`, resolve each conflict keeping your
-behaviour, `companion test <name>`, commit, `companion restart <name>`, check status and logs.
+update **needs merging** (conflicts), the host starts a chat asking you to merge it: `git merge template`, resolve
+each conflict keeping your behaviour and the template's fixes (where both fix the same thing, take the template's
+version, so later updates merge cleanly), `companion test <name>`, commit, `companion restart <name>`, check status
+and logs.
+
+Conflicts come from editing the template's own code. Keep your customisations in as few places as you can, and when
+you fix a bug in the template itself (not something you customised), tell the person: it belongs in agentlab, so
+every companion gets it and the next update doesn't collide with your copy.
 
 ## Settings and secrets
 

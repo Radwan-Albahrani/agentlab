@@ -129,8 +129,9 @@ checkout, so every change you commit and restart is live.
 Template updates are merged in for you: the host adds each new template version to the `template` branch and merges
 it into your branch (`chore: merge agentlab template <from>..<to>`) when your tree is clean and nothing conflicts,
 restarts the companion and undoes that merge if it then fails to start. If the hub or `agentctl status` says the
-update **needs merging**, run `git merge template`, resolve the conflicts keeping your behaviour, test, commit and
-restart.
+update **needs merging**, the host starts a chat asking you to merge it: run `git merge template`, resolve the
+conflicts keeping your behaviour and the template's fixes (take the template's version where both fix the same thing),
+test, commit and restart. A bug you fix in the template's own code belongs in agentlab too: tell the person.
 
 Where things are:
 

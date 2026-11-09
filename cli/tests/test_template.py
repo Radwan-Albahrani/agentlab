@@ -64,10 +64,17 @@ class Template(unittest.TestCase):
             mock.patch.object(template, 'SETTLE_S', 0),
             mock.patch.object(template, 'POLL_S', 0.01),
             mock.patch.object(template, 'restart', self.fake_restart),
+            mock.patch.object(template, 'ask_agent', self.fake_ask),
         ):
             self.enterContext(patch)
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         self.restarts, self.comes_up_as = [], 'running'
+        self.asked, self.agent_running = [], True
+
+    def fake_ask(self, _cfg, comp, files):
+        if self.agent_running:
+            self.asked.append((comp['name'], files))
+        return self.agent_running
 
     def seed(self, branch=True):
         shutil.copytree(self.src, self.co)
@@ -147,6 +154,29 @@ class Template(unittest.TestCase):
         self.assertEqual(sh(self.co, 'status', '--porcelain'), '')
         self.assertEqual(self.restarts, [])
         self.assertIn('agentlab template test', sh(self.co, 'log', '-1', '--format=%s', 'template'))
+
+    def test_a_conflict_is_handed_to_the_agent_once_per_template_version(self):
+        self.agent_commits('bot/main.py', 'print("mine")\n', 'feat: mine')
+        write(f'{self.src}/bot/main.py', 'print("theirs")\n')
+        r = self.run_update()
+        self.assertEqual(self.asked, [('helper', 'bot/main.py')])
+        self.assertIn('its agent was asked to merge it (sara)', r['detail'])
+        self.assertNotIn('files', r)
+        self.run_update()
+        self.assertEqual(len(self.asked), 1)
+        write(f'{self.src}/bot/main.py', 'print("theirs, again")\n')
+        self.run_update()
+        self.assertEqual(len(self.asked), 2)
+
+    def test_an_agent_that_is_down_is_asked_on_a_later_update(self):
+        self.agent_commits('bot/main.py', 'print("mine")\n', 'feat: mine')
+        write(f'{self.src}/bot/main.py', 'print("theirs")\n')
+        self.agent_running = False
+        r = self.run_update()
+        self.assertNotIn('asked', r['detail'])
+        self.agent_running = True
+        self.run_update()
+        self.assertEqual(len(self.asked), 1)
 
     def test_uncommitted_work_is_left_alone(self):
         write(f'{self.co}/bot/main.py', 'print("half done")\n')
