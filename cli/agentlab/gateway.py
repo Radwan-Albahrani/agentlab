@@ -104,35 +104,17 @@ class Enrollment:
 
 
 def wanted(cfg, newcomers):
-    """[(suffix, filters, action, traffic, identity)] in the order they must run."""
-    hosts = cloudflare_hosts(cfg)
+    """[(suffix, filters, action, traffic, identity)] in the order they run. Gateway's network rules see the address
+    a private hostname resolves to inside the tunnel (the edge's), so two rules cover it."""
     emails = {e.lower() for e in cfg_people(cfg)}
     domains = {d.lower() for d in cfg['auth']['allow_domains']}
-    everyone = _who(emails, domains)
     out = []
-    if config.private_network(cfg) and hosts:
+    if config.private_network(cfg):
         edge = f'net.dst.ip == {render.EDGE_IP} and net.dst.port in {{80 443}}'
-        out.append(('allow', ['l4'], 'allow', f'({edge}) or net.sni.host in {_set(hosts)}', everyone))
+        out.append(('allow', ['l4'], 'allow', edge, _who(emails, domains)))
     if newcomers:
-        who = _who(newcomers, ())
-        # Plain HTTP to a private hostname may show only Gateway's initial IP at the network layer, so for
-        # newcomers it passes here and the web rules below decide by name: agentlab's, or blocked.
-        initial_http = f'net.dst.ip in {_ips(INITIAL)} and net.dst.port == 80'
-        if hosts:
-            out.append(('newcomers web', ['l4'], 'allow', initial_http, who))
-        out.append(('only agentlab', ['l4'], 'block', f'net.dst.ip in {_ips(PRIVATE + INITIAL)}', who))
-    if config.private_network(cfg) and hosts:
-        out.append(('allow web', ['http'], 'allow', f'http.request.host in {_set(hosts)}', everyone))
-        if newcomers:
-            web = f'any(http.conn.dst_ip[*] in {_ips(PRIVATE + INITIAL)})'
-            out.append(('only agentlab web', ['http'], 'block', web, _who(newcomers, ())))
+        out.append(('only agentlab', ['l4'], 'block', f'net.dst.ip in {_ips(PRIVATE + INITIAL)}', _who(newcomers, ())))
     return out
-
-
-def cloudflare_hosts(cfg):
-    from .cloudflare import private_hosts  # noqa: PLC0415 - cloudflare imports this module
-
-    return private_hosts(cfg) if config.private_network(cfg) else []
 
 
 def cfg_people(cfg):
@@ -207,10 +189,8 @@ def _spec(body):
 
 
 def describe(suffix, newcomers):
-    if suffix.startswith('allow'):
-        return "agentlab's people reach agentlab's names, ahead of the account's own rules"
-    if suffix == 'newcomers web':
-        return "plain HTTP from people new to the account goes on to the web rules, which allow only agentlab's names"
+    if suffix == 'allow':
+        return "agentlab's people reach agentlab, ahead of the account's own rules"
     return f'{len(newcomers)} people new to the account ({", ".join(newcomers)}) reach nothing else private'
 
 

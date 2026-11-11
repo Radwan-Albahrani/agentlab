@@ -1644,26 +1644,18 @@ class PrivateNetwork(unittest.TestCase):
                 for n, r in sorted(ours.items(), key=lambda i: i[1]['precedence'])
             ],
             [
-                ('agentlab-test allow', 'allow', ['l4'], 995),
-                ('agentlab-test newcomers web', 'allow', ['l4'], 996),
-                ('agentlab-test only agentlab', 'block', ['l4'], 997),
-                ('agentlab-test allow web', 'allow', ['http'], 998),
-                ('agentlab-test only agentlab web', 'block', ['http'], 999),
+                ('agentlab-test allow', 'allow', ['l4'], 998),
+                ('agentlab-test only agentlab', 'block', ['l4'], 999),
             ],
         )
         allow = ours['agentlab-test allow']
-        self.assertIn('net.dst.ip == 10.207.0.2 and net.dst.port in {80 443}', allow['traffic'])
-        self.assertIn('"agents.example.com"', allow['traffic'])
+        self.assertEqual(allow['traffic'], 'net.dst.ip == 10.207.0.2 and net.dst.port in {80 443}')
         for email in ('boss@example.com', 'sara@example.com', 'omar@example.com'):
             self.assertIn(email, allow['identity'])
         block = ours['agentlab-test only agentlab']
         self.assertIn('sara@example.com', block['identity'])
         self.assertNotIn('boss@example.com', block['identity'])  # already on the DB team's list
-        self.assertIn('net.dst.ip in {10.0.0.0/8 ', block['traffic'])
-        self.assertNotIn('172.64.128.0/20', allow['traffic'])  # the port-80 pass is for newcomers only
-        self.assertIn('sara@example.com', ours['agentlab-test newcomers web']['identity'])
-        self.assertNotIn('boss@example.com', ours['agentlab-test newcomers web']['identity'])
-        self.assertIn('any(http.conn.dst_ip[*] in {10.0.0.0/8', ours['agentlab-test only agentlab web']['traffic'])
+        self.assertTrue(block['traffic'].startswith('net.dst.ip in {10.0.0.0/8 '))
         self.assertEqual(next(r for r in self.fake.gateway if r['id'] == 'theirs'), theirs)  # untouched
         before = len(self.fake.writes)
         self.run_setup()
@@ -1680,7 +1672,7 @@ class PrivateNetwork(unittest.TestCase):
         self.assertNotIn('omar@example.com', ours['agentlab-test allow']['identity'])
         self.fake.gateway[0]['precedence'] = 500  # the admin moved their rule up
         self.run_setup()
-        self.assertEqual(sorted(r['precedence'] for r in self.ours().values()), [495, 496, 497, 498, 499])
+        self.assertEqual(sorted(r['precedence'] for r in self.ours().values()), [498, 499])
 
     def test_unreadable_enrollment_rules_keep_everyone_isolated(self):
         self.fake.policies.append(

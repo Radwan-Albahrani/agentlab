@@ -130,12 +130,13 @@ your domain out of Local Domain Fallback.
 It also fits into a Zero Trust account that already has its own setup (the same team, the same client) without
 widening anything. It reads the account's Gateway rules and its other device enrollment policies (emails, domains,
 email lists, Access groups) and adds its own rules ahead of all of them, named `agentlab-<cluster> ...`:
-- an Allow for agentlab's people to agentlab's names only (network and web), so a broad block of yours (for example
-  "anyone not on the DB team's list is blocked from everything") never cuts them off from their agent;
-- for people who could enroll the client only because of agentlab: a Block on all private address space and private
-  hostnames except agentlab's. They reach their agent and nothing else, whatever you add to the network later.
+- an Allow for agentlab's people to agentlab's own address only (the edge, ports 80 and 443; Gateway sees the
+  address a private hostname resolves to inside the tunnel), so a broad block of yours (for example "anyone not on
+  the DB team's list is blocked from everything") never cuts them off from their agent;
+- for people who could enroll the client only because of agentlab: a Block on all private address space. They reach
+  their agent and nothing else, whatever you add to the network later.
 People your own enrollment policies already admit are left to your rules. When it can't read a policy (an IdP group,
-say) it says so and treats everyone as new, the safe side. It needs room above your first rule (precedence above 5);
+say) it says so and treats everyone as new, the safe side. It needs room above your first rule (precedence above 2);
 it never moves or edits rules it didn't make, and `apply` keeps its rules in step as people come and go. So keep
 your own rules as broad as you like: adding a resource later means editing your email lists, not agentlab's rules.
 
