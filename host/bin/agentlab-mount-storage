@@ -28,6 +28,10 @@ def main():
     for image, mount in units(cfg):
         if os.path.ismount(mount):
             continue
+        if os.path.exists(f'{image}.shrink-undo'):
+            print(f'{image} was mid-shrink: run agentctl apply, which checks it and rolls it back if needed', file=sys.stderr)
+            failed += 1
+            continue
         if not os.path.exists(image):
             print(f'{image} missing: run agentctl apply', file=sys.stderr)
             failed += 1

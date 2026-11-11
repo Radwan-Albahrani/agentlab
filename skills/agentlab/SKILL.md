@@ -81,6 +81,7 @@ install`, `agentctl cloudflare setup` when using Cloudflare, `agentctl apply`.
 | Removing an agent | `agentctl agent remove <id> --keep-data` is safe; deleting the data needs their yes on the plan |
 | Lost chats | `agentctl backup list --json`, show the dates, then `backup restore <date> <agent>` once they say yes |
 | A full disk | `status` shows each disk; the janitor tidies nightly; look at the biggest agents in the dashboard's Storage screen and ask before deleting anything |
+| Room for one more person | With per-person disks, `person_size = "auto"` (or a lower size) and `apply`: the others shrink safely, never below their data; `apply --dry-run` first, since a shrink stops that person's agents for a few minutes ([operate.md](references/operate.md#disk-space)) |
 | An upgrade | `agentctl update --json` (pull, rebuild, apply; busy agents are waited for). Companion code in agents' workspaces belongs to them; template changes reach it as merge commits on its own |
 | A different sign-in | Plan it with them first, since it changes how everyone gets in; [access.md](references/access.md) covers each way |
 

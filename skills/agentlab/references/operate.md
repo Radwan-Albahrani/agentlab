@@ -35,8 +35,17 @@ files.
 
 `status` shows each disk: the shared pool, or each person's. The janitor tidies nightly and whenever a disk passes
 75%: settled worktrees (clean, pushed, idle 12 hours or more), package caches, and the agents' Docker leftovers. A
-person's full disk only stops that person; tell them, or raise `person_size` (disks grow, never shrink) and `apply`.
+person's full disk only stops that person; tell them, or raise `person_size` and `apply`.
 Nothing inside someone's workspace gets deleted without asking them or the admin.
+
+Disks grow and shrink to whatever the config says. To add a person when the disks already fill the host, set
+`person_size = "auto"` (the host disk minus `host_reserve`, 15 % by default, split evenly), or lower `person_size`,
+then `apply`. Shrinking is safe to run: it never goes below a disk's data plus 10 %, it waits while that person's
+agents are mid-turn or the host lacks room, and a failed or interrupted shrink is rolled back from its undo file.
+It stops that person's agents for a few minutes, so tell them first; `apply --dry-run` shows each shrink and whom
+it stops, and the warnings say why a disk stayed bigger. An `<image>.shrink-undo` file means a shrink stopped
+partway: leave the image alone and run `apply`, which checks it and rolls it back. Overlapping sizes are allowed
+(the images are sparse) but `doctor` warns, since they could fill the host together.
 
 ## Companions
 

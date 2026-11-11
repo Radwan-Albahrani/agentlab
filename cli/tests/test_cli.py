@@ -1182,6 +1182,142 @@ class AgentNative(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmp.name), ['cluster.toml'])
 
 
+class DiskSizes(unittest.TestCase):
+    GIB = 2**30
+
+    def per_person(self, **storage):
+        return resolve(storage__mode='per-person', **{f'storage__{k}': v for k, v in storage.items()})
+
+    def sizes(self, cfg, host_gib):
+        with mock.patch.object(disks, 'host_bytes', return_value=host_gib * self.GIB):
+            return {u['name']: u['size'] for u in disks.units(cfg)}
+
+    def test_auto_splits_the_host_after_its_reserve(self):
+        cfg = self.per_person(person_size='auto', host_reserve='100G')
+        self.assertEqual(self.sizes(cfg, 500), {'sara-example-com': '200g', 'omar-example-com': '200g'})
+        cfg = self.per_person(person_size='auto')  # 15 % by default
+        self.assertEqual(self.sizes(cfg, 1000)['sara-example-com'], '425g')
+
+    def test_auto_leaves_fixed_sizes_alone(self):
+        cfg = self.per_person(person_size='auto', host_reserve='100G', person_sizes={'omar@example.com': '100G'})
+        self.assertEqual(self.sizes(cfg, 500), {'sara-example-com': '300g', 'omar-example-com': '100g'})
+
+    def test_auto_with_nothing_left_fails(self):
+        cfg = self.per_person(person_size='auto', host_reserve='600G')
+        with self.assertRaises(util.Failed):
+            self.sizes(cfg, 500)
+
+    def test_bad_reserve_is_a_config_problem(self):
+        self.assertIn('host_reserve', problems(storage__host_reserve='120%'))
+        self.assertIn('host_reserve', problems(storage__host_reserve='lots'))
+
+    def plan_shrink(self, used_gib, have_gib, want_gib, busy=False, free_gib=500, mounted=True):
+        cfg = self.per_person()
+        u = disks.units(cfg)[0]
+        plan = mock.Mock()
+        with (
+            mock.patch.object(disks.os.path, 'ismount', return_value=mounted),
+            mock.patch.object(disks, 'usage', return_value={'used': used_gib * self.GIB, 'avail': free_gib * self.GIB}),
+            mock.patch.object(disks.deploy, 'agent_busy', return_value=busy),
+            mock.patch.object(disks, 'warn') as warned,
+        ):
+            disks.shrink(cfg, u, have_gib * self.GIB, want_gib * self.GIB, plan)
+        return [c.args[0] for c in plan.do.call_args_list], warned.call_args_list
+
+    def test_shrink_goes_to_the_asked_size_when_the_data_fits(self):
+        done, _ = self.plan_shrink(50, 110, 88)
+        self.assertEqual(len(done), 1)
+        self.assertIn('110 -> 88 GiB (stops agentlab-agent-sara', done[0])
+
+    def test_shrink_stops_short_of_the_data(self):
+        done, warned = self.plan_shrink(90, 110, 88)
+        self.assertIn('110 -> 99 GiB', done[0])
+        self.assertTrue(warned)
+
+    def test_shrink_waits_when_it_is_not_safe_yet(self):
+        self.assertEqual(self.plan_shrink(100, 110, 88)[0], [])  # the data needs the room
+        self.assertEqual(self.plan_shrink(10, 110, 109.5)[0], [])  # too small a step to stop anyone for
+        self.assertEqual(self.plan_shrink(10, 110, 88, busy=True)[0], [])  # mid-turn
+        self.assertEqual(self.plan_shrink(30, 110, 88, free_gib=40)[0], [])  # no host room for the moved blocks
+        self.assertEqual(self.plan_shrink(10, 110, 88, mounted=False)[0], [])  # data unmeasured
+
+    def run_shrink(self, rcs=None, fail=None):
+        """`rcs`: {command or 'e2fsck -n': exit code}; `fail`: the command that raises."""
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        img = f'{tmp}/sara.img'
+        with open(img, 'wb') as f:
+            f.truncate(8 << 20)
+        u = {'name': 'sara', 'image': img, 'mount': f'{tmp}/mnt', 'stacks': ['agentlab-agent-sara']}
+        mounted, calls, states = [True], [], iter(['running', 'running', 'exited'])
+        rcs = rcs or {}
+
+        def run(cmd, check=True):
+            name = 'e2fsck -n' if cmd[:3] == ['e2fsck', '-f', '-n'] else cmd[0]
+            calls.append(name)
+            if name == 'resize2fs':
+                open(disks.undo_file(img), 'w').close()
+            if name == 'losetup':
+                return 0, '/dev/loop9'
+            if name == fail:
+                raise util.Failed(f'{name} failed')
+            if name in ('umount', 'mount'):
+                mounted[0] = name == 'mount'
+            return rcs.get(name, 0), ''
+
+        with (
+            mock.patch.object(disks, 'run', side_effect=run),
+            mock.patch.object(disks.os.path, 'ismount', side_effect=lambda p: mounted[0]),
+            mock.patch.object(disks, 'fs_bytes', return_value=4 << 20),
+            mock.patch.object(
+                disks.deploy, 'stack_containers', side_effect=lambda *a: [{'state': next(states, 'exited')}]
+            ),
+            mock.patch.object(disks.deploy, 'stop', side_effect=lambda *a: calls.append('stop')),
+            mock.patch.object(disks.deploy, 'start', side_effect=lambda *a: calls.append('start')),
+            mock.patch.object(disks, 'warn') as warned,
+        ):
+            disks._shrink(self.per_person(), u, 4 << 20, sleep=lambda s: None)
+        left = os.path.exists(disks.undo_file(img))
+        return calls, os.path.getsize(img), mounted[0], left, [w.args[0] for w in warned.call_args_list]
+
+    def test_shrink_runs_offline_checks_and_cuts_the_image_last(self):
+        calls, size, mounted, left, warned = self.run_shrink()
+        self.assertEqual(
+            calls, ['stop', 'umount', 'e2fsck', 'losetup', 'resize2fs', 'losetup', 'e2fsck -n', 'mount', 'start']
+        )
+        self.assertEqual((size, mounted, left, warned), (4 << 20, True, False, []))
+
+    def test_a_refused_shrink_keeps_the_image_and_brings_everything_back(self):
+        calls, size, mounted, left, warned = self.run_shrink(fail='resize2fs')
+        self.assertEqual(calls[-5:], ['resize2fs', 'losetup', 'e2fsck -n', 'mount', 'start'])
+        self.assertEqual((size, mounted, left), (8 << 20, True, False))
+        self.assertIn('not shrunk', warned[0])
+
+    def test_a_damaged_shrink_is_undone(self):
+        calls, size, mounted, left, _ = self.run_shrink(rcs={'e2fsck -n': 4})
+        self.assertIn('e2undo', calls)
+        self.assertEqual((size, mounted, left, calls[-1]), (8 << 20, True, False, 'start'))
+
+    def test_a_failed_undo_leaves_the_disk_alone(self):
+        calls, size, mounted, left, warned = self.run_shrink(rcs={'e2fsck -n': 4}, fail='e2undo')
+        self.assertEqual((size, mounted, left), (8 << 20, False, True))
+        self.assertNotIn('start', calls)
+        self.assertIn('e2undo', warned[-1])
+
+    def test_an_interrupted_shrink_is_checked_before_mounting(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        img = f'{tmp}/sara.img'
+        for path in (img, disks.undo_file(img)):
+            open(path, 'w').close()
+        u = {'name': 'sara', 'image': img, 'mount': f'{tmp}/mnt', 'size': '1g', 'stacks': []}
+        plan = mock.Mock()
+        with mock.patch.object(disks.os.path, 'ismount', return_value=False):
+            disks.ensure_unit(self.per_person(), u, plan)
+        self.assertEqual(
+            [c.args[0] for c in plan.do.call_args_list],
+            ['roll back the interrupted shrink of the sara disk', 'mount the sara disk at ' + f'{tmp}/mnt'],
+        )
+
+
 class Privileges(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

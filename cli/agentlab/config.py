@@ -72,7 +72,14 @@ SCHEMA = {  # section -> {key: default}; None = required
         'image': TINYAUTH_IMAGE,
     },
     'defaults': {'memory': '12g', 'cpus': 4},
-    'storage': {'mode': 'shared', 'pool_size': '', 'pool_image': '', 'person_size': '80G', 'person_sizes': {}},
+    'storage': {
+        'mode': 'shared',
+        'pool_size': '',
+        'pool_image': '',
+        'person_size': '80G',
+        'person_sizes': {},
+        'host_reserve': '15%',
+    },
     'limits': {'total_memory': '96g', 'throttle_io_psi_max': 25},
     'android': {'enabled': False, 'system_image': 'system-images;android-35;google_apis;x86_64'},
     'backups': {'enabled': True, 'keep_days': 14, 'time': '03:30'},
@@ -211,7 +218,16 @@ def _storage(raw, problems):
         s['mode'] = 'shared'
     if s['pool_size']:
         s['pool_size'] = _size(s['pool_size'], '[storage] pool_size', problems)
-    s['person_size'] = _size(s['person_size'], '[storage] person_size', problems)
+    if str(s['person_size']).lower() == 'auto':
+        s['person_size'] = 'auto'
+    else:
+        s['person_size'] = _size(s['person_size'], '[storage] person_size', problems)
+    reserve = str(s['host_reserve']).strip()
+    if reserve.endswith('%'):
+        if not reserve[:-1].isdigit() or not 0 <= int(reserve[:-1]) < 100:
+            problems.append('[storage] host_reserve: a percentage must be 0% to 99%')
+    else:
+        s['host_reserve'] = _size(reserve, '[storage] host_reserve', problems)
     if s['pool_image'] and not str(s['pool_image']).startswith('/'):
         problems.append('[storage] pool_image must be an absolute path')
     if not isinstance(s['person_sizes'], dict):
@@ -606,6 +622,7 @@ def resolve(raw, previous=None, state=None):
             'pool_size': storage['pool_size'],
             'pool_image': storage['pool_image'] or f'{c["data"]}/disks/pool.img',
             'person_size': storage['person_size'],
+            'host_reserve': str(storage['host_reserve']),
         },
         'limits': {
             'total_memory': total,

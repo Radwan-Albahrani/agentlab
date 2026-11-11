@@ -205,6 +205,18 @@ def tidy(data, agent):
     return lines, max(0, before - used(unit)[0])
 
 
+def trim(cfg):
+    """Hand the blocks freed inside each disk image back to the host disk (the images are sparse files)."""
+    units = sorted({a['storage_unit'] for a in cfg.get('agents') or [] if a.get('storage_unit')})
+    out = []
+    for unit in units:
+        if os.path.ismount(unit) and not DRY:
+            line = _run(['fstrim', '-v', unit]).strip()
+            if line:
+                out.append(line)
+    return out
+
+
 def main():
     cfg = cluster.load()
     data = cluster.data_dir(cfg)
@@ -213,6 +225,7 @@ def main():
         lines, gone = tidy(data, a)
         report += lines
         freed += gone
+    report += trim(cfg)
     print('\n'.join(report))
     if DRY:
         return

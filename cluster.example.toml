@@ -52,7 +52,8 @@ cpus = 4
 mode = "shared"                    # "shared": one pool for all agents; "per-person": a capped disk per owner
 pool_size = ""                     # shared: "" = plain directory, or e.g. "100G" for a fixed-size pool image
 pool_image = ""                    # shared with pool_size: the image file ("" = <data>/disks/pool.img)
-person_size = "80G"                # per-person: each owner's disk (all their agents share it)
+person_size = "80G"                # per-person: each owner's disk (all their agents share it); "auto" splits the host disk evenly
+# host_reserve = "15%"             # per-person with "auto": kept for the host (a size or a share of the disk)
 # person_sizes = { "sara@example.com" = "120G" }   # per-person: bigger (or smaller) disks for some owners
 
 [limits]

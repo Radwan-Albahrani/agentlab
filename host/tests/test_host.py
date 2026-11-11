@@ -537,6 +537,25 @@ class Janitor(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which('git'), 'needs git')
+class Trim(unittest.TestCase):
+    def test_each_mounted_disk_is_trimmed_once(self):
+        cfg = {
+            'agents': [
+                {'id': 'a', 'storage_unit': '/p/sara'},
+                {'id': 'b', 'storage_unit': '/p/sara'},
+                {'id': 'c', 'storage_unit': '/p/omar'},
+                {'id': 'd', 'storage_unit': ''},
+            ]
+        }
+        with (
+            mock.patch.object(janitor.os.path, 'ismount', side_effect=lambda p: p == '/p/sara'),
+            mock.patch.object(janitor, '_run', return_value='/p/sara: 3 GiB trimmed') as ran,
+            mock.patch.object(janitor, 'DRY', False),
+        ):
+            self.assertEqual(janitor.trim(cfg), ['/p/sara: 3 GiB trimmed'])
+        ran.assert_called_once_with(['fstrim', '-v', '/p/sara'])
+
+
 class WorktreeNotice(unittest.TestCase):
     def git(self, *args, cwd=None):
         env = {

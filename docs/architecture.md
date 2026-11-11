@@ -145,7 +145,14 @@ naming an agent you may not open is ignored.
 5. **Storage is a choice** (`[storage] mode`): `shared` (default) puts every agent under one pool, either a plain
    directory or, with `pool_size` set, a fixed-size ext4 loop image so agents can't fill the host; `per-person` gives
    each owner their own fixed-size image (`[storage] person_size`, overridable per agent owner) shared by all their
-   agents, so one person filling a disk can't stop anyone else. The janitor keeps either tidy.
+   agents, so one person filling a disk can't stop anyone else. `person_size = "auto"` splits the host disk, minus
+   `host_reserve`, evenly between the owners, so adding a person shrinks the others' disks and removing one grows them.
+   `apply` grows a disk live. It shrinks one offline (that owner's agents stop for a few minutes), never below its data
+   plus 10 %, never while one of its agents is mid-turn, and only with room on the host for the blocks it moves:
+   resize2fs works through a loop device with an undo file, the result must check clean before the image is cut, and
+   anything else rolls it back. An image with an undo file left beside it (a crash mid-shrink) is not mounted at boot;
+   the next `apply` checks it and rolls it back if needed. The images are sparse, and the janitor trims them nightly
+   so space freed inside goes back to the host. The janitor keeps either tidy.
 6. **T3 has its own sign-in too.** T3 only answers paired devices (bearer sessions from one-time pairing links), so
    even a routing mistake doesn't open someone's chats.
 7. **The admin sees everything.** Admins (listed in `auth.admins`) can open every agent and the hub. People should be
