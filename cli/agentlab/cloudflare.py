@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import config, render, tomledit
+from . import config, gateway, render, tomledit
 from .util import Failed, Needs, Plan, say, write_if_changed
 
 API = 'https://api.cloudflare.com/client/v4'
@@ -636,6 +636,7 @@ class Setup:
             ]
         if private:
             reads += [('routes', f'/accounts/{account}/zerotrust/routes/hostname')]
+            reads += [('devices', f'/accounts/{account}/gateway/rules')]
         if warp:
             reads += [('devices', f'/accounts/{account}/devices/settings')]
         answers = {}
@@ -844,6 +845,17 @@ def setup(cfg, plan, config_path, opener=None):
         auth['audience'] = s.access(sign_in=https) or auth['audience']
         if private:
             s.enrollment(s.people_policy())
+            seen = gateway.ensure(s)
+            say(
+                f"  Gateway: agentlab's rules sit ahead of the account's {seen['rules']} own"
+                + (
+                    f'; {len(seen["newcomers"])} people new to the account reach only agentlab'
+                    if seen['newcomers']
+                    else ''
+                )
+            )
+        else:
+            gateway.drop(s)
         found[('auth.cloudflare', 'team')] = auth['team']
         found[('auth.cloudflare', 'audience')] = auth['audience']
     if tunneled:
@@ -927,6 +939,8 @@ def sync_people(cfg, plan, opener=None):
     policies = s.api.call('GET', f'/accounts/{s.account}/access/policies') or []
     if any(p.get('name') == s.named('') for p in policies):
         s.people_policy()
+        if config.private_network(cfg):
+            gateway.ensure(s)
 
 
 def login_methods(cfg, providers):

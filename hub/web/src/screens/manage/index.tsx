@@ -6,12 +6,12 @@ import { gb, pct } from '../../lib/format';
 import { ActButton } from '../../ui/actions';
 import { Button } from '../../ui/Button';
 import { Card, CardBody } from '../../ui/Card';
-import { Inline, Split } from '../../ui/layout';
+import { Grid2, Inline, Split } from '../../ui/layout';
 import { EmptyCard, PageHead, Section } from '../../ui/page';
-import { Badge, Meter, Pill } from '../../ui/status';
-import { Table, Td, Th, Tr } from '../../ui/Table';
+import { Badge, Meter } from '../../ui/status';
 import { Note, Text } from '../../ui/text';
 import { AddDialog, DisksDialog, RemoveDialog, ResizeDialog } from './dialogs';
+import { AddTile, AgentTile } from './AgentTile';
 import { Jobs } from './jobs';
 
 type Opened = { kind: 'add' } | { kind: 'disks' } | { kind: 'resize' | 'remove'; agent: ManagedAgent } | null;
@@ -68,72 +68,27 @@ function ManageView({ d }: { d: Data }) {
         title="Agents"
         sub={`${d.agents.length} running on this server. Default limits: ${d.defaults.memory ?? '?'} memory, ${d.defaults.cpus ?? '?'} CPUs.`}
       >
-        <Card>
-          <Table
-            head={
-              <>
-                <Th>Agent</Th>
-                <Th wide>Owner</Th>
-                <Th num>Memory</Th>
-                <Th num>CPUs</Th>
-                <Th num wide>
-                  Files
-                </Th>
-                <Th fit />
-              </>
-            }
-          >
-            {d.agents.map((a) => (
-              <Tr key={a.id}>
-                <Td>
-                  <Inline gap="sm">
-                    <Badge name={a.id} size="sm" />
-                    <b>{a.id}</b>
-                    <StatePill state={a.state} />
-                  </Inline>
-                </Td>
-                <Td wide muted>
-                  {a.owner}
-                </Td>
-                <Td num>
-                  {a.memory}
-                  {!a.customMemory && <Text tone="muted"> ·default</Text>}
-                </Td>
-                <Td num>
-                  {a.cpus}
-                  {!a.customCpus && <Text tone="muted"> ·default</Text>}
-                </Td>
-                <Td num wide muted>
-                  {a.used ? gb(a.used) : '—'}
-                </Td>
-                <Td fit>
-                  <Inline gap="xs">
-                    <Button
-                      label="Resize"
-                      icon="sliders"
-                      small
-                      disabled={!d.watcher}
-                      onClick={() => {
-                        setOpened({ kind: 'resize', agent: a });
-                      }}
-                    />
-                    <Button
-                      label={`Remove ${a.id}`}
-                      icon="trash"
-                      small
-                      iconOnly
-                      variant="danger"
-                      disabled={!d.watcher}
-                      onClick={() => {
-                        setOpened({ kind: 'remove', agent: a });
-                      }}
-                    />
-                  </Inline>
-                </Td>
-              </Tr>
-            ))}
-          </Table>
-        </Card>
+        <Grid2>
+          {d.agents.map((a) => (
+            <AgentTile
+              key={a.id}
+              a={a}
+              disabled={!d.watcher}
+              onResize={() => {
+                setOpened({ kind: 'resize', agent: a });
+              }}
+              onRemove={() => {
+                setOpened({ kind: 'remove', agent: a });
+              }}
+            />
+          ))}
+          <AddTile
+            disabled={!d.watcher}
+            onAdd={() => {
+              setOpened({ kind: 'add' });
+            }}
+          />
+        </Grid2>
       </Section>
       <Disks
         d={d}
@@ -148,12 +103,6 @@ function ManageView({ d }: { d: Data }) {
       {busy && <Note>Changes run one at a time; a queued one starts when the one before it finishes.</Note>}
     </>
   );
-}
-
-function StatePill({ state }: { state: ManagedAgent['state'] }) {
-  if (state === 'up') return <Pill tone="ok">up</Pill>;
-  if (state === 'starting') return <Pill tone="warn">starting</Pill>;
-  return <Pill tone="bad">down</Pill>;
 }
 
 function Disks({ d, onEdit }: { d: Data; onEdit: () => void }) {

@@ -127,6 +127,18 @@ things stay yours: if your client profiles use split tunnels
 in Include mode, include the range Cloudflare resolves private hostnames to (`172.64.128.0/20` by default), and keep
 your domain out of Local Domain Fallback.
 
+It also fits into a Zero Trust account that already has its own setup (the same team, the same client) without
+widening anything. It reads the account's Gateway rules and its other device enrollment policies (emails, domains,
+email lists, Access groups) and adds its own rules ahead of all of them, named `agentlab-<cluster> ...`:
+- an Allow for agentlab's people to agentlab's names only (network and web), so a broad block of yours (for example
+  "anyone not on the DB team's list is blocked from everything") never cuts them off from their agent;
+- for people who could enroll the client only because of agentlab: a Block on all private address space and private
+  hostnames except agentlab's. They reach their agent and nothing else, whatever you add to the network later.
+People your own enrollment policies already admit are left to your rules. When it can't read a policy (an IdP group,
+say) it says so and treats everyone as new, the safe side. It needs room above your first rule (precedence above 5);
+it never moves or edits rules it didn't make, and `apply` keeps its rules in step as people come and go. So keep
+your own rules as broad as you like: adding a resource later means editing your email lists, not agentlab's rules.
+
 `cloudflare setup` checks the token and these settings before it changes anything, and builds the new way in (routes
 and the Access app) before it switches the tunnel and removes the old public records, so a stop halfway never locks
 you out by surprise; it tells you when an earlier run already did. `agentctl doctor` checks all of it, and warns when

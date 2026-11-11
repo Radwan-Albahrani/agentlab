@@ -21,6 +21,7 @@ from agentlab import (
     deploy,
     disks,
     doctor,
+    gateway,
     hostsfile,
     init,
     install,
@@ -753,6 +754,9 @@ class FakeCloudflare:
         # device profiles: the default one in Exclude mode, as a new account has it
         self.profile = {'default': True, 'exclude': [{'address': '10.0.0.0/8'}]}
         self.profiles = []
+        self.gateway = []  # Gateway rules (traffic policies)
+        self.lists = {}  # Gateway list id -> items
+        self.groups = {}  # Access group id -> group
 
     def call(self, method, path, body=None):
         self.calls.append((method, path))
@@ -881,6 +885,24 @@ class FakeCloudflare:
             if method == 'PUT':
                 self.org = dict(body)
             return dict(self.org)
+        if path.endswith('/gateway/rules'):
+            if method == 'POST':
+                if any(r['precedence'] == body['precedence'] for r in self.gateway):
+                    raise cloudflare.ApiError(f'Cloudflare POST {path}: HTTP 400 precedence in use', 400)
+                self.gateway.append({**copy.deepcopy(body), 'id': f'g{len(self.writes)}'})
+                return self.gateway[-1]
+            return copy.deepcopy(self.gateway)
+        if '/gateway/rules/' in path:
+            rid = path.rsplit('/', 1)[1]
+            if method == 'DELETE':
+                self.gateway = [r for r in self.gateway if r['id'] != rid]
+            elif method == 'PUT':
+                self.gateway = [{**copy.deepcopy(body), 'id': rid} if r['id'] == rid else r for r in self.gateway]
+            return {}
+        if '/gateway/lists/' in path and path.endswith('/items'):
+            return [{'value': v} for v in self.lists[path.split('/')[-2]]]
+        if '/access/groups/' in path:
+            return copy.deepcopy(self.groups[path.rsplit('/', 1)[1]])
         raise AssertionError(f'unexpected {method} {path}')
 
 
@@ -1578,6 +1600,97 @@ class PrivateNetwork(unittest.TestCase):
         ):
             cloudflare.setup(cfg, util.Plan(False), self.config_path)
         return cfg
+
+    def netzero_like(self):
+        """An account with its own setup: enrollment for a reusable email list, and a rule only that list passes."""
+        self.fake.lists['dbteam'] = ['boss@example.com', 'dev@other.com']
+        self.fake.policies.append(
+            {'id': 'db', 'name': 'DB team', 'decision': 'allow', 'include': [{'email_list': {'id': 'dbteam'}}]}
+        )
+        theirs = {
+            'id': 'theirs',
+            'name': 'Only the DB team over the tunnel',
+            'action': 'block',
+            'filters': ['l4'],
+            'traffic': 'net.dst.ip in {10.0.0.0/8}',
+            'identity': 'not(identity.email in $dbteam)',
+            'precedence': 1000,
+            'enabled': True,
+        }
+        self.fake.gateway.append(dict(theirs))
+        return theirs
+
+    def ours(self):
+        return {r['name']: r for r in self.fake.gateway if r['name'].startswith('agentlab-test')}
+
+    def test_gateway_rules_go_ahead_of_the_accounts_own_and_isolate_newcomers(self):
+        theirs = self.netzero_like()
+        self.run_setup()
+        ours = self.ours()
+        self.assertEqual(
+            [
+                (n, r['action'], r['filters'], r['precedence'])
+                for n, r in sorted(ours.items(), key=lambda i: i[1]['precedence'])
+            ],
+            [
+                ('agentlab-test allow', 'allow', ['l4'], 995),
+                ('agentlab-test newcomers web', 'allow', ['l4'], 996),
+                ('agentlab-test only agentlab', 'block', ['l4'], 997),
+                ('agentlab-test allow web', 'allow', ['http'], 998),
+                ('agentlab-test only agentlab web', 'block', ['http'], 999),
+            ],
+        )
+        allow = ours['agentlab-test allow']
+        self.assertIn('net.dst.ip == 10.207.0.2 and net.dst.port in {80 443}', allow['traffic'])
+        self.assertIn('"agents.example.com"', allow['traffic'])
+        for email in ('boss@example.com', 'sara@example.com', 'omar@example.com'):
+            self.assertIn(email, allow['identity'])
+        block = ours['agentlab-test only agentlab']
+        self.assertIn('sara@example.com', block['identity'])
+        self.assertNotIn('boss@example.com', block['identity'])  # already on the DB team's list
+        self.assertIn('net.dst.ip in {10.0.0.0/8 ', block['traffic'])
+        self.assertNotIn('172.64.128.0/20', allow['traffic'])  # the port-80 pass is for newcomers only
+        self.assertIn('sara@example.com', ours['agentlab-test newcomers web']['identity'])
+        self.assertNotIn('boss@example.com', ours['agentlab-test newcomers web']['identity'])
+        self.assertIn('any(http.conn.dst_ip[*] in {10.0.0.0/8', ours['agentlab-test only agentlab web']['traffic'])
+        self.assertEqual(next(r for r in self.fake.gateway if r['id'] == 'theirs'), theirs)  # untouched
+        before = len(self.fake.writes)
+        self.run_setup()
+        self.assertEqual(self.fake.writes[before:], [])
+
+    def test_gateway_rules_follow_the_people_and_the_accounts_order(self):
+        self.netzero_like()
+        self.run_setup()
+        self.write(self.text.replace('owner = "omar@example.com"', 'owner = "dev@other.com"'))
+        self.run_setup()
+        ours = self.ours()
+        self.assertIn('dev@other.com', ours['agentlab-test allow']['identity'])
+        self.assertNotIn('dev@other.com', ours['agentlab-test only agentlab']['identity'])
+        self.assertNotIn('omar@example.com', ours['agentlab-test allow']['identity'])
+        self.fake.gateway[0]['precedence'] = 500  # the admin moved their rule up
+        self.run_setup()
+        self.assertEqual(sorted(r['precedence'] for r in self.ours().values()), [495, 496, 497, 498, 499])
+
+    def test_unreadable_enrollment_rules_keep_everyone_isolated(self):
+        self.fake.policies.append(
+            {
+                'id': 'db',
+                'name': 'Okta',
+                'decision': 'allow',
+                'include': [{'okta': {'name': 'eng', 'identity_provider_id': 'x'}}],
+            }
+        )
+        with mock.patch.object(gateway, 'warn') as warned:
+            self.run_setup()
+        self.assertIn('Okta', warned.call_args.args[0])
+        block = self.ours()['agentlab-test only agentlab']
+        self.assertIn('boss@example.com', block['identity'])
+
+    def test_no_room_ahead_of_the_accounts_rules_says_so(self):
+        self.fake.gateway.append({'id': 'x', 'name': 'first', 'precedence': 2, 'action': 'allow', 'filters': ['l4']})
+        with self.assertRaises(util.Failed) as e:
+            self.run_setup()
+        self.assertIn('move your rules down', str(e.exception))
 
     def test_private_is_the_default_and_has_no_public_hostnames(self):
         self.assertTrue(config.private_network(config.load(self.config_path)))
