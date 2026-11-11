@@ -244,9 +244,9 @@ def core(cfg):
                 f'{data}/companions:/companions',
                 f'{data}/secrets:/secrets',
                 # writable: SQLite readers need -shm
-                # the whole storage root at its own path, so a new agent's folder (and a new person's disk) shows up
-                # without recreating the hub
-                f'{storage_root(cfg)}:{storage_root(cfg)}:rslave',
+                # the whole storage root at its own path, so a new agent's folder shows up without recreating the hub
+                # (no mount propagation: Docker refuses it when the host's mount is private, as on WSL)
+                f'{storage_root(cfg)}:{storage_root(cfg)}',
             ],
             'extra_hosts': ['host.docker.internal:host-gateway'],
             'networks': {EDGE_NETWORK: {'aliases': ['hub']}},
