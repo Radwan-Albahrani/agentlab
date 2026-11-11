@@ -1,6 +1,7 @@
 """agentctl CLI: exit 0 done, 1 failed, 2 needs --yes, sudo or a manual step."""
 
 import argparse
+import fcntl
 import json
 import os
 import sys
@@ -19,6 +20,7 @@ from . import (
     privileges,
     secret,
     setup,
+    sizing,
     status,
     update,
 )
@@ -79,13 +81,25 @@ def parser():
     add = ag.add_parser('add', help='add an agent for one person')
     add.add_argument('id')
     add.add_argument('email')
+    add.add_argument('--memory', help='memory cap, e.g. 12g (default: [defaults] memory)')
+    add.add_argument('--cpus', help='CPU cap, e.g. 4 (default: [defaults] cpus)')
     add.add_argument('--dry-run', action='store_true')
+    sa = ag.add_parser('set', help="change an agent's memory or CPUs ('default' drops the override)")
+    sa.add_argument('id')
+    sa.add_argument('--memory')
+    sa.add_argument('--cpus')
+    sa.add_argument('--dry-run', action='store_true')
     rm = ag.add_parser('remove', help='remove an agent (prints the plan; deleting data needs --yes)')
     rm.add_argument('id')
     rm.add_argument('--keep-data', action='store_true', help="keep the agent's disk image")
     rm.add_argument('--yes', action='store_true', help="confirm deleting the agent's data")
     rm.add_argument('--dry-run', action='store_true')
     ag.add_parser('list', help='every agent with its owner and limits')
+    sg = sub.add_parser('storage', help='disk sizes (per-person storage)').add_subparsers(dest='action', required=True)
+    ss = sg.add_parser('set', help='set person_size (a size or "auto") and host_reserve, then apply')
+    ss.add_argument('--person-size')
+    ss.add_argument('--host-reserve')
+    ss.add_argument('--dry-run', action='store_true')
     ad = ag.add_parser('adopt', help='mark an agent that already has AI sign-ins as onboarded')
     ad.add_argument('id')
     cf = sub.add_parser('cloudflare', help='Cloudflare tunnel, DNS and Access').add_subparsers(
@@ -128,9 +142,33 @@ def parser():
     return p
 
 
+CHANGES = {'apply', 'agent', 'storage', 'companion', 'update', 'install', 'backup', 'cloudflare'}
+LOCK = '/run/agentlab-agentctl.lock'
+
+
+def one_at_a_time(args):
+    """Changes wait for each other (the hub, the nightly update and a person can all start one); reads never wait."""
+    if args.cmd not in CHANGES or getattr(args, 'dry_run', False) or getattr(args, 'action', '') in ('list', 'adopt'):
+        return None
+    try:
+        f = open(LOCK, 'a')  # noqa: SIM115 - held until the process exits (an exec closes it, the new code retakes it)
+    except OSError:
+        return None  # not root: the command itself will ask for sudo
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        say('waiting for another agentctl change to finish…')
+        fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
 def dispatch(args):
     if args.cmd == 'agent' and args.action == 'add':
-        return agents.add(args.config, args.id, args.email, args.dry_run)
+        return agents.add(args.config, args.id, args.email, args.dry_run, args.memory, args.cpus)
+    if args.cmd == 'agent' and args.action == 'set':
+        return agents.set_limits(args.config, args.id, args.memory, args.cpus, args.dry_run)
+    if args.cmd == 'storage':
+        return sizing.set_sizes(args.config, args.person_size, args.host_reserve, args.dry_run)
     if args.cmd == 'agent' and args.action == 'remove':
         return agents.remove(args.config, args.id, args.keep_data, args.yes, args.dry_run)
     if args.cmd == 'companion' and args.action == 'create':
@@ -257,6 +295,7 @@ def main(argv=None):
     result, code, error = {}, OK, ''
     try:
         privileges.elevate(args, argv)
+        _lock = one_at_a_time(args)
         result = dispatch(args) or {}
     except Failed as e:
         code, error = e.code, str(e)

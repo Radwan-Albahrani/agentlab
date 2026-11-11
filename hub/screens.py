@@ -50,6 +50,7 @@ def nav():
     disk, _ = my_disk()
     system = []
     for key, path, label in (
+        ('manage', '/manage', 'Manage agents'),
         ('services', '/services', 'Services'),
         ('config', '/config', 'Configs'),
         ('storage', '/storage', 'Storage'),
@@ -61,6 +62,8 @@ def nav():
         entry = {'key': key, 'path': path, 'label': label}
         if key == 'services':
             entry['count'] = sum(1 for r in items if not domains.healthy(r))
+        if key == 'manage':
+            entry['count'] = sum(1 for j in store.jobs.recent(5) if j.get('state') in ('queued', 'running'))
         if key == 'storage' and disk:
             entry['note'] = f'{100 * disk["used"] / disk["size"]:.0f}%'
         system.append(entry)
@@ -385,6 +388,51 @@ def storage():
                 )
         out['scan'] = {'at': scan.get('at'), 'took': scan.get('took', 0), 'profiles': profs}
     return out
+
+
+def manage():
+    """The admin's agent management: every agent with its limits and disk, disk sizing, and the jobs."""
+    cfg, u = cluster.load(), store.watch.usage()
+    st = cfg.get('storage') or {}
+    per_person = st.get('mode') == 'per-person'
+    defaults = cfg.get('defaults') or {}
+    items = store.watch.containers().get('items') or []
+    scan = {i.get('agent'): i['bytes'] for i in (u.get('scan') or {}).get('items') or [] if i.get('path') == ''}
+    people = store.watch.people()
+    agents = []
+    for a in cfg.get('agents') or []:
+        rows = [r for r in items if r.get('stack') == f'{domains.AGENT_STACK}{a["id"]}']
+        state = 'up' if rows and all(domains.healthy(r) for r in rows) else 'starting' if rows else 'down'
+        agents.append(
+            {
+                'id': a['id'],
+                'owner': a.get('owner', ''),
+                'memory': a.get('memory', ''),
+                'cpus': a.get('cpus', 0),
+                'customMemory': bool(defaults) and a.get('memory') != defaults.get('memory'),
+                'customCpus': bool(defaults) and a.get('cpus') != defaults.get('cpus'),
+                'state': state,
+                'used': scan.get(a['id']),
+                'disk': people.get((a.get('owner') or '').lower()) if per_person else None,
+            }
+        )
+    return {
+        'agents': agents,
+        'owners': sorted({a['owner'] for a in agents if a['owner']}),
+        'defaults': defaults,
+        'storage': {
+            'mode': st.get('mode', 'shared'),
+            'personSize': st.get('person_size', ''),
+            'hostReserve': st.get('host_reserve', '15%'),
+            'host': u.get('pool') if per_person else None,
+            'pool': None if per_person else u.get('pool'),
+            'people': [{'email': e, 'agents': ids, **(people.get(e) or {})} for e, ids in cluster.owners().items()]
+            if per_person
+            else [],
+        },
+        'jobs': store.jobs.recent(),
+        'watcher': store.watch.alive(),
+    }
 
 
 def effect(s):

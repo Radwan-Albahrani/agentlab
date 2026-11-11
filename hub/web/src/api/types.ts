@@ -388,3 +388,44 @@ export interface DisplaySettings {
   presenting: boolean;
   groups: { name: string; items: { key: string; label: string; mode: DisplayMode }[] }[];
 }
+
+export interface ManagedAgent {
+  id: string;
+  owner: string;
+  memory: string;
+  cpus: number;
+  customMemory: boolean;
+  customCpus: boolean;
+  state: 'up' | 'starting' | 'down';
+  used?: number | null; // bytes in its folder, from the last storage scan
+  disk?: Pool | null; // its person's disk (per-person storage)
+}
+
+export interface Job {
+  id: string;
+  op: string;
+  title: string;
+  state: 'queued' | 'running' | 'done' | 'failed';
+  by?: string;
+  queued?: number;
+  started?: number;
+  finished?: number;
+  ok?: boolean;
+  message?: string;
+}
+
+export interface Manage {
+  agents: ManagedAgent[];
+  owners: string[];
+  defaults: { memory?: string; cpus?: number };
+  storage: {
+    mode: 'shared' | 'per-person';
+    personSize: string;
+    hostReserve: string;
+    host?: Pool | null;
+    pool?: Pool | null;
+    people: PersonDisk[];
+  };
+  jobs: Job[];
+  watcher: boolean;
+}

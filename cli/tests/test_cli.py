@@ -695,6 +695,20 @@ enabled = true
         kept = tomledit.remove_agent(text, 'omar')
         self.assertEqual(tomllib.loads(kept)['agents'][0]['publish'], {'t3': 7101})
 
+    def test_agent_limits_are_set_and_dropped(self):
+        out = tomledit.add_agent(self.TEXT, 'lina', 'lina@example.com', {'memory': '8g', 'cpus': 2})
+        self.assertEqual(
+            tomllib.loads(out)['agents'][2], {'id': 'lina', 'owner': 'lina@example.com', 'memory': '8g', 'cpus': 2}
+        )
+        out = tomledit.set_agent_key(self.TEXT, 'omar', 'memory', '16g')
+        self.assertEqual(tomllib.loads(out)['agents'][1]['memory'], '16g')
+        again = tomledit.set_agent_key(out, 'omar', 'memory', '20g')
+        self.assertEqual(again.count('memory ='), 1)
+        self.assertNotIn('memory', tomllib.loads(tomledit.set_agent_key(again, 'omar', 'memory', None))['agents'][1])
+        self.assertIn('# the second', again)
+        with self.assertRaises(ValueError):
+            tomledit.set_agent_key(self.TEXT, 'nobody', 'cpus', 2)
+
     def test_set_key_keeps_the_comment(self):
         out = tomledit.set_key(self.TEXT, 'auth.cloudflare', 'audience', 'abc123')
         self.assertIn('audience = "abc123"                # filled in by setup', out)

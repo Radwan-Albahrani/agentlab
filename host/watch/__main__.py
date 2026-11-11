@@ -4,7 +4,7 @@ import sys
 import threading
 import time
 
-from . import agent_requests, inventory, page_requests, secrets, storage, store
+from . import agent_requests, inventory, jobs, page_requests, secrets, storage, store
 from .settings import CHECK_EVERY_S, REQUEST_POLL_S
 
 CHECKS = (('storage', storage.check), ('secrets', secrets.check), ('containers', inventory.check))
@@ -35,6 +35,7 @@ def main():
     while True:
         guarded('requests', page_requests.handle_pending)
         guarded('agent requests', agent_requests.handle_all)
+        guarded('agent management', jobs.tick)
         time.sleep(REQUEST_POLL_S)
 
 

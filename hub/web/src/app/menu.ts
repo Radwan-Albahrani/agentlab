@@ -20,6 +20,7 @@ export interface Menu {
 }
 
 const SYSTEM_ICONS: Record<string, string> = {
+  manage: 'agents',
   services: 'layers',
   config: 'sliders',
   storage: 'disk',

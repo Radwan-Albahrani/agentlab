@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, post } from './client';
+import type * as T from './types';
 import type { AccountsPage } from './types';
 
 /** Refetches the companion's page every second while `on`; `giveUp` runs after 30 s. */
@@ -70,6 +71,16 @@ export const useCompanionLogs = (name: string) =>
 export const useServices = () => useQuery({ queryKey: ['services'], queryFn: api.services });
 export const useConfigs = () => useQuery({ queryKey: ['configs'], queryFn: api.configs });
 export const useStorage = () => useQuery({ queryKey: ['storage'], queryFn: api.storage });
+const working = (m: T.Manage | undefined) => !!m?.jobs.some((j) => j.state === 'queued' || j.state === 'running');
+export const useManage = () =>
+  useQuery({ queryKey: ['manage'], queryFn: api.manage, refetchInterval: (q) => (working(q.state.data) ? 1500 : 10_000) });
+export const useJobLog = (id: string | null, live: boolean) =>
+  useQuery({
+    queryKey: ['job-log', id],
+    queryFn: () => api.jobLog(id ?? ''),
+    enabled: id !== null,
+    refetchInterval: live ? 1000 : false,
+  });
 export const useSecrets = () => useQuery({ queryKey: ['secrets'], queryFn: api.secrets });
 export const useNotifications = () => useQuery({ queryKey: ['notifications'], queryFn: api.notifications });
 export const useDisplay = () => useQuery({ queryKey: ['display'], queryFn: api.display });

@@ -56,6 +56,7 @@ interface InputProps {
   max?: number;
   title?: string;
   onEnter?: () => unknown; // date pickers don't submit a form
+  list?: string; // a <datalist> of suggestions
 }
 
 const typing = (el: Element | null) => !!el && (el.matches('input, textarea, select') || (el as HTMLElement).isContentEditable);

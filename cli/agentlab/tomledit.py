@@ -38,9 +38,10 @@ def _value(lines, start, end, key):
     return None
 
 
-def add_agent(text, agent_id, owner):
+def add_agent(text, agent_id, owner, extra=None):
     lines = text.splitlines()
     block = ['[[agents]]', f'id = {json.dumps(agent_id)}', f'owner = {json.dumps(owner)}']
+    block += [f'{k} = {json.dumps(v)}' for k, v in (extra or {}).items()]
     existing = _blocks(lines, 'agents')
     if existing:
         at = existing[-1][1]
@@ -58,6 +59,24 @@ def remove_agent(text, agent_id):
             first = start - 1 if start > 0 and not lines[start - 1].strip() else start
             del lines[first:end]
             return '\n'.join(lines) + '\n'
+    raise ValueError(f'no [[agents]] block with id = "{agent_id}"')
+
+
+def set_agent_key(text, agent_id, key, value):
+    """Set `key = value` in that agent's [[agents]] block, or drop the key when value is None."""
+    lines = text.splitlines()
+    for start, end in _blocks(lines, 'agents'):
+        if _value(lines, start, end, 'id') != agent_id:
+            continue
+        at = next((i for i in range(start + 1, end) if (m := KEY.match(lines[i])) and m.group(1) == key), None)
+        if value is None:
+            if at is not None:
+                del lines[at]
+        elif at is not None:
+            lines[at] = f'{key} = {json.dumps(value)}{_comment(lines[at].split("=", 1)[1])}'
+        else:
+            lines.insert(end, f'{key} = {json.dumps(value)}')
+        return '\n'.join(lines) + '\n'
     raise ValueError(f'no [[agents]] block with id = "{agent_id}"')
 
 

@@ -38,6 +38,12 @@ files.
 person's full disk only stops that person; tell them, or raise `person_size` and `apply`.
 Nothing inside someone's workspace gets deleted without asking them or the admin.
 
+The hub's **Manage agents** page (admins only) does the day-to-day changes without a shell: add, resize and
+remove agents, set disk sizes, and reclaim space. Each change is an `agentctl` run the host watcher starts in its own
+systemd unit (`agentlab-job-<id>`), one at a time and never at the same time as another agentctl change (they wait
+for each other's lock); its log streams to the page and stays in `<data>/hub/watch/jobs/`. The hub mounts the
+storage root as a whole, so adding or removing an agent never restarts it.
+
 Disks grow and shrink to whatever the config says. To add a person when the disks already fill the host, set
 `person_size = "auto"` (the host disk minus `host_reserve`, 15 % by default, split evenly), or lower `person_size`,
 then `apply`. Shrinking is safe to run: it never goes below a disk's data plus 10 %, it waits while that person's

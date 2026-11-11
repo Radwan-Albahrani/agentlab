@@ -5,6 +5,7 @@ import re
 import cluster
 import display
 import notify
+import scope
 import store
 
 
@@ -55,6 +56,80 @@ def config_deploy(b):
         raise ValueError('Unknown stack.')
     store.watch.request('deploy~' + b['id'])
     return 'Deploying; the result shows under Deploys.'
+
+
+AGENT_ID = re.compile(r'^[a-z][a-z0-9-]{0,30}[a-z0-9]$|^[a-z]$')
+EMAIL = re.compile(r'^[^@\s/]+@[^@\s/]+\.[^@\s/]+$')
+SIZE = re.compile(r'^\d+(\.\d+)?[kmgt]?b?$', re.IGNORECASE)
+RESERVE = re.compile(r'^\d{1,2}%$|^\d+(\.\d+)?[kmgt]?b?$', re.IGNORECASE)
+NO_WATCHER = 'The host watcher (agentlab-watch) is not running, so nothing can change right now.'
+
+
+def _limit_args(b):
+    out = {}
+    memory, cpus = str(b.get('memory') or '').strip().lower(), str(b.get('cpus') or '').strip().lower()
+    if memory:
+        if memory != 'default' and not SIZE.match(memory):
+            raise ValueError('Memory is a size such as 8g or 16g.')
+        out['memory'] = memory
+    if cpus:
+        try:
+            ok = cpus == 'default' or 0 < float(cpus) <= 512
+        except ValueError:
+            ok = False
+        if not ok:
+            raise ValueError('CPUs is a number such as 2 or 4.')
+        out['cpus'] = cpus
+    return out
+
+
+def manage(what, b):
+    """Queue an agent management job for the host; -> the toast text."""
+    if not store.watch.alive():
+        raise ValueError(NO_WATCHER)
+    by, known = scope.current().email, cluster.agents()
+    aid = str(b.get('id') or '').strip().lower()
+    if what == 'add':
+        email = str(b.get('email') or '').strip().lower()
+        if not AGENT_ID.match(aid):
+            raise ValueError('The name is lowercase letters, digits and dashes, starting with a letter.')
+        if aid in known:
+            raise ValueError(f'There is already an agent called {aid}.')
+        if not EMAIL.match(email):
+            raise ValueError('Enter the email address the person signs in with.')
+        store.jobs.submit('agent.add', {'id': aid, 'email': email, **_limit_args(b)}, by)
+        return f'Adding {aid}. Follow along below; it takes a few minutes.'
+    if aid not in known:
+        raise ValueError('Unknown agent.')
+    if what == 'resize':
+        args = _limit_args(b)
+        if not args:
+            raise ValueError('Nothing to change.')
+        store.jobs.submit('agent.set', {'id': aid, **args}, by)
+        return f'Resizing {aid}; it restarts with the new limits.'
+    delete = b.get('deleteData') is True
+    if delete and str(b.get('confirm') or '').strip() != aid:
+        raise ValueError(f'Type {aid} to confirm deleting its files.')
+    tied = [n for n, owner in cluster.companions().items() if owner == aid]
+    if tied:
+        raise ValueError(f'{aid} has companions ({", ".join(tied)}): remove them first, on their pages.')
+    store.jobs.submit('agent.remove', {'id': aid, 'delete_data': delete}, by)
+    return f'Removing {aid}.'
+
+
+def disk_sizes(b):
+    if not store.watch.alive():
+        raise ValueError(NO_WATCHER)
+    size = str(b.get('personSize') or '').strip().lower()
+    reserve = str(b.get('hostReserve') or '').strip().lower()
+    if size and size != 'auto' and not SIZE.match(size):
+        raise ValueError('The disk size is "auto" or a size such as 80g.')
+    if reserve and not RESERVE.match(reserve):
+        raise ValueError('The host reserve is a share such as 15% or a size such as 64g.')
+    if not (size or reserve):
+        raise ValueError('Nothing to change.')
+    store.jobs.submit('storage.set', {'person_size': size, 'host_reserve': reserve}, scope.current().email)
+    return 'Resizing disks. Agents on a disk that shrinks stop for a few minutes.'
 
 
 def storage(what):

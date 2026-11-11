@@ -9,13 +9,23 @@ from urllib.parse import quote
 
 from .text import last_question, plain, short
 
-T3 = os.environ.get('NOTIFY_T3', '/agents/{id}/home/.t3/userdata')
+T3 = os.environ.get('NOTIFY_T3', '')  # tests: '<folder>/{id}/...'; otherwise under the agent's own path
+
+
+def userdata(profile):
+    if T3:
+        return T3.format(id=profile)
+    import cluster  # noqa: PLC0415 - the hub's module; notify also runs in tests without it
+
+    return f'{cluster.agent_dir(profile)}/home/.t3/userdata'
+
+
 # Chats started through T3's API (subagents, orchestrator workers, companion tasks), not by the owner.
 IS_WORKER = "json_extract(t.payload_json, '$.creationSource') in ('mcp', 'provider')"
 
 
 def connect(profile):
-    return sqlite3.connect(f'file:{T3.format(id=profile)}/statev2.sqlite?mode=ro', uri=True, timeout=3)
+    return sqlite3.connect(f'file:{userdata(profile)}/statev2.sqlite?mode=ro', uri=True, timeout=3)
 
 
 def ts(iso):
@@ -25,7 +35,7 @@ def ts(iso):
 def thread_link(profile, tid):
     """A t3code:// link that opens this chat in the T3 iPhone app."""
     try:
-        with open(f'{T3.format(id=profile)}/environment-id') as f:
+        with open(f'{userdata(profile)}/environment-id') as f:
             env = f.read().strip()
     except OSError:
         return ''

@@ -14,6 +14,9 @@ AGENT_URL = os.environ.get('HUB_AGENT_URL', '')  # '...{id}...' template
 ACCOUNTS_PORT = 8790
 ACCOUNTS = {'claude': 'Claude', 'codex': 'Codex', 'github': 'GitHub'}
 HOSTNAME = re.compile(r'^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$')
+# Tests point this at <folder>/<id>; otherwise each agent's own path, under the storage root the hub mounts whole
+# (so adding or removing an agent never restarts the hub).
+AGENTS_DIR = os.environ.get('AGENTS_DIR', '')
 _cache = {'mtime': None, 'data': {}}
 _host = contextvars.ContextVar('request_host', default='')
 
@@ -34,6 +37,12 @@ def load():
 
 def agents():
     return {a['id']: a for a in load().get('agents') or [] if a.get('id')}
+
+
+def agent_dir(agent_id):
+    if AGENTS_DIR:
+        return os.path.join(AGENTS_DIR, agent_id)
+    return (agents().get(agent_id) or {}).get('path') or os.path.join('/nonexistent', agent_id)
 
 
 def ids():

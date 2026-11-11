@@ -393,6 +393,7 @@ class Screens(unittest.TestCase):
             'configs': screens.configs,
             'config': lambda: screens.config('agentlab-core'),
             'storage': screens.storage,
+            'manage': screens.manage,
             'secrets': screens.secrets,
             'notifications': screens.notifications,
             'display': screens.display_settings,
@@ -525,6 +526,39 @@ class Routes(unittest.TestCase):
     def test_companion_restart_finds_its_container(self):
         actions.companion('scout', 'restart', {})
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/restart~companion-scout'))
+
+    def test_manage_queues_checked_jobs_for_the_watcher(self):
+        queue = f'{ROOT}/watch/jobs/queue'
+        self.assertIn('Adding lina', actions.manage('add', {'id': 'lina', 'email': 'Lina@Example.com', 'memory': '8g'}))
+        jobs = [json.loads(Path(queue, n).read_text()) for n in sorted(os.listdir(queue))]
+        self.assertEqual(jobs[-1]['op'], 'agent.add')
+        self.assertEqual(jobs[-1]['args'], {'id': 'lina', 'email': 'lina@example.com', 'memory': '8g'})
+        self.assertEqual(store.jobs.recent()[0]['state'], 'queued')
+        for what, body in (
+            ('add', {'id': 'sara', 'email': 'x@example.com'}),  # taken
+            ('add', {'id': 'Bad Name', 'email': 'x@example.com'}),
+            ('add', {'id': 'ok', 'email': 'nope'}),
+            ('resize', {'id': 'sara', 'memory': 'lots'}),
+            ('resize', {'id': 'nobody', 'memory': '8g'}),
+            ('remove', {'id': 'sara', 'deleteData': True, 'confirm': 'wrong'}),
+            ('remove', {'id': 'admin'}),  # has a companion
+        ):
+            with self.subTest(what=what, body=body), self.assertRaises(ValueError):
+                actions.manage(what, body)
+        actions.manage('remove', {'id': 'lab', 'deleteData': True, 'confirm': 'lab'})
+        self.assertIn('Resizing disks', actions.disk_sizes({'personSize': 'auto', 'hostReserve': '64g'}))
+        with self.assertRaises(ValueError):
+            actions.disk_sizes({'personSize': 'huge'})
+
+    def test_manage_is_admin_only(self):
+        scope.use(scope.Viewer('sara@example.com', False, frozenset({'sara', 'lab'})))
+        try:
+            with self.assertRaises(routes.ForbiddenError):
+                routes.resolve(routes.GET, '/api/manage')
+            with self.assertRaises(routes.ForbiddenError):
+                routes.resolve(routes.POST, '/api/manage/add')
+        finally:
+            scope.use(scope.ADMIN)
 
     def test_stacks_are_read_only(self):
         self.assertEqual(store.stacks.stacks()[0]['id'], 'agentlab-agent-admin')

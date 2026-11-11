@@ -8,6 +8,7 @@ import { Agents } from './screens/Agents';
 import { Companion } from './screens/companion';
 import { ConfigEdit, Configs } from './screens/Configs';
 import { Display } from './screens/Display';
+import { Manage } from './screens/manage';
 import { Notifications } from './screens/Notifications';
 import { Overview } from './screens/Overview';
 import { Secrets } from './screens/secrets';
@@ -24,6 +25,7 @@ export function App() {
         <Route path="/agents/:name/accounts" element={<Accounts />} />
         <Route path="/agents/:name/onboarding" element={<Onboarding />} />
         <Route path="/agents/:profile/:name" element={<Companion />} />
+        <Route path="/manage" element={<Manage />} />
         <Route path="/services" element={<Services />} />
         <Route path="/config" element={<Configs />} />
         <Route path="/config/*" element={<ConfigEdit />} />

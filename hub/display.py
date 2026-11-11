@@ -39,6 +39,7 @@ def items():
     out += [
         ('System', f'page.{k}', label, INFRA)
         for k, label in (
+            ('manage', 'Manage agents'),
             ('services', 'Services'),
             ('config', 'Configs'),
             ('storage', 'Storage'),

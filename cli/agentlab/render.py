@@ -202,6 +202,10 @@ def tinyauth_service(cfg):
     }
 
 
+def storage_root(cfg):
+    return f'{cfg["data"]}/people' if cfg['storage']['mode'] == 'per-person' else f'{cfg["data"]}/agents'
+
+
 def core(cfg):
     data = cfg['data']
     mounts = [f'{data}/rendered:/etc/agentlab:ro']
@@ -240,7 +244,9 @@ def core(cfg):
                 f'{data}/companions:/companions',
                 f'{data}/secrets:/secrets',
                 # writable: SQLite readers need -shm
-                *[f'{a["path"]}:/agents/{a["id"]}' for a in cfg['agents']],
+                # the whole storage root at its own path, so a new agent's folder (and a new person's disk) shows up
+                # without recreating the hub
+                f'{storage_root(cfg)}:{storage_root(cfg)}:rslave',
             ],
             'extra_hosts': ['host.docker.internal:host-gateway'],
             'networks': {EDGE_NETWORK: {'aliases': ['hub']}},

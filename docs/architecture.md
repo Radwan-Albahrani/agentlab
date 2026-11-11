@@ -153,6 +153,8 @@ naming an agent you may not open is ignored.
    anything else rolls it back. An image with an undo file left beside it (a crash mid-shrink) is not mounted at boot;
    the next `apply` checks it and rolls it back if needed. The images are sparse, and the janitor trims them nightly
    so space freed inside goes back to the host. The janitor keeps either tidy.
+   The hub's Manage agents page queues these changes (add, resize, remove, disk sizes) for the host watcher, which runs
+   each as `agentctl` in its own systemd unit, one at a time, with the log streamed back to the page.
 6. **T3 has its own sign-in too.** T3 only answers paired devices (bearer sessions from one-time pairing links), so
    even a routing mistake doesn't open someone's chats.
 7. **The admin sees everything.** Admins (listed in `auth.admins`) can open every agent and the hub. People should be

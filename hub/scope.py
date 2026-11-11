@@ -5,7 +5,15 @@ from dataclasses import dataclass
 
 import cluster
 
-ADMIN_ONLY = {'page.services', 'page.config', 'page.secrets', 'page.notifications', 'storage.manage', 'display'}
+ADMIN_ONLY = {
+    'page.manage',
+    'page.services',
+    'page.config',
+    'page.secrets',
+    'page.notifications',
+    'storage.manage',
+    'display',
+}
 
 
 @dataclass(frozen=True)

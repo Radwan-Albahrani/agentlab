@@ -53,7 +53,7 @@ from throttle import scheduler, spool  # noqa: E402
 from throttle.peaks import Peaks  # noqa: E402
 from throttle.settings import ADMIT_GAP_S, DEFAULT_MB, IO_PRESSURE_MAX, PEAK_MARGIN, SWAP_CAP_MB  # noqa: E402
 from throttle.spool import Job  # noqa: E402
-from watch import agent_requests, inventory, page_requests, secrets, storage, store  # noqa: E402
+from watch import agent_requests, inventory, jobs, page_requests, secrets, storage, store  # noqa: E402
 
 GB = 1024
 POOL = (2 * GB, 15 * GB)
@@ -537,6 +537,82 @@ class Janitor(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which('git'), 'needs git')
+def _read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def _write(path, text):
+    with open(path, 'w') as f:
+        f.write(text)
+
+
+class Jobs(unittest.TestCase):
+    def test_commands_are_checked_and_never_options(self):
+        self.assertEqual(
+            jobs.command('agent.add', {'id': 'lina', 'email': 'Lina@example.com', 'memory': '8g', 'cpus': '2'})[0],
+            ['agent', 'add', 'lina', 'lina@example.com', '--memory', '8g', '--cpus', '2'],
+        )
+        self.assertEqual(
+            jobs.command('agent.remove', {'id': 'lina', 'delete_data': True})[0], ['agent', 'remove', 'lina', '--yes']
+        )
+        self.assertEqual(
+            jobs.command('agent.remove', {'id': 'lina', 'delete_data': 'yes'})[0],
+            ['agent', 'remove', 'lina', '--keep-data'],
+        )
+        self.assertEqual(
+            jobs.command('storage.set', {'person_size': 'auto', 'host_reserve': '15%'})[0],
+            ['storage', 'set', '--person-size', 'auto', '--host-reserve', '15%'],
+        )
+        for op, args in (
+            ('agent.add', {'id': '--yes', 'email': 'a@b.co'}),
+            ('agent.add', {'id': 'ok', 'email': '-x@b.co --config=/etc/passwd'}),
+            ('agent.set', {'id': 'ok', 'memory': '--force'}),
+            ('agent.set', {'id': 'ok'}),
+            ('storage.set', {'person_size': '1g; rm -rf /'}),
+            ('shell', {}),
+        ):
+            with self.subTest(op=op, args=args), self.assertRaises(ValueError):
+                jobs.command(op, args)
+
+    def test_a_job_runs_in_its_own_unit_and_reports_its_exit(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        ran = []
+
+        def run(cmd, timeout=120):
+            ran.append(cmd)
+            return 0, ''
+
+        with (
+            mock.patch.object(jobs.store, 'path', side_effect=lambda *p: os.path.join(tmp, *p)),
+            mock.patch.object(jobs.store, 'load', side_effect=lambda n, d: _read_json(os.path.join(tmp, n))),
+            mock.patch.object(
+                jobs.store, 'dump', side_effect=lambda n, d: json.dump(d, open(os.path.join(tmp, n), 'w'))
+            ),
+            mock.patch.object(jobs.store, 'event'),
+            mock.patch.object(jobs.host, 'run', side_effect=run),
+            mock.patch.object(jobs.host, 'unit_active', return_value=True),
+        ):
+            os.makedirs(f'{tmp}/jobs/queue')
+            for n, args in enumerate(({'id': 'lina', 'email': 'lina@example.com'}, {'id': 'omar'})):
+                job = {'id': f'170000000{n}-0000000{n}', 'op': 'agent.add' if n == 0 else 'agent.set', 'args': args}
+                _write(f'{tmp}/jobs/queue/{job["id"]}.json', json.dumps(job))
+            jobs.tick()
+            self.assertEqual(ran[0][:3], ['systemd-run', '--unit', 'agentlab-job-1700000000-00000000'])
+            self.assertEqual(ran[0][-4:], ['agent', 'add', 'lina', 'lina@example.com'])
+            jobs.tick()  # one at a time: the second waits
+            self.assertEqual(len(ran), 1)
+            with open(f'{tmp}/jobs/1700000000-00000000.log', 'a') as f:
+                f.write('  deploy agentlab-agent-lina\n! Cloudflare was not updated\n')
+            _write(f'{tmp}/jobs/1700000000-00000000.rc', '0\n')
+            jobs.tick()
+            first = _read_json(f'{tmp}/jobs/1700000000-00000000.json')
+            self.assertEqual((first['state'], first['message']), ('done', 'Cloudflare was not updated'))
+            second = _read_json(f'{tmp}/jobs/1700000001-00000001.json')
+            self.assertEqual((second['state'], second['message']), ('failed', 'nothing to change'))
+
+
 class Trim(unittest.TestCase):
     def test_each_mounted_disk_is_trimmed_once(self):
         cfg = {

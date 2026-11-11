@@ -617,6 +617,7 @@ def resolve(raw, previous=None, state=None):
         'coolify_domain': c['coolify_domain'],
         'pair_domain': c['pair_domain'],
         'agents': agents,
+        'defaults': {'memory': default_memory, 'cpus': default_cpus},
         'storage': {
             'mode': storage['mode'],
             'pool_size': storage['pool_size'],

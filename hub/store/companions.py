@@ -12,7 +12,6 @@ from . import secrets as store_secrets
 from .files import read_json, write_json
 
 ROOT = os.environ.get('COMPANIONS_DIR', '/companions')
-AGENTS = os.environ.get('AGENTS_DIR', '/agents')
 LOG_TAIL = 200_000  # bytes
 LIVE_WITHIN = 45  # s
 TASKS_SHOWN, EVENTS_SHOWN, POLLS_SHOWN = 300, 600, 20
@@ -86,7 +85,7 @@ def _read_db(name):
 def status(name):
     """The companion runner's status.json (state, last error), or {}."""
     agent = cluster.companions().get(name, '')
-    return read_json(os.path.join(AGENTS, agent, 'workspace', '.companion', name, 'status.json'), {})
+    return read_json(os.path.join(cluster.agent_dir(agent), 'workspace', '.companion', name, 'status.json'), {})
 
 
 def template_update(name):
@@ -193,7 +192,7 @@ def ask(name, text, channel, review):
 def log_tail(name):
     """(end of the companion's log, mtime); ('', 0) before it ever ran."""
     agent = cluster.companions().get(name, '')
-    path = os.path.join(AGENTS, agent, 'workspace', '.companion', name, 'logs', 'companion.log')
+    path = os.path.join(cluster.agent_dir(agent), 'workspace', '.companion', name, 'logs', 'companion.log')
     try:
         with open(path, 'rb') as f:
             f.seek(max(0, os.path.getsize(path) - LOG_TAIL))
