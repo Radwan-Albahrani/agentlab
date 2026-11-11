@@ -136,8 +136,8 @@ email lists, Access groups) and adds its own rules ahead of all of them, named `
 - for people who could enroll the client only because of agentlab: a Block on all private address space. They reach
   their agent and nothing else, whatever you add to the network later.
 People your own enrollment policies already admit are left to your rules. When it can't read a policy (an IdP group,
-say) it says so and treats everyone as new, the safe side. It needs room above your first rule (precedence above 2);
-it never moves or edits rules it didn't make, and `apply` keeps its rules in step as people come and go. So keep
+say) it says so and treats everyone as new, the safe side. When your first rules sit at precedence 0 or 1, it moves just
+those down (their order and everything else about them stay); it never edits rules it didn't make otherwise, and `apply` keeps its rules in step as people come and go. So keep
 your own rules as broad as you like: adding a resource later means editing your email lists, not agentlab's rules.
 
 `cloudflare setup` checks the token and these settings before it changes anything, and builds the new way in (routes

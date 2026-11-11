@@ -147,11 +147,14 @@ def ensure(s, check_people=True):
             'agentlab treats its people as new to the account: they reach agentlab and nothing else private'
         )
     specs = wanted(s.cfg, newcomers)
-    first = min((r.get('precedence') for r in theirs if isinstance(r.get('precedence'), int)), default=10_000)
-    if first - len(specs) < 1 and specs:
-        raise Failed(
-            f"agentlab's {len(specs)} Gateway rules must come before your own, but your first one has precedence "
-            f'{first}: move your rules down by {len(specs)} (Zero Trust → Traffic policies), then run setup again'
+    slots, moves = places(theirs, len(specs))
+    for r, to in moves:
+        s.write(
+            f'move your network rule "{r.get("name")}" from precedence {r["precedence"]} to {to}, so agentlab\'s rules '
+            'can go first (its order among your rules and everything else about it stay the same)',
+            'PUT',
+            f'{path}/{r["id"]}',
+            {**{k: r[k] for k in RULE_FIELDS if k in r and r[k] is not None}, 'precedence': to},
         )
     keep, bodies = set(), []
     for n, (suffix, filters, action, traffic, identity) in enumerate(specs):
@@ -162,7 +165,7 @@ def ensure(s, check_people=True):
             'name': name,
             'description': f'made by agentlab ({_stamp(spec)}); agentctl cloudflare setup keeps it in step',
             'enabled': True,
-            'precedence': first - len(specs) + n,
+            'precedence': slots[n],
             **spec,
         }
         bodies.append((body, describe(suffix, newcomers)))
@@ -182,6 +185,54 @@ def ensure(s, check_people=True):
         except Failed as e:
             warn(f'Cloudflare refused the Gateway rule "{body["name"]}" ({e}); run setup again, or report it')
     return {'rules': len(theirs), 'newcomers': newcomers}
+
+
+# What a rule PUT carries; everything else Cloudflare returns (id, timestamps, version...) is its own bookkeeping.
+RULE_FIELDS = (
+    'name',
+    'description',
+    'action',
+    'enabled',
+    'filters',
+    'traffic',
+    'identity',
+    'device_posture',
+    'rule_settings',
+    'schedule',
+    'expiration',
+    'precedence',
+)
+
+
+def places(theirs, n):
+    """(n precedences for agentlab's network rules, [(rule, new precedence)] for the account's network rules to move).
+    Network and HTTP rules run in separate orders, so only the account's network rules matter for where agentlab's
+    go: the n highest free numbers below its first one. Numbers are unique across all rules, so HTTP and DNS rules'
+    numbers are only avoided. With no room there, agentlab's take the lowest free numbers and the account's network
+    rules in the way move up past them, keeping their order (moves run last first, so none ever collide)."""
+    if not n:
+        return [], []
+    held = {r['precedence']: r for r in theirs if isinstance(r.get('precedence'), int)}
+    network = sorted((r for r in held.values() if 'l4' in (r.get('filters') or [])), key=lambda r: r['precedence'])
+    first = network[0]['precedence'] if network else max(held, default=0) + 1000
+    below = [p for p in range(first - 1, -1, -1) if p not in held][:n]
+    if len(below) == n:
+        return sorted(below), []
+    slots, p = [], 0
+    while len(slots) < n:
+        if p not in held:
+            slots.append(p)
+        p += 1
+    moves, floor = [], slots[-1] + 1
+    for r in network:
+        if r['precedence'] >= floor:
+            break
+        to = floor
+        while to in held and held[to] is not r and 'l4' not in (held[to].get('filters') or []):
+            to += 1
+        moves.append((r, to))
+        floor = to + 1
+    return slots, moves[::-1]
 
 
 def _spec(body):

@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 
 from . import config, gateway, render, tomledit
-from .util import Failed, Needs, Plan, say, write_if_changed
+from .util import Failed, Needs, Plan, say, warn, write_if_changed
 
 API = 'https://api.cloudflare.com/client/v4'
 
@@ -940,7 +940,10 @@ def sync_people(cfg, plan, opener=None):
     if any(p.get('name') == s.named('') for p in policies):
         s.people_policy()
         if config.private_network(cfg):
-            gateway.ensure(s)
+            try:
+                gateway.ensure(s)
+            except Failed as e:  # an apply or update never stops here; `cloudflare setup` shows the details
+                warn(f'Gateway rules not updated: {e}')
 
 
 def login_methods(cfg, providers):

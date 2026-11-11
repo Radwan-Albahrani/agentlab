@@ -1689,11 +1689,53 @@ class PrivateNetwork(unittest.TestCase):
         block = self.ours()['agentlab-test only agentlab']
         self.assertIn('boss@example.com', block['identity'])
 
-    def test_no_room_ahead_of_the_accounts_rules_says_so(self):
-        self.fake.gateway.append({'id': 'x', 'name': 'first', 'precedence': 2, 'action': 'allow', 'filters': ['l4']})
-        with self.assertRaises(util.Failed) as e:
-            self.run_setup()
-        self.assertIn('move your rules down', str(e.exception))
+    def test_http_rules_have_their_own_order(self):
+        self.netzero_like()
+        dni = {
+            'id': 'h',
+            'name': 'Do not inspect',
+            'precedence': 0,
+            'action': 'off',
+            'filters': ['http'],
+            'traffic': 'x',
+        }
+        self.fake.gateway.append(dict(dni))
+        self.run_setup()
+        ours = sorted(r['precedence'] for r in self.ours().values())
+        self.assertEqual(ours, [998, 999])  # just ahead of the account's network rule at 1000
+        self.assertEqual(next(r for r in self.fake.gateway if r['id'] == 'h'), dni)
+
+    def test_the_accounts_first_rules_move_down_just_enough(self):
+        theirs = self.netzero_like()
+        theirs_first = {
+            'id': 'x',
+            'name': 'first',
+            'precedence': 0,
+            'action': 'allow',
+            'filters': ['l4'],
+            'traffic': 'a',
+        }
+        theirs_next = {**theirs_first, 'id': 'y', 'name': 'next', 'precedence': 1, 'version': 3}
+        theirs_far = {**theirs_first, 'id': 'z', 'name': 'far', 'precedence': 5}
+        self.fake.gateway += [dict(theirs_first), dict(theirs_next), dict(theirs_far)]
+        self.run_setup()
+        by_name = {r['name']: r for r in self.fake.gateway}
+        self.assertEqual(
+            [
+                (n, by_name[n]['precedence'])
+                for n in ('agentlab-test allow', 'agentlab-test only agentlab', 'first', 'next', 'far')
+            ],
+            [('agentlab-test allow', 2), ('agentlab-test only agentlab', 3), ('first', 4), ('next', 5), ('far', 6)],
+        )
+        self.assertEqual(
+            {k: v for k, v in by_name['first'].items() if k != 'precedence'},
+            {k: v for k, v in theirs_first.items() if k != 'precedence'},
+        )
+        self.assertNotIn('version', by_name['next'])  # bookkeeping is never sent back
+        self.assertEqual(by_name['Only the DB team over the tunnel']['precedence'], theirs['precedence'])
+        before = len(self.fake.writes)
+        self.run_setup()
+        self.assertEqual(self.fake.writes[before:], [])
 
     def test_private_is_the_default_and_has_no_public_hostnames(self):
         self.assertTrue(config.private_network(config.load(self.config_path)))
