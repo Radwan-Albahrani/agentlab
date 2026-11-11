@@ -550,6 +550,21 @@ class Routes(unittest.TestCase):
         with self.assertRaises(ValueError):
             actions.disk_sizes({'personSize': 'huge'})
 
+    def test_a_published_setup_adds_agents_for_its_one_person(self):
+        published = {
+            **cluster.load(),
+            'agents': [{**a, 'owner': 'admin@example.com', 'publish': {'t3': 7101}} for a in cluster.load()['agents']],
+        }
+        with mock.patch.object(cluster, 'load', return_value=published):
+            self.assertEqual(screens.access_setup(published)['fixedOwner'], 'admin@example.com')
+            with self.assertRaises(ValueError):
+                actions.manage('add', {'id': 'other', 'email': 'someone@example.com'})
+            actions.manage('add', {'id': 'research'})
+        queue = f'{ROOT}/watch/jobs/queue'
+        newest = max(sorted(os.listdir(queue)), key=lambda n: Path(queue, n).stat().st_mtime)
+        self.assertEqual(json.loads(Path(queue, newest).read_text())['args']['email'], 'admin@example.com')
+        self.assertEqual(screens.access_setup(cluster.load())['fixedOwner'], '')
+
     def test_manage_is_admin_only(self):
         scope.use(scope.Viewer('sara@example.com', False, frozenset({'sara', 'lab'})))
         try:

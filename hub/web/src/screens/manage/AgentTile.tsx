@@ -136,7 +136,7 @@ export function AddTile({ disabled, onAdd }: { disabled: boolean; onAdd: () => v
       <Icon name="plus" size={22} />
       <span>Add an agent</span>
       <Text tone="faint" size="md">
-        Disk, container, sign-in and Cloudflare, set up for you
+        Everything it needs is set up for you
       </Text>
     </button>
   );

@@ -368,6 +368,17 @@ class Migration(unittest.TestCase):
         hub = render.core(resolve(self.ONE, storage__mode='per-person'))['services']['hub']
         self.assertIn('/srv/agentlab/people:/srv/agentlab/people', hub['volumes'])
 
+    def test_a_new_agent_is_published_like_the_others(self):
+        from agentlab import agents  # noqa: PLC0415
+
+        text = self.ONE.replace('mode = "cloudflare-access"', 'mode = "none"')
+        text += '\n[agents.publish]\nt3 = 7111\naccounts = 7112\nfiles = 7115\n\n[hub]\npublish = 7190\n'
+        cfg = config.loads(text)
+        self.assertEqual(agents.next_ports(cfg), {'t3': 7121, 'accounts': 7122, 'files': 7125})
+        added = tomledit.add_agent(text, 'lina', 'sara@example.com', None, agents.next_ports(cfg))
+        self.assertEqual(config.loads(added)['agents'][-1]['publish'], {'t3': 7121, 'accounts': 7122, 'files': 7125})
+        self.assertEqual(agents.next_ports(resolve(self.ONE)), {})
+
     def test_tailscale_hub_address_carries_its_port(self):
         one = self.ONE.replace('hub_domain = "agents-hub.example.com"\n', '')
         env = render.agent(resolve(one), resolve(one)['agents'][0])['services']['agent']['environment']

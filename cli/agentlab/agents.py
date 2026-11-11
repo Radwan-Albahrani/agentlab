@@ -38,7 +38,10 @@ def add(config_path, agent_id, owner, dry=False, memory=None, cpus=None):
     with open(config_path) as f:
         text = f.read()
     extra = {k: v for k, v in limits(memory, cpus).items() if v is not None}
-    new_text = tomledit.add_agent(text, agent_id, owner.lower(), extra)
+    ports = next_ports(config.loads(text))
+    new_text = tomledit.add_agent(text, agent_id, owner.lower(), extra, ports)
+    if ports:
+        say(f'{agent_id} is published like the others: ' + ', '.join(f'{t} {p}' for t, p in ports.items()))
     cfg = _checked(new_text)
     if dry:
         Plan(True).do(f'add agent {agent_id} ({owner}) to {config_path}')
@@ -63,6 +66,25 @@ def cloudflare_names(config_path):
         cloudflare.setup(cfg, Plan(False), config_path)
     except Failed as e:
         warn(f'the agents are up, but Cloudflare was not updated: {e} (agentctl cloudflare setup retries it)')
+
+
+def next_ports(cfg):
+    """When agents are published on host ports, the next free block laid out like the last agent's (7101-7105,
+    7111-7115 -> 7121-7125); {} when none are."""
+    shown = [a['publish'] for a in cfg['agents'] if a['publish']]
+    if not shown:
+        return {}
+    agents = {p for pub in shown for p in pub.values()}
+    used = agents | ({cfg['hub']['publish']} if cfg['hub']['publish'] else set())
+    last = shown[-1]
+    low = min(last.values())
+    offsets = {tool: port - low for tool, port in sorted(last.items(), key=lambda i: i[1])}
+    base = (max(agents) // 10 + 1) * 10 + low % 10
+    while any(base + o in used or base + o > 65535 for o in offsets.values()):
+        base += 10
+    if base + max(offsets.values()) > 65535:
+        raise Needs('no free host ports left to publish a new agent on: set [agents.publish] by hand')
+    return {tool: base + o for tool, o in offsets.items()}
 
 
 def set_limits(config_path, agent_id, memory=None, cpus=None, dry=False):

@@ -428,4 +428,10 @@ export interface Manage {
   };
   jobs: Job[];
   watcher: boolean;
+  access: {
+    mode: string;
+    cloudflare: boolean;
+    published: boolean; // agents on their own host ports (a one-person setup)
+    fixedOwner: string; // set when every agent here is this person's
+  };
 }

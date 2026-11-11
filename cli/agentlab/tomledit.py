@@ -38,10 +38,12 @@ def _value(lines, start, end, key):
     return None
 
 
-def add_agent(text, agent_id, owner, extra=None):
+def add_agent(text, agent_id, owner, extra=None, publish=None):
     lines = text.splitlines()
     block = ['[[agents]]', f'id = {json.dumps(agent_id)}', f'owner = {json.dumps(owner)}']
     block += [f'{k} = {json.dumps(v)}' for k, v in (extra or {}).items()]
+    if publish:
+        block += ['', '[agents.publish]', *(f'{k} = {v}' for k, v in publish.items())]
     existing = _blocks(lines, 'agents')
     if existing:
         at = existing[-1][1]

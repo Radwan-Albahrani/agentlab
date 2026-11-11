@@ -35,7 +35,7 @@ function ManageView({ d }: { d: Data }) {
     <>
       <PageHead
         title="Manage agents"
-        sub="Add, resize and remove agents. Each change sets up everything it needs (disk, containers, sign-in, Cloudflare) and shows its progress here."
+        sub={`Add, resize and remove agents. Each change sets up everything it needs (${d.access.published ? 'container, files and tailnet ports' : d.access.cloudflare ? 'disk, container, sign-in and Cloudflare' : 'disk, container and sign-in'}) and shows its progress here.`}
         right={
           <>
             <ActButton

@@ -432,6 +432,21 @@ def manage():
         },
         'jobs': store.jobs.recent(),
         'watcher': store.watch.alive(),
+        'access': access_setup(cfg),
+    }
+
+
+def access_setup(cfg):
+    """What adding an agent involves here: who it can be for, and how people reach it."""
+    auth = cfg.get('auth') or {}
+    published = any(a.get('publish') for a in cfg.get('agents') or []) or bool((cfg.get('hub') or {}).get('publish'))
+    owners = sorted({a.get('owner', '') for a in cfg.get('agents') or [] if a.get('owner')})
+    return {
+        'mode': auth.get('mode', ''),
+        'cloudflare': auth.get('mode') == 'cloudflare-access' or auth.get('ingress') == 'cloudflared',
+        'published': published,
+        # published ports skip the gate, so such a setup is one person's (agentctl enforces it)
+        'fixedOwner': owners[0] if published and len(owners) == 1 else '',
     }
 
 

@@ -6,6 +6,7 @@ import cluster
 import display
 import notify
 import scope
+import screens
 import store
 
 
@@ -91,6 +92,12 @@ def manage(what, b):
     aid = str(b.get('id') or '').strip().lower()
     if what == 'add':
         email = str(b.get('email') or '').strip().lower()
+        fixed = screens.access_setup(cluster.load())['fixedOwner']
+        if fixed and email and email != fixed:
+            raise ValueError(
+                f'This setup is for one person ({fixed}): its agents are published straight on the network.'
+            )
+        email = email or fixed
         if not AGENT_ID.match(aid):
             raise ValueError('The name is lowercase letters, digits and dashes, starting with a letter.')
         if aid in known:

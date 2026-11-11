@@ -30,22 +30,26 @@ const slug = (v: string) =>
     .replace(/^-+/, '')
     .slice(0, 32);
 
+function addIntro(d: Manage) {
+  if (d.access.published)
+    return 'It gets its own container and files, published on your tailnet next to your other agents. Its AI accounts are set up the first time it is opened.';
+  const signIn = d.access.cloudflare ? 'sign-in through Cloudflare' : 'sign-in';
+  return `It gets its own container, files and ${signIn}. The person can open it as soon as it is up; their AI accounts are set up on first visit.`;
+}
+
 export function AddDialog({ open, d, onClose }: { open: boolean; d: Manage; onClose: () => void }) {
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title="Add an agent"
-      text="It gets its own container, files and sign-in. The person can open it as soon as it's up; setting up their AI accounts happens on first visit."
-    >
+    <Dialog open={open} onClose={onClose} title="Add an agent" text={addIntro(d)}>
       {open && <AddForm d={d} onClose={onClose} />}
     </Dialog>
   );
 }
 
 function AddForm({ d, onClose }: { d: Manage; onClose: () => void }) {
+  const fixed = d.access.fixedOwner;
   const [id, setId] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(fixed);
+  const [limits, setLimits] = useState(false);
   const [memory, setMemory] = useState('');
   const [cpus, setCpus] = useState('');
   const { busy, send } = useSubmit('/api/manage/add', onClose);
@@ -53,43 +57,66 @@ function AddForm({ d, onClose }: { d: Manage; onClose: () => void }) {
     setEmail(v);
     if (!id || id === slug(email.split('@')[0] ?? '')) setId(slug(v.split('@')[0] ?? ''));
   };
-  const newPerson = email.includes('@') && !d.owners.includes(email.trim().toLowerCase());
-  const perPerson = d.storage.mode === 'per-person';
+  const newPerson = !fixed && email.includes('@') && !d.owners.includes(email.trim().toLowerCase());
+  const taken = d.agents.some((a) => a.id === id);
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        void send({ id, email, memory, cpus });
+        void send({ id, email, memory: limits ? memory : '', cpus: limits ? cpus : '' });
       }}
     >
       <Stack gap="lg">
-        <Field label="Who it's for (the email they sign in with)">
-          <TextInput value={email} onChange={fromEmail} placeholder="sara@example.com" list="agent-owners" />
-          <datalist id="agent-owners">
-            {d.owners.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </datalist>
-        </Field>
-        <Field label="Agent name (part of its address)">
+        {fixed ? (
+          <Text tone="muted">
+            For <b>{fixed}</b>, like every agent here.
+          </Text>
+        ) : (
+          <Field label="Who it's for (the email they sign in with)">
+            <TextInput value={email} onChange={fromEmail} placeholder="sara@example.com" list="agent-owners" />
+            <datalist id="agent-owners">
+              {d.owners.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </datalist>
+          </Field>
+        )}
+        <Field label="Name">
           <TextInput
             value={id}
             onChange={(v) => {
               setId(slug(v));
             }}
-            placeholder="sara"
+            placeholder={fixed ? 'research' : 'sara'}
             mono
           />
         </Field>
-        <Field label={`Memory (default ${d.defaults.memory ?? ''})`}>
-          <TextInput value={memory} onChange={setMemory} placeholder={d.defaults.memory ?? '12g'} width="short" />
-        </Field>
-        <Field label={`CPUs (default ${d.defaults.cpus ?? ''})`}>
-          <TextInput value={cpus} onChange={setCpus} placeholder={String(d.defaults.cpus ?? 4)} width="short" />
-        </Field>
-        {perPerson && newPerson && (
+        {taken && <Note>There is already an agent called {id}.</Note>}
+        {limits ? (
+          <>
+            <Field label={`Memory (default ${d.defaults.memory ?? ''})`}>
+              <TextInput value={memory} onChange={setMemory} placeholder={d.defaults.memory ?? '12g'} width="short" />
+            </Field>
+            <Field label={`CPUs (default ${d.defaults.cpus ?? ''})`}>
+              <TextInput value={cpus} onChange={setCpus} placeholder={String(d.defaults.cpus ?? 4)} width="short" />
+            </Field>
+          </>
+        ) : (
+          <Text tone="muted">
+            {d.defaults.memory} memory and {d.defaults.cpus} CPUs, like the others.{' '}
+            <Button
+              label="Change"
+              variant="quiet"
+              small
+              onClick={() => {
+                setLimits(true);
+              }}
+            />
+          </Text>
+        )}
+        {d.storage.mode === 'per-person' && newPerson && (
           <Note>
             {d.storage.personSize === 'auto'
               ? 'A new person gets a disk of their own; everyone’s share is recalculated, and disks that shrink stop their agents for a few minutes.'
@@ -104,7 +131,7 @@ function AddForm({ d, onClose }: { d: Manage; onClose: () => void }) {
             variant="primary"
             type="submit"
             busy={busy}
-            disabled={!id || !email.includes('@')}
+            disabled={!id || taken || !email.includes('@')}
           />
         </DialogActions>
       </Stack>
