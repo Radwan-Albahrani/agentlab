@@ -359,6 +359,14 @@ class Migration(unittest.TestCase):
         self.assertNotIn('bark', json.loads(config.to_json(cfg)))
         self.assertIn('bark_url', problems(self.ONE, hub__bark_url='host:7192'))
 
+    def test_the_hub_mounts_the_storage_root_not_each_agent(self):
+        hub = render.core(resolve(self.ONE))['services']['hub']
+        self.assertIn('/srv/agentlab/agents:/srv/agentlab/agents', hub['volumes'])  # no propagation: WSL refuses it
+        more = resolve(self.ONE.replace('id = "sara"', 'id = "sara2"'))
+        self.assertEqual(render.core(more)['services']['hub']['volumes'], hub['volumes'])
+        hub = render.core(resolve(self.ONE, storage__mode='per-person'))['services']['hub']
+        self.assertIn('/srv/agentlab/people:/srv/agentlab/people', hub['volumes'])
+
     def test_tailscale_hub_address_carries_its_port(self):
         one = self.ONE.replace('hub_domain = "agents-hub.example.com"\n', '')
         env = render.agent(resolve(one), resolve(one)['agents'][0])['services']['agent']['environment']

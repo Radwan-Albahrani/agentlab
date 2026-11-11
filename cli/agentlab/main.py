@@ -264,7 +264,7 @@ def run_doctor(cfg):
     checks = doctor.run_all(cfg)
     if not OUT.json:
         for ch in checks:
-            mark = {'ok': 'ok  ', 'warning': 'warn', 'error': 'FAIL'}[ch['severity']]
+            mark = {'ok': 'ok  ', 'info': 'note', 'warning': 'warn', 'error': 'FAIL'}[ch['severity']]
             fix = f'\n       fix: {ch["fix"]}' if ch['fix'] else ''
             print(f'{mark} {ch["message"]}{fix}', flush=True)
     if any(ch['severity'] == 'error' for ch in checks):
