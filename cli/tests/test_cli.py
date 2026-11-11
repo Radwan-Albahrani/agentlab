@@ -367,6 +367,9 @@ class Migration(unittest.TestCase):
         self.assertEqual(render.core(more)['services']['hub']['volumes'], hub['volumes'])
         hub = render.core(resolve(self.ONE, storage__mode='per-person'))['services']['hub']
         self.assertIn('/srv/agentlab/people:/srv/agentlab/people', hub['volumes'])
+        self.assertIn('/srv/agentlab/people/sara-example-com:/srv/agentlab/people/sara-example-com', hub['volumes'])
+        same_person = resolve(self.ONE.replace('id = "sara"', 'id = "sara2"'), storage__mode='per-person')
+        self.assertEqual(render.core(same_person)['services']['hub']['volumes'], hub['volumes'])
 
     def test_a_new_agent_is_published_like_the_others(self):
         from agentlab import agents  # noqa: PLC0415

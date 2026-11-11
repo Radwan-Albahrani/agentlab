@@ -202,6 +202,12 @@ def tinyauth_service(cfg):
     }
 
 
+def person_mounts(cfg):
+    if cfg['storage']['mode'] != 'per-person':
+        return []
+    return sorted({f'{cfg["data"]}/people/{config.person(a["owner"])}' for a in cfg['agents']})
+
+
 def storage_root(cfg):
     return f'{cfg["data"]}/people' if cfg['storage']['mode'] == 'per-person' else f'{cfg["data"]}/agents'
 
@@ -247,6 +253,9 @@ def core(cfg):
                 # the whole storage root at its own path, so a new agent's folder shows up without recreating the hub
                 # (no mount propagation: Docker refuses it when the host's mount is private, as on WSL)
                 f'{storage_root(cfg)}:{storage_root(cfg)}',
+                # each person's disk too: without mount propagation (WSL has none) a disk mounted under the root after
+                # the hub started stays invisible to it; so a new person, unlike a new agent, recreates the hub once
+                *[f'{m}:{m}' for m in person_mounts(cfg)],
             ],
             'extra_hosts': ['host.docker.internal:host-gateway'],
             'networks': {EDGE_NETWORK: {'aliases': ['hub']}},
