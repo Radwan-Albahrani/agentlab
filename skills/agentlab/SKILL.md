@@ -78,7 +78,7 @@ install`, `agentctl cloudflare setup` when using Cloudflare, `agentctl apply`.
 | They ask for | You run |
 |---|---|
 | A new person or agent | `agentctl agent add <id> <email> [--memory 12g] [--cpus 4] --json`: it applies, and with Cloudflare set up it also updates the names and who may sign in. The admin can do the same from the hub's **Manage agents** page, with live progress |
-| More or less memory or CPUs | `agentctl agent set <id> --memory 16g --cpus 6` (`default` drops the override), or Resize on the Manage agents page |
+| More or less memory or CPUs | `agentctl agent set <id> --memory 16g --cpus 6` (`default` drops the override; `auto` = all of `limits.total_memory`), or Resize on the Manage agents page |
 | Removing an agent | `agentctl agent remove <id> --keep-data` is safe; deleting the data needs their yes on the plan |
 | Lost chats | `agentctl backup list --json`, show the dates, then `backup restore <date> <agent>` once they say yes |
 | A full disk | `status` shows each disk; the janitor tidies nightly; look at the biggest agents in the dashboard's Storage screen and ask before deleting anything |

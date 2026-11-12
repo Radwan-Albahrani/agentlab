@@ -70,8 +70,8 @@ def _limit_args(b):
     out = {}
     memory, cpus = str(b.get('memory') or '').strip().lower(), str(b.get('cpus') or '').strip().lower()
     if memory:
-        if memory != 'default' and not SIZE.match(memory):
-            raise ValueError('Memory is a size such as 8g or 16g.')
+        if memory not in ('default', 'auto') and not SIZE.match(memory):
+            raise ValueError('Memory is a size such as 8g or 16g, or auto.')
         out['memory'] = memory
     if cpus:
         try:

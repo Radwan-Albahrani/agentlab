@@ -23,7 +23,7 @@ RUN_AND_KEEP_EXIT = '"$@"; echo $? > "$0"'  # sh -c: run agentctl, then write it
 
 def _memory(v):
     v = str(v).strip().lower()
-    return v if v == 'default' or SIZE.match(v) else None
+    return v if v in ('default', 'auto') or SIZE.match(v) else None
 
 
 def _cpus(v):
