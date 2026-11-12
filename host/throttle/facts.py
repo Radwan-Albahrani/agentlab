@@ -1,4 +1,4 @@
-"""Live memory, swap and disk-pressure facts the throttle admits against."""
+"""Live memory, memory-pressure and disk-pressure facts the throttle admits against."""
 
 import json
 import os
@@ -37,18 +37,18 @@ def agent_mb(agent):
         return None
 
 
-def io_pressure():
-    """PSI io "some" avg10, %."""
-    some = _read('/proc/pressure/io').splitlines()[0]
+def _pressure(kind):
+    """PSI "some" avg10, %."""
+    some = _read(f'/proc/pressure/{kind}').splitlines()[0]
     return float(some.split('avg10=')[1].split()[0])
 
 
-def swap_used_mb():
-    kb = {
-        key: int(value.split()[0])
-        for key, value in (line.split(':', 1) for line in _read('/proc/meminfo').splitlines())
-    }
-    return (kb['SwapTotal'] - kb['SwapFree']) // 1024
+def io_pressure():
+    return _pressure('io')
+
+
+def memory_pressure():
+    return _pressure('memory')
 
 
 def _agent_scopes():

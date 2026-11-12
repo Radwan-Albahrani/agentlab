@@ -51,7 +51,7 @@ import safe  # noqa: E402
 from janitor.dedupe import dedupe  # noqa: E402
 from throttle import scheduler, spool  # noqa: E402
 from throttle.peaks import Peaks  # noqa: E402
-from throttle.settings import ADMIT_GAP_S, DEFAULT_MB, IO_PRESSURE_MAX, PEAK_MARGIN, SWAP_CAP_MB  # noqa: E402
+from throttle.settings import ADMIT_GAP_S, DEFAULT_MB, IO_PRESSURE_MAX, MEMORY_PRESSURE_MAX, PEAK_MARGIN  # noqa: E402
 from throttle.spool import Job  # noqa: E402
 from watch import agent_requests, inventory, jobs, page_requests, secrets, storage, store  # noqa: E402
 
@@ -77,8 +77,8 @@ def job(agent, n, mb=2 * GB, *, admitted=False, known=True, signature=None, rss=
     )
 
 
-def admit(jobs, pool=POOL, agents=AGENTS, swap=0, io=0, gap=ADMIT_GAP_S):
-    return [j.id for j in scheduler.to_admit(jobs, pool, agents, swap, io, gap)]
+def admit(jobs, pool=POOL, agents=AGENTS, memory=0, io=0, gap=ADMIT_GAP_S):
+    return [j.id for j in scheduler.to_admit(jobs, pool, agents, memory, io, gap)]
 
 
 class Throttle(unittest.TestCase):
@@ -90,11 +90,12 @@ class Throttle(unittest.TestCase):
         self.assertEqual(admit([running, job('sara', 1)], gap=ADMIT_GAP_S - 1), [])
         self.assertEqual(admit([running, job('sara', 1)]), ['sara-1'])
 
-    def test_disk_pressure_and_swap_hold_new_jobs(self):
+    def test_disk_and_memory_pressure_hold_new_jobs(self):
         running = job('omar', 0, admitted=True)
         self.assertEqual(admit([running, job('sara', 1)], io=IO_PRESSURE_MAX + 1), [])
         self.assertEqual(admit([job('sara', 1)], io=IO_PRESSURE_MAX + 1), ['sara-1'])
-        self.assertEqual(admit([running, job('sara', 1)], swap=SWAP_CAP_MB + 1), [])
+        self.assertEqual(admit([running, job('sara', 1)], memory=MEMORY_PRESSURE_MAX + 1), [])
+        self.assertEqual(admit([running, job('sara', 1)], memory=MEMORY_PRESSURE_MAX - 1), ['sara-1'])
 
     def test_pool_and_agent_room(self):
         running = job('omar', 0, 6 * GB, admitted=True)
