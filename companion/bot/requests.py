@@ -7,7 +7,7 @@ import time
 from . import errands, jobs, prompts, reviews, slack, t3, tasks
 from .config import COMP, OWNER, REQ_SETTLE, log, mode
 from .state import lock, save, state
-from .text import first_sentence, quote, without_mention
+from .text import first_sentence, quote
 
 _pending = {}  # conversation -> request being collected
 _known = {}  # cached lookups: channel kinds, members
@@ -90,7 +90,7 @@ def tagged_in_dm(ev):
         return
     msgs, c = _conversation(ev)
     who = slack.name(c['user']) if c.get('user') else c.get('name') or ('a group' if c else 'someone')
-    ask = slack.readable(without_mention(ev.get('text'))).strip()
+    ask = slack.ask(ev.get('text')).strip()
     dm = slack.dm_owner()
     head = slack.post(
         dm,
@@ -131,7 +131,7 @@ def guest_tagged(ev):
         where = 'group DM'
     else:
         where = f'#{c.get("name")}'
-    ask = slack.readable(without_mention(ev.get('text'))).strip()
+    ask = slack.ask(ev.get('text')).strip()
     dm = slack.app.client.conversations_open(users=user)['channel']['id']
     head = slack.post(
         dm,
@@ -170,7 +170,7 @@ def owner_tagged(ev):
             continue
         if m.get('user') and not m.get('bot_id'):
             theirs.append(m)
-    own = slack.readable(without_mention(ev.get('text'))).strip()
+    own = slack.ask(ev.get('text')).strip()
     texts = [slack.readable(m.get('text') or '') for m in reversed(theirs)] or [own or '(see the conversation)']
     if own and theirs:
         texts.append(f'({slack.name(OWNER)} added: {own})')

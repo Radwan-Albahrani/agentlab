@@ -12,7 +12,7 @@ from reviewer.github import App, GitHubError
 from . import projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, OWNER, evidence_repo, log, optional_secret
 from .state import key, lock, new_task, save, state
-from .text import first_sentence, without_mention
+from .text import first_sentence
 
 APP_ID, APP_KEY = 'github-app-id.txt', 'github-app-key.pem'
 MAX_RUNNING = 2
@@ -110,7 +110,7 @@ def request(repo, number, origin=None):
 
 def from_slack(channel, thread_ts, trigger_ts, text):
     """Start a review if this Slack tag asks for one; False means treat it as an ordinary task."""
-    msg = slack.readable(without_mention(text)).strip()
+    msg = slack.ask(text).strip()
     rest = re.sub(r'<?https?://\S*github\.com/\S+/pull/\d+\S*', '', msg).strip()
     asked = bool(ASKED.search(rest))
     if not asked and re.search(r'[a-z]{3,}', rest, re.I):

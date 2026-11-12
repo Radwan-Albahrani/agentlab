@@ -1,6 +1,7 @@
 import pytest
 from bot import requests, routing, slack, tasks
 from bot.state import state
+from bot.text import without_mention
 from conftest import OWNER, set_settings
 
 
@@ -140,3 +141,10 @@ def test_a_colleague_tagging_it_in_their_dm_with_the_owner_works_in_their_own_dm
     assert 'From your DM with' in fresh_bot.messages[0]['text']
     assert where.startswith("Salah's Slack DM with")
     assert [m['ts'] for m in msgs] == ['108.9', '124.1']
+
+
+def test_only_a_leading_mention_of_the_companion_is_dropped_from_an_ask():
+    me = {'U0BOT', 'U0OWNER'}
+    assert without_mention('<@U0BOT> send the invoice', me) == 'send the invoice'
+    assert without_mention('Send it to <@U0ALI>', me) == 'Send it to <@U0ALI>'
+    assert without_mention('<@U0ALI> needs the invoice', me) == '<@U0ALI> needs the invoice'
