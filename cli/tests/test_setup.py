@@ -413,6 +413,26 @@ class FreshCode(unittest.TestCase):
             run.assert_called_once()
 
 
+class UpdateFirstPulls(unittest.TestCase):
+    def test_a_config_only_newer_code_understands_pulls_that_code_first(self):
+        from agentlab import main, update  # noqa: PLC0415 - main pulls in every command
+
+        execv = mock.Mock(side_effect=SystemExit)
+        with (
+            mock.patch.object(main.config, 'load', side_effect=util.Failed('cluster.toml has problems')),
+            mock.patch.object(update, 'pull', return_value=('aaa', 'bbb')) as pulled,
+            mock.patch.object(main.os, 'execv', execv),
+            mock.patch.object(main.privileges, 'elevate'),
+            mock.patch.object(main, 'one_at_a_time'),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            main.main(['update'])
+        pulled.assert_called_once_with('main')
+        self.assertEqual(execv.call_args.args[1][-1], '--pulled')
+
+
 class TunnelFirst(unittest.TestCase):
     def setUp(self):
         from agentlab import install  # noqa: PLC0415

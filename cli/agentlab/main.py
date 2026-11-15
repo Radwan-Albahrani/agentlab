@@ -191,6 +191,11 @@ def dispatch(args):
         return setup.setup(args.config, flags)
     if args.cmd == 'config' and args.action == 'edit':
         return init.edit(args.config)
+    if args.cmd == 'update' and not args.pulled:
+        try:
+            config.load(args.config)
+        except Failed:
+            fresh_code_then_rerun()  # a config may use options only newer code knows: get that code first
     cfg = config.load(args.config)
     if args.cmd == 'doctor':
         return run_doctor(cfg)
