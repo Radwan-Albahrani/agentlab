@@ -23,10 +23,7 @@ const styles = stylex.create({
   head: { display: 'grid', gap: space.xxl },
   headMain: { display: 'flex', alignItems: 'center', gap: space.xl, minWidth: 0 },
   kicker: {
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.faint,
     fontVariantNumeric: 'tabular-nums',
   },
@@ -112,12 +109,9 @@ const styles = stylex.create({
   stepTitleLine: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
   stepTitle: { margin: 0, fontFamily: font.display, fontSize: text.xl, fontWeight: 600 },
   optional: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     color: colors.faint,
     fontWeight: 500,
-    textTransform: 'uppercase',
-    letterSpacing: '.05em',
     paddingBlock: 1,
     paddingInline: space.xs,
     borderRadius: radius.xs,

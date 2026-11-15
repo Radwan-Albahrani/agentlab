@@ -51,11 +51,8 @@ const styles = stylex.create({
   switchRow: { display: 'flex', alignItems: 'center', gap: space.lg },
   title: { margin: 0, fontFamily: font.display, fontSize: text.xxl, fontWeight: 600, lineHeight: 1.1 },
   state: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   stateOn: { color: colors.accent },
@@ -90,11 +87,8 @@ const styles = stylex.create({
   },
   previewHead: { display: 'flex', alignItems: 'baseline', gap: space.sm, flexWrap: 'wrap' },
   previewLabel: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   previewCount: {

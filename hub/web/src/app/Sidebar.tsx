@@ -35,10 +35,7 @@ const styles = stylex.create({
     gap: space.sm,
     paddingInline: space.sm,
     paddingBlockEnd: space.xs,
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.14em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   logo: {
@@ -55,10 +52,7 @@ const styles = stylex.create({
   brandName: { color: colors.fg, fontWeight: 600 },
   nav: { display: 'grid', gap: 1 },
   group: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.14em',
-    textTransform: 'uppercase',
     color: colors.faint,
     paddingBlockStart: space.xl,
     paddingBlockEnd: space.xs,
@@ -103,10 +97,7 @@ const styles = stylex.create({
     borderTopColor: colors.line,
   },
   foot: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.faint,
     paddingInline: space.sm,
     display: 'flex',
@@ -264,7 +255,7 @@ const Group = ({ title, items, activity }: { title?: string; items: MenuItem[]; 
 
 export function Sidebar({ menu, onLogo }: { menu: Menu; onLogo: (e: MouseEvent) => void }) {
   const activity: Activity = Object.fromEntries(
-    (useNowBoard().data?.agents ?? []).map((a) => [a.name, { running: a.running.length, waiting: a.waiting.length }]),
+    (useNowBoard().data?.agents ?? []).map((a) => [a.name, { running: a.running + a.background, waiting: a.waiting }]),
   );
   return (
     <aside {...stylex.props(styles.side)}>

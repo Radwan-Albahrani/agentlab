@@ -402,22 +402,14 @@ class Screens(unittest.TestCase):
             with self.subTest(name):
                 json.dumps(render(), default=str)
 
-    def test_now_shows_each_agents_chats_with_subagents_folded_in(self):
+    def test_now_counts_chats_without_saying_what_they_are(self):
         admin = {a['name']: a for a in screens.now()['agents']}['admin']
-        running = {r['title']: r for r in admin['running']}
-        self.assertEqual(list(running), ['Migrate billing to the new API', 'Review platform#6111: refactor(general)'])
-        self.assertEqual(running['Migrate billing to the new API']['helpers'], 2)
-        self.assertTrue(running['Review platform#6111: refactor(general)']['background'])
+        # one owner chat (its two subagents fold into it) and one background review
         self.assertEqual(
-            [(w['title'], w['kind']) for w in admin['waiting']], [('Which region should staging use?', 'question')]
+            {k: admin[k] for k in ('running', 'background', 'waiting', 'done', 'failed')},
+            {'running': 1, 'background': 1, 'waiting': 1, 'done': 2, 'failed': 1},
         )
-        self.assertEqual(
-            [(r['title'], r['status']) for r in admin['recent']],
-            [
-                ('Fix the flaky login test', 'completed'),
-                ('Bump dependencies', 'failed'),
-            ],
-        )
+        self.assertNotIn('Migrate billing', json.dumps(screens.now()))
 
     def test_now_shows_only_the_viewers_own_agents_even_to_an_admin(self):
         scope.use(scope.of('admin@example.com', admin=True))

@@ -3,7 +3,7 @@ import { useParams } from 'react-router';
 import { useAgent, useNowBoard } from '../api/queries';
 import type { AgentPage } from '../api/types';
 import { AgentCard, Launch } from '../app/AgentCard';
-import { Lane } from '../app/NowBoard';
+import { NowBoard } from '../app/NowBoard';
 import { Screen } from '../app/Screen';
 import { StackBlock } from '../app/stacks';
 import { useCanSee } from '../app/useCanSee';
@@ -89,11 +89,8 @@ function AgentView({ name, d }: { name: string; d: AgentPage }) {
         </Card>
       )}
       {live && (
-        <Section
-          title="Right now"
-          sub={`${live.running.length} running · ${live.waiting.length} waiting on you · click one to open the chat`}
-        >
-          <Lane a={live} linked={false} />
+        <Section title="Right now" sub="counts only, refreshed every few seconds">
+          <NowBoard agents={[live]} linked={false} />
         </Section>
       )}
       <div {...stylex.props(styles.grid)}>

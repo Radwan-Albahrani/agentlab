@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { colors, font, media, radius, space, text } from '../theme/tokens.stylex';
+import { colors, media, radius, space, text } from '../theme/tokens.stylex';
 import { Sheet } from '../ui/Dialog';
 import { Icon } from '../ui/Icon';
 import { Badge, Count, Dot } from '../ui/status';
@@ -26,11 +26,8 @@ const styles = stylex.create({
     paddingInline: `max(${space.lg}, env(safe-area-inset-left))`,
   },
   brand: {
-    fontFamily: font.mono,
     fontSize: text.xs,
     fontWeight: 600,
-    letterSpacing: '.14em',
-    textTransform: 'uppercase',
     marginInlineEnd: 'auto',
   },
   iconBtn: {
@@ -83,8 +80,6 @@ const styles = stylex.create({
     paddingInline: space.md,
     fontSize: text.xxs,
     fontWeight: 650,
-    letterSpacing: '.07em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   item: {

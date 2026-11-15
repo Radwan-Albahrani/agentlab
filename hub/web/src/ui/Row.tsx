@@ -27,9 +27,9 @@ const styles = stylex.create({
   },
   flat: { paddingInline: 0, paddingBlock: space.md },
   wrap: { flexWrap: 'wrap' },
-  // attention as a fill step, never a stripe down one edge
-  warn: { backgroundColor: `color-mix(in srgb, ${colors.warnSoft} 55%, transparent)` },
-  bad: { backgroundColor: `color-mix(in srgb, ${colors.badSoft} 60%, transparent)` },
+  // the icon carries the tone; rows stay calm (no fills, no stripes)
+  warn: {},
+  bad: {},
   info: {},
   // a companion under its agent: indented on a neutral structural hairline
   nested: { marginInlineStart: space.huge, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: colors.line },

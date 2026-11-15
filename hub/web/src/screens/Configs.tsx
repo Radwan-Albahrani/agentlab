@@ -46,11 +46,8 @@ const styles = stylex.create({
   firstGroup: { borderTopWidth: 0 },
   groupIcon: { display: 'flex', color: colors.faint },
   groupName: {
-    fontFamily: font.mono,
     fontSize: text.xs,
     fontWeight: 600,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
   },
   groupSub: { fontSize: text.sm, color: colors.faint },
   file: {
@@ -164,10 +161,7 @@ const styles = stylex.create({
   },
   tabIcon: { display: 'flex', color: colors.muted },
   meta: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.06em',
-    textTransform: 'uppercase',
     color: colors.faint,
     whiteSpace: 'nowrap',
   },

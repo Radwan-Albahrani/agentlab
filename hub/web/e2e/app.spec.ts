@@ -349,6 +349,58 @@ test('presenting by shortcut hides infrastructure and leaves no trace', async ({
   await expect(menu.getByRole('link', { name: 'Services' })).toBeVisible();
 });
 
+// A control pushed past the edge of its card (clipped) or the screen can't be tapped; only deliberate scrollers may.
+const CLIP_PATHS = [...SCREENS, '/agents/admin/scout#pulls', '/agents/admin/scout#tasks', '/agents/admin/scout#polls'];
+
+async function clippedControls(page: Page) {
+  const found: string[] = [];
+  for (const path of CLIP_PATHS) {
+    await page.goto(path);
+    await settled(page);
+    const bad = await page.evaluate(() => {
+      const out: string[] = [];
+      const width = document.documentElement.clientWidth;
+      for (const el of document.querySelectorAll<HTMLElement>('main a, main button')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height || el.closest('[hidden], [aria-hidden="true"]')) continue;
+        let clip = { left: 0, right: width };
+        let scroller = false;
+        for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+          const ox = getComputedStyle(p).overflowX;
+          if (ox === 'auto' || ox === 'scroll') {
+            scroller = true;
+            break;
+          }
+          if (ox === 'hidden' || ox === 'clip') {
+            const b = p.getBoundingClientRect();
+            clip = { left: Math.max(clip.left, b.left), right: Math.min(clip.right, b.right) };
+          }
+        }
+        if (!scroller && (r.left < clip.left - 1 || r.right > clip.right + 1))
+          out.push(
+            `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 40)}"`,
+          );
+      }
+      return out;
+    });
+    found.push(...bad.map((b) => `${path}: ${b}`));
+  }
+  return found;
+}
+
+test('every button and link sits fully inside the screen and its card', async ({ page }) => {
+  await guard(page);
+  expect(await clippedControls(page)).toEqual([]);
+});
+
+test('phone and tablet: every button and link sits fully inside the screen and its card @phone', async ({ page }) => {
+  await guard(page);
+  for (const width of [360, 390, 768]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await clippedControls(page), `${width}px`).toEqual([]);
+  }
+});
+
 test('phone layout never scrolls sideways @phone', async ({ page }, info) => {
   await guard(page);
   for (const path of SCREENS) {
@@ -395,19 +447,19 @@ test('colour tokens resolve: pills, the active menu item and hovers are coloured
   await expect.poll(() => css(services, 'backgroundColor')).toBe(p.hover); // it eases in
 });
 
-test('right now: each agent shows its running chats with live timers, helpers folded in', async ({ page }) => {
+test('the live board counts chats per agent and never shows what they are about', async ({ page }) => {
   await guard(page);
   await page.goto('/');
   await settled(page);
   const board = page.locator('section', { has: page.getByRole('heading', { name: 'Your agents, now' }) });
-  const billing = board.getByRole('link', { name: /Migrate billing to the new API/ });
-  await expect(billing).toContainText('2 helpers');
-  const timer = async () => (await billing.textContent())?.match(/\d+:\d\d(:\d\d)?/)?.[0];
-  const first = await timer();
-  expect(first).toBeTruthy();
-  await expect.poll(timer, { timeout: 4000 }).not.toBe(first); // it ticks
-  await expect(board.getByRole('link', { name: /Which region should staging use\?/ })).toContainText('Asks you a question');
-  await expect(board.getByText('Trace the webhook retries')).toHaveCount(0); // a subagent, not a chat of its own
+  const admin = board.locator('[data-agent="admin"]');
+  await expect(admin.getByText('running', { exact: true }).locator('..')).toContainText('1');
+  await expect(admin.getByText('asking you', { exact: true }).locator('..')).toContainText('1');
+  for (const title of ['Migrate billing to the new API', 'Which region should staging use?', 'Fix the flaky login test'])
+    await expect(page.getByText(title)).toHaveCount(0);
+  await page.keyboard.press('Control+KeyK');
+  await page.getByRole('combobox', { name: 'Search' }).fill('billing');
+  await expect(page.getByRole('option', { name: /Migrate billing/ })).toHaveCount(0);
 });
 
 test('search: Ctrl+K finds a page by a few letters and Enter goes there', async ({ page }, info) => {

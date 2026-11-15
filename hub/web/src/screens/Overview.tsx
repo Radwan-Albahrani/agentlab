@@ -8,7 +8,7 @@ import { useCanSee } from '../app/useCanSee';
 import { ago, gb, pct, plural } from '../lib/format';
 import { useNow } from '../lib/useNow';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, font, media, radius, space, text } from '../theme/tokens.stylex';
+import { agent, colors, media, radius, space, text } from '../theme/tokens.stylex';
 import { Actions } from '../ui/actions';
 import { LinkButton } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -36,10 +36,7 @@ const styles = stylex.create({
     gap: space.sm,
     paddingBlock: space.sm,
     paddingInline: space.xxl,
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.warn,
     backgroundColor: colors.warnSoft,
     borderBottomWidth: 1,
@@ -99,10 +96,7 @@ const styles = stylex.create({
   foot: {
     paddingBlock: space.sm,
     paddingInline: space.xxl,
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.08em',
-    textTransform: 'uppercase',
     color: colors.faint,
     borderTopWidth: 1,
     borderTopStyle: 'solid',
@@ -120,7 +114,8 @@ export function Overview() {
   );
 }
 
-const sum = (agents: NowAgent[] | undefined, key: 'running' | 'waiting') => agents?.reduce((n, a) => n + a[key].length, 0) ?? 0;
+const sum = (agents: NowAgent[] | undefined, key: 'running' | 'waiting') =>
+  agents?.reduce((n, a) => n + (key === 'running' ? a.running + a.background : a.waiting), 0) ?? 0;
 
 function Head({ d, running, waiting }: { d: Data; running: number; waiting: number }) {
   const t = useNow(30_000);
@@ -136,7 +131,7 @@ function Head({ d, running, waiting }: { d: Data; running: number; waiting: numb
 
 function Strip({ t, agents, waiting }: { t: NonNullable<Data['tiles']>; agents?: NowAgent[]; waiting: number }) {
   const running = sum(agents, 'running');
-  const busy = agents?.filter((a) => a.running.length).length ?? 0;
+  const busy = agents?.filter((a) => a.running + a.background > 0).length ?? 0;
   return (
     <StatGrid>
       <Stat
@@ -307,7 +302,7 @@ function OverviewView({ d, agents }: { d: Data; agents?: NowAgent[] }) {
           {d.activity && (
             <Section title="Recent activity">
               <Card>
-                <Feed events={d.activity} showSource />
+                <Feed events={d.activity.slice(0, 6)} showSource />
               </Card>
             </Section>
           )}

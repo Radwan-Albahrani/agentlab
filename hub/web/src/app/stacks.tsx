@@ -73,11 +73,8 @@ const styles = stylex.create({
   },
   health: {
     marginInlineStart: space.sm,
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.05em',
-    textTransform: 'uppercase',
     paddingBlock: 0,
     paddingInline: space.xs,
     borderRadius: radius.xs,

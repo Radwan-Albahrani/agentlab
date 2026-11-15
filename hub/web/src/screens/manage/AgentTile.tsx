@@ -71,11 +71,8 @@ const styles = stylex.create({
     minWidth: 0,
   },
   label: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     color: colors.faint,
-    textTransform: 'uppercase',
-    letterSpacing: '.12em',
   },
   value: {
     fontFamily: font.mono,
@@ -87,10 +84,7 @@ const styles = stylex.create({
   },
   unit: { fontSize: text.xs, color: colors.faint, fontWeight: 400, marginInlineStart: space.xxxs, letterSpacing: 0 },
   custom: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.06em',
-    textTransform: 'uppercase',
     color: colors.muted,
     minHeight: 15,
   },

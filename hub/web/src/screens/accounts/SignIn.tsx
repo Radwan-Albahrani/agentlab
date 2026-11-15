@@ -59,11 +59,8 @@ const styles = stylex.create({
   check: { color: colors.ok, display: 'flex' },
   tags: { display: 'flex', gap: space.xxs, flexWrap: 'wrap', marginTop: space.xxs },
   tag: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.05em',
-    textTransform: 'uppercase',
     paddingBlock: 1,
     paddingInline: space.xs,
     borderRadius: radius.xs,

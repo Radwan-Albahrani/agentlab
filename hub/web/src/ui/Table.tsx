@@ -9,11 +9,8 @@ const styles = stylex.create({
   head: { display: { default: null, [media.table]: 'none' } },
   th: {
     textAlign: 'left',
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
     backgroundColor: colors.raised,
     paddingBlock: space.md,

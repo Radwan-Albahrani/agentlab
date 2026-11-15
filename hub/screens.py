@@ -118,19 +118,15 @@ def overview():
 
 
 def now():
-    """The viewer's own agents' chats right now, read from each T3 database (cheap: the page polls it every few
-    seconds). Never someone else's, admins included: chat titles say what a person is working on."""
+    """How busy each of the viewer's own agents is, as counts read from its T3 database (cheap: the page polls it every
+    few seconds). Never what the chats are about, and never someone else's agent, admins included."""
     if not see('overview.now'):
         return {'agents': []}
-    out = []
-    for p in (p for p in shown_profiles() if scope.current().owns(p)):
-        chat = cluster.links(p)['chat']
-        state = notify.live(p)
-        for rows in state.values():
-            for r in rows:
-                r['phone'] = notify.thread_link(p, r['id'])
-        out.append({'name': p, 'chat': chat, **state})
-    return {'agents': out, 'at': time.time()}
+    mine = [p for p in shown_profiles() if scope.current().owns(p)]
+    return {
+        'agents': [{'name': p, 'chat': cluster.links(p)['chat'], **notify.live(p)} for p in mine],
+        'at': time.time(),
+    }
 
 
 def agent_card(n, s):

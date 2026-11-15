@@ -48,10 +48,7 @@ const styles = stylex.create({
   },
   identity: { display: 'flex', alignItems: 'center', gap: space.xxl, minWidth: 0 },
   kicker: {
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.faint,
     display: 'flex',
     alignItems: 'center',
@@ -120,10 +117,7 @@ const styles = stylex.create({
     fontVariantNumeric: 'tabular-nums',
   },
   metricLabel: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.muted,
   },
   quiet: { color: colors.faint },

@@ -239,8 +239,26 @@ create table pulls (id text primary key, repo text, number integer, updated text
         (12, pull['title'], 1, pull['review']),
         (13, 'Fix the date picker on Safari', 2, dict(reviewing, run={'n': 2, 'of': 3, 'done': False})),
         (14, 'Bump the API client', 3, dict(queued, run={'n': 3, 'of': 3, 'done': False})),
+        # the worst case for a narrow screen: a long title, labels, a blocking result and new commits since
+        (
+            15,
+            'refactor(api): reduce migration-inputs to the tenantless ops grants, one role-default entry per role, '
+            'revoke and stop lists and one pure migratedAdditionsFor [ENG-6025]',
+            4,
+            {
+                'status': 'done',
+                'outcome': '2 findings (1 blocking) · QA partly verified',
+                'task': 't6',
+                'head': 'old1234',
+                'at': iso(NOW - 5000),
+                'counts': {'findings': 2, 'blocking': 1, 'open': 0, 'qa': 'partial'},
+            },
+        ),
     ):
         p = dict(pull, title=title, url=f'https://github.com/example/app/pull/{number}', review=review)
+        if number == 15:
+            p['labels'] = [{'name': 'lane:red', 'color': 'd73a4a'}, {'name': 'agent', 'color': 'ededed'}]
+            p.update(additions=3684, deletions=67853, head='new5678')
         p['updated'] = iso(NOW - hours * 3600)
         con.execute(
             'insert into pulls values (?,?,?,?,?)',

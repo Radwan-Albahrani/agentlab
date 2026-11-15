@@ -27,10 +27,7 @@ const styles = stylex.create({
     color: colors.accent,
   },
   kicker: {
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   h1: {
@@ -51,18 +48,10 @@ const styles = stylex.create({
   lede: { margin: 0, color: colors.muted, maxWidth: '72ch', fontSize: text.body },
   actions: { display: 'flex', gap: space.sm, flexWrap: 'wrap' },
   section: { display: 'grid', gap: space.lg, minWidth: 0, scrollMarginTop: 80 },
-  // a mono label on a hairline rule, its count or action at the right
+  // a plain heading, a quiet line beside it, its action at the right
   sectionHead: { display: 'flex', alignItems: 'center', gap: space.lg, flexWrap: 'wrap', minHeight: 30 },
-  rule: { flex: '1', minWidth: 24, height: 1, backgroundColor: colors.line },
-  h2: {
-    margin: 0,
-    fontFamily: font.mono,
-    fontSize: text.xs,
-    fontWeight: 600,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
-    color: colors.fg,
-  },
+  spacer: { flex: '1' },
+  h2: { margin: 0, fontSize: text.body, fontWeight: 600, color: colors.fg },
   sectionTitle: { display: 'flex', alignItems: 'center', gap: space.sm, color: colors.faint },
   sub: { margin: 0, color: colors.faint, fontSize: text.sm },
   hero: {
@@ -95,10 +84,7 @@ const styles = stylex.create({
     display: 'inline-flex',
     alignItems: 'center',
     gap: space.xs,
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.06em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   crumbLink: {
@@ -231,7 +217,7 @@ export function Section({
           <h2 {...stylex.props(styles.h2)}>{title}</h2>
         </div>
         {sub && <p {...stylex.props(styles.sub)}>{sub}</p>}
-        <span {...stylex.props(styles.rule)} />
+        <span {...stylex.props(styles.spacer)} />
         {right && <div {...stylex.props(styles.actions)}>{right}</div>}
       </div>
       {children}

@@ -77,20 +77,15 @@ export interface Overview {
   stacks?: { at?: number; rows: Stack[] };
 }
 
-interface Chat {
-  id: string;
-  title: string;
-  project: string;
-  background: boolean; // started through T3's API (a companion's task, an orchestrator's worker), not by the owner
-  phone: string; // t3code:// link for the T3 app, or ''
-}
-
+/** How busy an agent is, as counts only: the hub never sends what a chat is about. */
 export interface NowAgent {
   name: string;
   chat: string;
-  running: (Chat & { since: number; helpers: number })[];
-  waiting: (Chat & { kind: 'question' | 'approval'; since: number })[];
-  recent: (Chat & { status: string; at: number })[];
+  running: number; // the owner's chats
+  background: number; // started through T3's API, e.g. a companion's review
+  waiting: number; // asking a question or an approval
+  done: number; // finished in the last 6 hours
+  failed: number;
 }
 
 export interface NowBoard {

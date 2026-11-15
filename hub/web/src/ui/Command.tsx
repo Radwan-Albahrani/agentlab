@@ -90,11 +90,8 @@ const styles = stylex.create({
     paddingBlockStart: space.md,
     paddingBlockEnd: space.xxs,
     paddingInline: space.md,
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   item: {

@@ -24,8 +24,6 @@ const styles = stylex.create({
     borderBottomColor: colors.line,
     fontFamily: font.mono,
     fontSize: text.xxs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.faint,
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
@@ -65,10 +63,10 @@ export function StatusLine() {
   const agents = useNowBoard().data?.agents ?? [];
   const now = useNow(1000);
   const lost = nav.isError || (nav.dataUpdatedAt > 0 && now * 1000 - nav.dataUpdatedAt > 60_000);
-  const running = agents.reduce((n, a) => n + a.running.length, 0);
+  const running = agents.reduce((n, a) => n + a.running + a.background, 0);
   // things literally waiting on an answer: chats asking a question, companion tasks awaiting approval
   const companions = nav.data?.agents.reduce((n, a) => n + a.companions.reduce((m, c) => m + c.waiting, 0), 0) ?? 0;
-  const waiting = agents.reduce((n, a) => n + a.waiting.length, 0) + companions;
+  const waiting = agents.reduce((n, a) => n + a.waiting, 0) + companions;
   const date = new Date(now * 1000);
   return (
     <div {...stylex.props(styles.bar)} aria-label="Status">

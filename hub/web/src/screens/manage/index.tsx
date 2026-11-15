@@ -70,10 +70,7 @@ const styles = stylex.create({
     alignItems: 'center',
     gap: space.sm,
     color: colors.warn,
-    fontFamily: font.mono,
     fontSize: text.xs,
-    textTransform: 'uppercase',
-    letterSpacing: '.06em',
     paddingBlock: space.lg,
   },
 });

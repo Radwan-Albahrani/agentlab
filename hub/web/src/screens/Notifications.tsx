@@ -40,11 +40,8 @@ const styles = stylex.create({
     backgroundColor: colors.sunk,
   },
   screenLabel: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
   clock: {
@@ -92,10 +89,7 @@ const styles = stylex.create({
     placeItems: 'center',
     alignContent: 'center',
     gap: space.sm,
-    fontFamily: font.mono,
     fontSize: text.xs,
-    letterSpacing: '.1em',
-    textTransform: 'uppercase',
     color: colors.warn,
     backgroundColor: `color-mix(in srgb, ${colors.sunk} 88%, transparent)`,
   },

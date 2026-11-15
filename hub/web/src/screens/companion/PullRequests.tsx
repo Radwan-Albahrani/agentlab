@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useCompanionPoll, usePullsRefresh } from '../../api/queries';
 import type { Ci, Pull, PullReview, Pulls } from '../../api/types';
 import { ago, plural } from '../../lib/format';
@@ -12,154 +12,94 @@ import { Segments } from '../../ui/controls';
 import { useAct } from '../../ui/feedback';
 import { Icon } from '../../ui/Icon';
 import { SearchInput } from '../../ui/inputs';
-import { Inline, Spacer } from '../../ui/layout';
+import { Spacer } from '../../ui/layout';
 import { PickMenu } from '../../ui/Menu';
-import { Appear, Num } from '../../ui/motion';
+import { Appear } from '../../ui/motion';
 import { Empty, EmptyCard, Section } from '../../ui/page';
 import { Pager } from '../../ui/Pager';
-import { IconBox } from '../../ui/Row';
-import { Pill } from '../../ui/status';
-import { Avatar, Blink, LiveLine } from './parts';
+import { Blink, LiveLine } from './parts';
 
 const PAGE = 10;
 
-const run = stylex.keyframes({ to: { backgroundPosition: '20px 0' } });
-
 const styles = stylex.create({
-  // the whole list's review state: a strip of counts over one proportional bar
-  health: {
-    display: 'grid',
-    gap: 1,
+  toolbar: { display: 'flex', gap: space.sm, alignItems: 'center', flexWrap: 'wrap' },
+  search: { flexGrow: '1', flexShrink: '1', flexBasis: '260px', minWidth: 0 },
+  num: { fontFamily: font.mono, fontSize: text.xs, fontVariantNumeric: 'tabular-nums' },
+  sep: { color: colors.faint },
+  glyph: { display: 'inline-flex' },
+  faint: { color: colors.faint },
+  muted: { color: colors.muted },
+  bad: { color: colors.bad },
+  warn: { color: colors.warn },
+  ok: { color: colors.ok },
+  info: { color: colors.info },
+  batch: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.sm,
+    minWidth: 0,
+    paddingBlock: space.md,
+    paddingInline: space.xxl,
     overflow: 'hidden',
     borderRadius: radius.xl,
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: colors.line,
-    backgroundColor: colors.line,
-  },
-  cells: {
-    display: 'grid',
-    gridTemplateColumns: { default: 'repeat(auto-fit, minmax(120px, 1fr))', [media.phone]: 'repeat(2, minmax(0, 1fr))' },
-    gap: 1,
-  },
-  cell: { display: 'grid', gap: space.xxxs, paddingBlock: space.md, paddingInline: space.xl, backgroundColor: colors.panel },
-  cellValue: {
-    fontFamily: font.mono,
-    fontSize: text.xl,
-    fontWeight: 500,
-    letterSpacing: '-.02em',
-    lineHeight: 1.15,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  cellLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: space.xs,
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    letterSpacing: '.08em',
-    textTransform: 'uppercase',
-    color: colors.muted,
-  },
-  bar: { display: 'flex', gap: 1, height: 4 },
-  part: (n: number) => ({ flexGrow: n, flexBasis: 0, minWidth: 6 }),
-  swatch: { width: 7, height: 7, flexShrink: 0 },
-  blocking: { backgroundColor: colors.bad },
-  findings: { backgroundColor: colors.warn },
-  clean: { backgroundColor: colors.ok },
-  // a bar that's still filling: dashes running along it
-  reviewing: {
-    backgroundColor: colors.infoSoft,
-    backgroundImage: `repeating-linear-gradient(90deg, ${colors.info} 0 6px, transparent 6px 10px)`,
-    backgroundSize: '20px 100%',
-    animationName: run,
-    animationDuration: '1s',
-    animationTimingFunction: 'linear',
-    animationIterationCount: 'infinite',
-  },
-  failed: { backgroundColor: `color-mix(in srgb, ${colors.bad} 45%, ${colors.sunk})` },
-  unreviewed: { backgroundColor: colors.line2 },
-  draft: {
-    backgroundColor: colors.sunk,
-    backgroundImage: `repeating-linear-gradient(135deg, ${colors.line2} 0 2px, transparent 2px 6px)`,
-  },
-  toneBad: { color: colors.bad },
-  toneWarn: { color: colors.warn },
-  toneOk: { color: colors.ok },
-  toneInfo: { color: colors.info },
-  toneFaint: { color: colors.faint },
-  batch: {
-    position: 'relative',
-    display: 'grid',
-    gap: space.lg,
-    paddingBlock: space.lg,
-    paddingInline: space.xxl,
-    overflow: 'hidden',
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, ${colors.info} 45%, ${colors.line})`,
     backgroundColor: colors.panel,
-  },
-  batchDone: { borderColor: `color-mix(in srgb, ${colors.ok} 45%, ${colors.line})` },
-  batchHead: { display: 'flex', alignItems: 'center', gap: space.lg, flexWrap: 'wrap' },
-  batchText: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0 },
-  batchTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: space.sm,
-    fontFamily: font.display,
-    fontWeight: 600,
-    fontSize: text.lg,
-  },
-  batchSub: { fontSize: text.md, color: colors.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  batchCount: {
-    fontFamily: font.mono,
-    fontSize: text.sm,
+    fontSize: text.md,
     color: colors.muted,
     fontVariantNumeric: 'tabular-nums',
-    whiteSpace: 'nowrap',
+    flexWrap: { default: 'nowrap', [media.phone]: 'wrap' },
+    whiteSpace: { default: 'nowrap', [media.phone]: 'normal' },
   },
-  batchDoneNum: { fontSize: text.lg, fontWeight: 600, color: colors.fg },
-  segments: { display: 'flex', gap: space.xxs },
-  segment: { flex: '1', display: 'grid', gap: space.xxs, minWidth: 0 },
-  segBar: { height: 4, backgroundColor: colors.sunk, boxShadow: `inset 0 0 0 1px ${colors.line}` },
-  segDone: { backgroundColor: colors.ok, boxShadow: 'none' },
-  segLabel: {
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    color: colors.faint,
-    fontVariantNumeric: 'tabular-nums',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+  batchTitle: { color: colors.fg, fontWeight: 500 },
+  batchNow: { flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' },
+  track: { position: 'absolute', insetInline: 0, bottom: 0, height: 2, backgroundColor: colors.line },
+  fill: (pct: number) => ({ width: `${pct}%` }),
+  fillBusy: {
+    display: 'block',
+    height: '100%',
+    backgroundColor: colors.info,
+    transitionProperty: 'width',
+    transitionDuration: '300ms',
   },
-  segLabelOn: { color: colors.info, fontWeight: 600 },
-  toolbar: { display: 'flex', gap: space.sm, alignItems: 'center', flexWrap: 'wrap' },
-  search: { flexGrow: '1', flexShrink: '1', flexBasis: '260px', minWidth: 0 },
+  fillDone: { backgroundColor: colors.ok },
+  counts: {
+    display: 'flex',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    columnGap: space.sm,
+    rowGap: space.xxs,
+    paddingBlock: space.md,
+    paddingInline: { default: space.xxl, [media.phone]: space.lg },
+    fontSize: text.md,
+    color: colors.muted,
+  },
+  countsLead: { color: colors.fg, fontWeight: 600 },
+  count: { display: 'inline-flex', alignItems: 'baseline', gap: space.xs },
   group: {
     display: 'flex',
     alignItems: 'center',
     gap: space.sm,
-    paddingBlock: space.xs,
-    paddingInline: space.xxl,
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    fontWeight: 600,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
-    color: colors.muted,
-    borderTopWidth: { default: 1, ':first-child': 0 },
+    minHeight: 40,
+    paddingBlock: space.xxs,
+    paddingInline: { default: space.xxl, [media.phone]: space.lg },
+    borderTopWidth: 1,
     borderTopStyle: 'solid',
     borderTopColor: colors.line,
-    backgroundColor: colors.raised,
+    fontSize: text.md,
+    fontWeight: 600,
+    color: colors.fg,
   },
-  groupCount: { letterSpacing: 0, color: colors.faint, fontVariantNumeric: 'tabular-nums' },
   row: {
     position: 'relative',
     display: 'flex',
-    alignItems: 'flex-start',
-    gap: space.lg,
-    paddingBlock: space.lg,
+    alignItems: 'center',
+    flexWrap: { default: 'nowrap', [media.narrow]: 'wrap' },
+    columnGap: space.md,
+    rowGap: space.xs,
+    paddingBlock: space.md,
     paddingInline: { default: space.xxl, [media.phone]: space.lg },
     minWidth: 0,
     borderTopWidth: 1,
@@ -167,183 +107,87 @@ const styles = stylex.create({
     borderTopColor: colors.line,
     backgroundColor: { default: 'transparent', ':hover': colors.hover },
     transitionProperty: 'background-color',
-    transitionDuration: '140ms',
+    transitionDuration: '120ms',
   },
-  // what's wrong tints the whole row before you read a word
-  rowBad: { backgroundColor: { default: colors.badSoft, ':hover': `color-mix(in srgb, ${colors.bad} 18%, ${colors.panel})` } },
-  rowWarn: { backgroundColor: { default: colors.warnSoft, ':hover': `color-mix(in srgb, ${colors.warn} 22%, ${colors.panel})` } },
-  stateIcon: {
-    position: 'relative',
-    width: 32,
-    height: 32,
-    flexShrink: 0,
-    borderRadius: radius.lg,
-    display: 'grid',
-    placeItems: 'center',
-    backgroundColor: colors.sunk,
-    color: colors.muted,
-  },
-  drafted: {
-    color: colors.faint,
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.line2,
-  },
-  ci: {
-    position: 'absolute',
-    right: -4,
-    bottom: -4,
-    width: 15,
-    height: 15,
-    borderRadius: radius.xs,
-    display: 'grid',
-    placeItems: 'center',
-    color: colors.onFill,
-    boxShadow: `0 0 0 2px ${colors.panel}`,
-  },
-  passing: { backgroundColor: colors.ok },
-  failing: { backgroundColor: colors.bad },
-  running: { backgroundColor: colors.info },
-  body: {
-    flex: '1',
-    minWidth: 0,
-    display: 'flex',
-    alignItems: 'center',
-    gap: { default: space.xl, [media.narrow]: space.md },
-    flexWrap: { default: 'nowrap', [media.narrow]: 'wrap' },
-  },
-  main: {
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: { default: 0, [media.narrow]: '100%' },
-    minWidth: 0,
-    display: 'grid',
-    gap: space.xxs,
-  },
+  state: { alignSelf: 'flex-start', display: 'grid', placeItems: 'center', height: 20, flexShrink: 0, color: colors.muted },
+  stateDraft: { color: colors.faint },
+  main: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, display: 'grid', gap: space.xxxs },
+  line1: { fontSize: text.body, lineHeight: 1.45, overflowWrap: 'anywhere' },
   title: {
     color: { default: colors.fg, ':hover': colors.info },
     fontWeight: 500,
-    fontSize: text.body,
-    lineHeight: 1.35,
     textDecoration: 'none',
-    overflowWrap: 'anywhere',
   },
-  number: {
-    fontFamily: font.mono,
-    fontSize: text.md,
-    color: colors.faint,
-    fontVariantNumeric: 'tabular-nums',
-    marginInlineEnd: space.sm,
+  ci: { display: 'inline-flex', verticalAlign: -2, marginInlineStart: space.xs },
+  ciDot: { width: 6, height: 6, marginBlock: 4, marginInline: 3, borderRadius: '50%', backgroundColor: colors.info },
+  label: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xxs,
+    marginInlineStart: space.xs,
+    paddingInline: space.xs,
+    verticalAlign: 1,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    fontSize: text.xxs,
+    lineHeight: 1.6,
+    color: colors.muted,
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
+  labelName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  swatch: (hex: string) => ({ width: 7, height: 7, borderRadius: '50%', backgroundColor: `#${hex}` }),
   meta: {
     display: 'flex',
-    alignItems: 'center',
-    gap: space.sm,
-    rowGap: space.xxs,
+    alignItems: 'baseline',
     flexWrap: 'wrap',
+    columnGap: space.xs,
+    fontSize: text.sm,
     color: colors.muted,
-    fontSize: text.md,
-    minWidth: 0,
   },
-  author: { display: 'inline-flex', alignItems: 'center', gap: space.xs, color: colors.fg },
-  sep: { color: colors.line2 },
-  mono: { fontFamily: font.mono, fontSize: text.sm, fontVariantNumeric: 'tabular-nums' },
-  faint: { color: colors.faint },
-  label: (hex: string) => ({
-    paddingBlock: 0,
-    paddingInline: space.xs,
-    borderRadius: radius.xs,
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    lineHeight: 1.7,
-    color: `color-mix(in srgb, #${hex} 70%, ${colors.fg})`,
-    backgroundColor: `color-mix(in srgb, #${hex} 14%, transparent)`,
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, #${hex} 35%, transparent)`,
-  }),
-  diff: {
-    display: 'grid',
-    justifyItems: { default: 'end', [media.narrow]: 'start' },
-    gap: space.xxs,
-    whiteSpace: 'nowrap',
-    width: { default: 96, [media.narrow]: 'auto' },
-    flexShrink: 0,
-  },
-  lines: { fontFamily: font.mono, fontSize: text.sm, fontVariantNumeric: 'tabular-nums' },
-  plus: { color: colors.ok },
-  minus: { color: colors.bad },
-  blocks: { display: 'flex', alignItems: 'center', gap: 2 },
-  block: { width: 7, height: 7, backgroundColor: colors.line2 },
-  blockPlus: { backgroundColor: colors.ok },
-  blockMinus: { backgroundColor: colors.bad },
-  size: { marginInlineStart: space.xs, fontFamily: font.mono, fontSize: text.xxs, fontWeight: 600, color: colors.faint },
+  plus: { color: `color-mix(in srgb, ${colors.ok} 75%, ${colors.muted})` },
+  minus: { color: `color-mix(in srgb, ${colors.bad} 75%, ${colors.muted})` },
   review: {
-    display: 'grid',
-    justifyItems: 'end',
-    gap: space.xxs,
-    width: { default: 290, [media.narrow]: 'auto' },
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: { default: 'flex-end', [media.narrow]: 'flex-start' },
+    flexWrap: 'wrap',
+    columnGap: space.xs,
+    rowGap: space.xxs,
     flexShrink: 0,
-    marginInlineStart: { default: 0, [media.narrow]: 'auto' },
+    flexBasis: { default: 'auto', [media.narrow]: '100%' },
+    minWidth: 0,
+    maxWidth: '100%',
+    minHeight: 28,
+    paddingInlineStart: { default: 0, [media.narrow]: 26 },
+    fontSize: text.sm,
+    color: colors.muted,
   },
-  place: {
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    color: colors.faint,
-    fontVariantNumeric: 'tabular-nums',
-    whiteSpace: 'nowrap',
-  },
-  when: { fontFamily: font.mono, fontSize: text.xxs, color: colors.faint, whiteSpace: 'nowrap' },
-  // the review's outcome as one joined tag: findings | QA
+  nowrap: { whiteSpace: 'nowrap' },
+  status: { display: 'inline-flex', alignItems: 'center', gap: space.xs, whiteSpace: 'nowrap' },
   result: {
     display: 'inline-flex',
-    alignItems: 'stretch',
-    borderRadius: radius.xs,
-    overflow: 'hidden',
+    alignItems: 'center',
+    gap: space.xs,
+    whiteSpace: 'nowrap',
+    color: { default: colors.fg, ':hover': colors.info },
     textDecoration: 'none',
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: { default: colors.line2, ':hover': colors.faint },
-    transitionProperty: 'border-color, opacity',
+  },
+  // the "review again" button shows on row hover or keyboard focus (always on touch screens)
+  again: {
+    display: 'inline-flex',
+    opacity: {
+      default: 0,
+      ':focus-within': 1,
+      [stylex.when.ancestor(':hover')]: 1,
+      [stylex.when.ancestor(':focus-within')]: 1,
+      '@media (hover: none)': 1,
+      [media.phone]: 1,
+    },
+    transitionProperty: 'opacity',
     transitionDuration: '120ms',
-    opacity: { default: 1, ':active': 0.85 },
-  },
-  chip: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: space.xxs,
-    paddingBlock: space.xxxs,
-    paddingInline: space.xs,
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    fontWeight: 500,
-    letterSpacing: '.05em',
-    textTransform: 'uppercase',
-    whiteSpace: 'nowrap',
-  },
-  chipSplit: { borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: colors.line2 },
-  ok: { backgroundColor: colors.okSoft, color: colors.ok },
-  warn: { backgroundColor: colors.warnSoft, color: colors.warn },
-  bad: { backgroundColor: colors.badSoft, color: colors.bad },
-  idle: { backgroundColor: colors.idleSoft, color: colors.muted },
-  newCommits: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: space.xxs,
-    paddingBlock: space.xxxs,
-    paddingInline: space.xs,
-    borderRadius: radius.xs,
-    fontFamily: font.mono,
-    fontSize: text.xxs,
-    fontWeight: 500,
-    letterSpacing: '.05em',
-    textTransform: 'uppercase',
-    whiteSpace: 'nowrap',
-    color: colors.warn,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: `color-mix(in srgb, ${colors.warn} 55%, transparent)`,
   },
 });
 
@@ -362,24 +206,20 @@ function outcomeOf(p: Pull): Outcome {
 }
 
 const LEGEND: [Outcome, string][] = [
-  ['blocking', 'blocking'],
-  ['findings', 'with findings'],
-  ['clean', 'clean'],
-  ['reviewing', 'in review'],
-  ['failed', 'review failed'],
-  ['unreviewed', 'not reviewed'],
-  ['draft', 'drafts'],
+  ['blocking', 'Blocking'],
+  ['findings', 'With findings'],
+  ['clean', 'Clean'],
+  ['reviewing', 'In review'],
+  ['failed', 'Review failed'],
+  ['unreviewed', 'Not reviewed'],
+  ['draft', 'Drafts'],
 ];
 
-const OUTCOME_TONE: Record<Outcome, stylex.StyleXStyles | null> = {
-  blocking: styles.toneBad,
-  findings: styles.toneWarn,
-  clean: styles.toneOk,
-  reviewing: styles.toneInfo,
-  failed: styles.toneBad,
-  unreviewed: null,
-  draft: styles.toneFaint,
-};
+const Sep = () => (
+  <span {...stylex.props(styles.sep)} aria-hidden="true">
+    ·
+  </span>
+);
 
 export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
   const { github } = pulls;
@@ -414,7 +254,6 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
       right={<Button label="Refresh" icon="refresh" small iconOnly busy={refreshing} onClick={refresh} />}
     >
       <Batch items={pulls.items} />
-      {pulls.items.length > 0 && <Health items={pulls.items} />}
       <div {...stylex.props(styles.toolbar)}>
         <div {...stylex.props(styles.search)}>
           <SearchInput label="Search pull requests, or label:bug" value={query} onChange={setQuery} />
@@ -423,10 +262,11 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
         <PickMenu label="Sort" icon="sort" value={sort} options={SORTS} onChange={setSort} />
       </div>
       <Card>
+        {pulls.items.length > 0 && <Counts items={pulls.items} />}
         {shown.length ? (
           <>
-            <Group title="Authored" icon="edit" items={mine} name={name} />
-            <Group title="Others" icon="agents" items={others} name={name} />
+            <Group title="Authored" items={mine} name={name} />
+            <Group title="Others" items={others} name={name} />
           </>
         ) : (
           <Empty
@@ -444,40 +284,28 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
   );
 }
 
-/** How many open pull requests are clean, have findings, block, or wait for a review: a strip of counts over one bar. */
-function Health({ items }: { items: Pull[] }) {
+/** One quiet line: how many are open, and how their reviews came out. */
+function Counts({ items }: { items: Pull[] }) {
   const count = new Map<Outcome, number>();
   for (const p of items) count.set(outcomeOf(p), (count.get(outcomeOf(p)) ?? 0) + 1);
-  const parts = LEGEND.filter(([key]) => count.get(key));
   return (
-    <div {...stylex.props(styles.health)}>
-      <div {...stylex.props(styles.cells)}>
-        <div {...stylex.props(styles.cell)}>
-          <span {...stylex.props(styles.cellValue)}>
-            <Num value={items.length} />
+    <div {...stylex.props(styles.counts)}>
+      <span {...stylex.props(styles.count, styles.countsLead)}>
+        Open <span {...stylex.props(styles.num)}>{items.length}</span>
+      </span>
+      {LEGEND.filter(([key]) => count.get(key)).map(([key, label]) => (
+        <Fragment key={key}>
+          <Sep />
+          <span {...stylex.props(styles.count)}>
+            {label} <span {...stylex.props(styles.num, styles.faint)}>{count.get(key)}</span>
           </span>
-          <span {...stylex.props(styles.cellLabel)}>open</span>
-        </div>
-        {parts.map(([key, label]) => (
-          <div key={key} {...stylex.props(styles.cell)}>
-            <span {...stylex.props(styles.cellValue, OUTCOME_TONE[key])}>{count.get(key)}</span>
-            <span {...stylex.props(styles.cellLabel)}>
-              <i {...stylex.props(styles.swatch, styles[key])} />
-              {label}
-            </span>
-          </div>
-        ))}
-      </div>
-      <div {...stylex.props(styles.bar)} aria-hidden="true">
-        {parts.map(([key]) => (
-          <i key={key} {...stylex.props(styles.part(count.get(key) ?? 0), styles[key])} />
-        ))}
-      </div>
+        </Fragment>
+      ))}
     </div>
   );
 }
 
-/** The reviews asked for together, one segment each, until the last one is done. */
+/** The reviews asked for together: one line and a thin bar until the last one is done. */
 function Batch({ items }: { items: Pull[] }) {
   const run = items.flatMap((p) =>
     p.review?.run ? [{ ...p.review.run, status: p.review.status, number: p.number, title: p.title }] : [],
@@ -486,51 +314,46 @@ function Batch({ items }: { items: Pull[] }) {
   run.sort((a, b) => a.n - b.n);
   const done = run.filter((r) => r.done).length;
   const all = done === run.length;
-  const busy = (r: (typeof run)[number]) => !r.done && (r.status === 'working' || r.status === 'waiting');
-  const current = run.find(busy);
+  const current = run.find((r) => !r.done && (r.status === 'working' || r.status === 'waiting'));
   return (
-    <section {...stylex.props(styles.batch, all && styles.batchDone)} aria-label="Review batch">
-      <div {...stylex.props(styles.batchHead)}>
-        <IconBox icon={all ? 'check' : 'pr'} tone={all ? 'ok' : 'info'} />
-        <div {...stylex.props(styles.batchText)}>
-          <div {...stylex.props(styles.batchTitle)}>
-            {all ? `All ${run.length} reviews done` : `Reviewing ${plural(run.length, 'pull request')}`}
-            {!all && <Blink />}
-          </div>
-          <div {...stylex.props(styles.batchSub)}>
-            {all
-              ? 'Each result is on its pull request below.'
-              : current
-                ? `Now: #${current.number} ${current.title}`
-                : 'Waiting for a free slot'}
-          </div>
-        </div>
-        <span {...stylex.props(styles.batchCount)}>
-          <span {...stylex.props(styles.batchDoneNum)}>{done}</span> of {run.length} done
+    <section {...stylex.props(styles.batch)} aria-label="Review batch">
+      {all ? (
+        <span {...stylex.props(styles.glyph, styles.ok)}>
+          <Icon name="check" size={14} />
         </span>
-      </div>
-      <div {...stylex.props(styles.segments)}>
-        {run.map((r) => (
-          <div key={r.n} {...stylex.props(styles.segment)} title={`#${r.number} ${r.title}`}>
-            <i {...stylex.props(styles.segBar, r.done && styles.segDone, busy(r) && styles.reviewing)} />
-            <span {...stylex.props(styles.segLabel, busy(r) && styles.segLabelOn)}>#{r.number}</span>
-          </div>
-        ))}
-      </div>
-      {!all && <LiveLine />}
+      ) : (
+        <Blink />
+      )}
+      <span {...stylex.props(styles.batchTitle)}>
+        {all ? `All ${run.length} reviews done` : `Reviewing ${plural(run.length, 'pull request')}`}
+      </span>
+      <Sep />
+      {all ? (
+        <span {...stylex.props(styles.batchNow)}>each result is on its pull request below</span>
+      ) : (
+        <>
+          <span>{`${done} of ${run.length} done`}</span>
+          <Sep />
+          <span {...stylex.props(styles.batchNow)} title={current?.title}>
+            {current ? `now #${current.number} ${current.title}` : 'waiting for a free slot'}
+          </span>
+        </>
+      )}
+      <span {...stylex.props(styles.track)} aria-hidden="true">
+        <i {...stylex.props(styles.fillBusy, all && styles.fillDone, styles.fill((100 * done) / run.length))} />
+      </span>
     </section>
   );
 }
 
-function Group({ title, icon, items, name }: { title: string; icon: string; items: Pull[]; name: string }) {
+function Group({ title, items, name }: { title: string; items: Pull[]; name: string }) {
   const { shown, page, pages, setPage } = usePages(items, PAGE);
   if (!items.length) return null;
   return (
     <>
       <div {...stylex.props(styles.group)}>
-        <Icon name={icon} size={14} />
         <span>{title}</span>
-        <span {...stylex.props(styles.groupCount)}>{items.length}</span>
+        <span {...stylex.props(styles.num, styles.faint)}>{items.length}</span>
         <Spacer />
         <Pager page={page} pages={pages} setPage={setPage} />
       </div>
@@ -544,86 +367,58 @@ function Group({ title, icon, items, name }: { title: string; icon: string; item
 }
 
 function PullRow({ p, name }: { p: Pull; name: string }) {
-  const outcome = outcomeOf(p);
-  const status = p.review?.status;
   return (
-    <div
-      {...stylex.props(styles.row, outcome === 'blocking' && styles.rowBad, status === 'waiting' && styles.rowWarn)}
-      data-testid="pull"
-    >
-      <StateIcon p={p} />
-      <div {...stylex.props(styles.body)}>
-        <div {...stylex.props(styles.main)}>
+    <div {...stylex.props(stylex.defaultMarker(), styles.row)} data-testid="pull">
+      <span {...stylex.props(styles.state, p.draft && styles.stateDraft)} title={p.draft ? 'Draft' : 'Open'}>
+        <Icon name={p.draft ? 'draft' : 'pr'} size={16} />
+      </span>
+      <div {...stylex.props(styles.main)}>
+        <div {...stylex.props(styles.line1)}>
           <a {...stylex.props(styles.title)} href={p.url} target="_blank" rel="noopener">
-            <span {...stylex.props(styles.number)}>#{p.number}</span>
             {p.title}
           </a>
-          <div {...stylex.props(styles.meta)}>
-            <span {...stylex.props(styles.author)}>
-              <Avatar name={p.author} src={p.avatar} size={18} />
-              {p.author}
+          {p.ci && <Checks ci={p.ci} />}
+          {p.labels.map((l) => (
+            <span key={l.name} {...stylex.props(styles.label)}>
+              <i {...stylex.props(styles.swatch(l.color))} />
+              <span {...stylex.props(styles.labelName)}>{l.name}</span>
             </span>
-            <span {...stylex.props(styles.sep)}>·</span>
-            <span {...stylex.props(styles.mono)}>{p.repo}</span>
-            <span {...stylex.props(styles.sep)}>·</span>
-            <span {...stylex.props(styles.mono, styles.faint)}>updated {ago(Date.parse(p.updated) / 1000)}</span>
-            {p.labels.map((l) => (
-              <span key={l.name} {...stylex.props(styles.label(l.color))}>
-                {l.name}
-              </span>
-            ))}
-          </div>
+          ))}
         </div>
-        <Diff p={p} />
-        <div {...stylex.props(styles.review)}>
-          <ReviewCell p={p} name={name} />
+        <div {...stylex.props(styles.meta)}>
+          <span {...stylex.props(styles.num)}>#{p.number}</span>
+          <Sep />
+          <span>{p.author}</span>
+          <Sep />
+          <span>updated {ago(Date.parse(p.updated) / 1000)}</span>
+          <Sep />
+          <span {...stylex.props(styles.num)} title={`${(p.additions + p.deletions).toLocaleString()} lines changed`}>
+            <span {...stylex.props(styles.plus)}>+{p.additions.toLocaleString()}</span>{' '}
+            <span {...stylex.props(styles.minus)}>−{p.deletions.toLocaleString()}</span>
+          </span>
         </div>
       </div>
-      {status === 'working' && <LiveLine />}
+      <div {...stylex.props(styles.review)}>
+        <ReviewCell p={p} name={name} />
+      </div>
+      {p.review?.status === 'working' && <LiveLine />}
     </div>
   );
 }
 
-const CI_MARK: Record<Exclude<Ci, ''>, [string, string]> = {
-  passing: ['check', 'Checks passing'],
-  failing: ['x', 'Checks failing'],
-  running: ['clock', 'Checks running'],
+const CI_MARK: Record<Exclude<Ci, ''>, [string, string, stylex.StyleXStyles]> = {
+  passing: ['check', 'Checks passing', styles.ok],
+  failing: ['x', 'Checks failing', styles.bad],
+  running: ['', 'Checks running', styles.info],
 };
 
-/** Open or draft, with the checks' state pinned to its corner. */
-function StateIcon({ p }: { p: Pull }) {
-  const ci = p.ci ? CI_MARK[p.ci] : null;
+/** The checks' state as a tiny mark after the title, like GitHub's. */
+function Checks({ ci }: { ci: Exclude<Ci, ''> }) {
+  const [icon, label, tone] = CI_MARK[ci];
   return (
-    <span {...stylex.props(styles.stateIcon, p.draft && styles.drafted)} title={p.draft ? 'Draft' : 'Open'}>
-      <Icon name={p.draft ? 'draft' : 'pr'} size={17} />
-      {p.ci && ci && (
-        <span {...stylex.props(styles.ci, styles[p.ci])} title={ci[1]} aria-label={ci[1]}>
-          <Icon name={ci[0]} size={10} />
-        </span>
-      )}
+    <span {...stylex.props(styles.ci, tone)} title={label} aria-label={label}>
+      {icon ? <Icon name={icon} size={14} /> : <i {...stylex.props(styles.ciDot)} />}
     </span>
-  );
-}
-
-const sizeOf = (n: number) => (n < 10 ? 'XS' : n < 50 ? 'S' : n < 250 ? 'M' : n < 1000 ? 'L' : 'XL');
-
-/** +added −removed, and five blocks split green / red like GitHub's. */
-function Diff({ p }: { p: Pull }) {
-  const total = p.additions + p.deletions;
-  const green = total ? Math.round((5 * p.additions) / total) : 0;
-  return (
-    <div {...stylex.props(styles.diff)} title={`${total.toLocaleString()} lines changed`}>
-      <span {...stylex.props(styles.lines)}>
-        <span {...stylex.props(styles.plus)}>+{p.additions.toLocaleString()}</span>{' '}
-        <span {...stylex.props(styles.minus)}>−{p.deletions.toLocaleString()}</span>
-      </span>
-      <span {...stylex.props(styles.blocks)}>
-        {[0, 1, 2, 3, 4].map((i) => (
-          <i key={i} {...stylex.props(styles.block, total > 0 && (i < green ? styles.blockPlus : styles.blockMinus))} />
-        ))}
-        <span {...stylex.props(styles.size)}>{sizeOf(total)}</span>
-      </span>
-    </div>
   );
 }
 
@@ -643,95 +438,121 @@ function ReviewCell({ p, name }: { p: Pull; name: string }) {
   };
   if (starting)
     return (
-      <Pill tone="info" dot>
-        Starting…
-      </Pill>
+      <span {...stylex.props(styles.status, styles.info)}>
+        <Blink />
+        <span>Starting…</span>
+      </span>
     );
-  const again = (label: string) => <Button label={label} icon="refresh" small iconOnly variant="quiet" onClick={start} />;
-  if (!r) return <Button label="Review" icon="eye" small variant="primary" onClick={start} />;
-  const place = r.run && !r.run.done && <span {...stylex.props(styles.place)}>{`${r.run.n} of ${r.run.of}`}</span>;
+  if (!r) return <Button label="Review" icon="eye" small onClick={start} />;
+  const place = r.run && !r.run.done && (
+    <>
+      <Sep />
+      <span {...stylex.props(styles.num, styles.faint, styles.nowrap)}>{`${r.run.n} of ${r.run.of}`}</span>
+    </>
+  );
   if (r.status === 'queued')
     return (
-      <Inline gap="xs" nowrap>
-        <Pill tone="idle">
-          <Icon name="clock" size={12} />
+      <>
+        <span {...stylex.props(styles.status)}>
+          <span {...stylex.props(styles.glyph, styles.faint)}>
+            <Icon name="clock" size={14} />
+          </span>
           Queued
-        </Pill>
+        </span>
         {place}
-      </Inline>
+      </>
     );
   if (r.status === 'working' || r.status === 'waiting')
     return (
-      <Inline gap="xs" nowrap>
-        <Pill tone={r.status === 'waiting' ? 'warn' : 'info'} dot>
-          {r.status === 'waiting' ? 'Waiting on you' : 'Reviewing'}
-        </Pill>
+      <>
+        {r.status === 'waiting' ? (
+          <span {...stylex.props(styles.status, styles.warn)}>
+            <Icon name="alert" size={14} />
+            Waiting on you
+          </span>
+        ) : (
+          <span {...stylex.props(styles.status, styles.info)}>
+            <Blink />
+            Reviewing…
+          </span>
+        )}
         {place}
         {r.t3 && <LinkButton label="Open the review chat" icon="ext" small iconOnly variant="quiet" to={r.t3} />}
-      </Inline>
+      </>
     );
   if (r.status !== 'done')
     return (
-      <Inline gap="xs" nowrap>
-        <Pill tone="bad">
-          <Icon name="alert" size={12} />
+      <>
+        <span {...stylex.props(styles.status)}>
+          <span {...stylex.props(styles.glyph, styles.bad)}>
+            <Icon name="alert" size={14} />
+          </span>
           {r.status === 'failed' ? 'Review failed' : 'Stopped'}
-        </Pill>
-        {again('Retry')}
-      </Inline>
+        </span>
+        <Button label="Retry" icon="refresh" small iconOnly variant="quiet" onClick={start} />
+      </>
     );
   const reviewed = Date.parse(r.at);
+  const newer = outdated(p);
   return (
     <>
-      <Inline gap="xs" nowrap>
-        <a {...stylex.props(styles.result)} href={r.url || p.url} target="_blank" rel="noopener" title={r.outcome}>
-          <ResultChips r={r} />
-        </a>
-        {outdated(p) && (
-          <span {...stylex.props(styles.newCommits)}>
-            <Icon name="history" size={11} />
+      <a {...stylex.props(styles.result)} href={r.url || p.url} target="_blank" rel="noopener" title={r.outcome}>
+        <Result r={r} />
+      </a>
+      {newer && (
+        <>
+          <Sep />
+          <span {...stylex.props(styles.faint, styles.nowrap)} title="The pull request has commits the review hasn't seen">
             new commits
           </span>
-        )}
-        {again(outdated(p) ? 'Review the new commits' : 'Review again')}
-      </Inline>
-      {reviewed > 0 && <span {...stylex.props(styles.when)}>reviewed {ago(reviewed / 1000)}</span>}
+        </>
+      )}
+      <span {...stylex.props(styles.again)}>
+        <Button
+          label={newer ? 'Review the new commits' : 'Review again'}
+          hint={reviewed > 0 ? `Review again · last reviewed ${ago(reviewed / 1000)}` : undefined}
+          icon="refresh"
+          small
+          iconOnly
+          variant="quiet"
+          onClick={start}
+        />
+      </span>
     </>
   );
 }
 
-type ChipTone = 'ok' | 'warn' | 'bad' | 'idle';
-
-const QA_CHIP: Record<string, [ChipTone, string]> = {
-  pass: ['ok', 'QA ✓'],
-  fail: ['bad', 'QA ✗'],
-  partial: ['warn', 'QA partial'],
+const QA: Record<string, [string, stylex.StyleXStyles]> = {
+  pass: ['QA ✓', styles.muted],
+  fail: ['QA ✗', styles.bad],
+  partial: ['QA partial', styles.muted],
 };
 
-function ResultChips({ r }: { r: PullReview }) {
+/** The review's outcome in plain words: its worst finding, then QA. */
+function Result({ r }: { r: PullReview }) {
   const c = r.counts;
-  if (!c)
-    return (
-      <span {...stylex.props(styles.chip, styles.idle)}>
-        <Icon name="check" size={12} />
-        Reviewed
-      </span>
-    );
-  const [tone, icon, label]: [ChipTone, string, string] = c.blocking
-    ? ['bad', 'alert', `${c.blocking} blocking`]
-    : c.findings
-      ? ['warn', 'eye', plural(c.findings, 'finding')]
-      : c.open
-        ? ['warn', 'history', `${c.open} still open`]
-        : ['ok', 'check', 'Clean'];
-  const qa = QA_CHIP[c.qa];
+  const [tone, icon, label]: [stylex.StyleXStyles, string, string] = !c
+    ? [styles.faint, 'check', 'Reviewed']
+    : c.blocking
+      ? [styles.bad, 'alert', `${c.blocking} blocking`]
+      : c.findings
+        ? [styles.warn, 'eye', plural(c.findings, 'finding')]
+        : c.open
+          ? [styles.warn, 'history', `${c.open} still open`]
+          : [styles.ok, 'check', 'Clean'];
+  const qa = c ? QA[c.qa] : undefined;
   return (
     <>
-      <span {...stylex.props(styles.chip, styles[tone])}>
-        <Icon name={icon} size={12} />
-        {label}
+      <span {...stylex.props(styles.glyph, tone)}>
+        <Icon name={icon} size={14} />
       </span>
-      {qa && <span {...stylex.props(styles.chip, styles.chipSplit, styles[qa[0]])}>{qa[1]}</span>}
+      <span>{label}</span>
+      {qa && (
+        <>
+          <Sep />
+          <span {...stylex.props(qa[1])}>{qa[0]}</span>
+        </>
+      )}
     </>
   );
 }

@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import type { Secret } from '../../api/types';
 import { KIND_LABELS, kindCounts, users, type KindFilter, type SecretFilter } from '../../lib/secretFilter';
-import { colors, font, media, radius, space, text } from '../../theme/tokens.stylex';
+import { colors, media, radius, space, text } from '../../theme/tokens.stylex';
 import { ChipFilter, Segments } from '../../ui/controls';
 import { SearchInput } from '../../ui/inputs';
 
@@ -24,11 +24,8 @@ const styles = stylex.create({
     alignItems: 'center',
   },
   label: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
   },
 });

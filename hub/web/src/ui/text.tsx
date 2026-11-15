@@ -18,11 +18,8 @@ const styles = stylex.create({
   bold: { fontWeight: 700 },
   mono: { fontFamily: font.mono, fontSize: text.sm },
   eyebrow: {
-    fontFamily: font.mono,
     fontSize: text.xxs,
     fontWeight: 500,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
     color: colors.faint,
     margin: 0,
   },

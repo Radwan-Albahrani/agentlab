@@ -46,7 +46,7 @@ const styles = stylex.create({
   info: { backgroundColor: colors.info },
   warn: { backgroundColor: colors.warn },
   body: { minWidth: 0 },
-  src: { fontFamily: font.mono, fontSize: text.xxs, color: colors.faint, textTransform: 'uppercase', letterSpacing: '.08em' },
+  src: { fontSize: text.xxs, color: colors.faint },
   title: { fontWeight: 500, overflowWrap: 'anywhere' },
   detail: {
     color: colors.muted,

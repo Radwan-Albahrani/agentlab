@@ -66,28 +66,6 @@ function useCommands(menu: Menu): Command[] {
   const now = useNowBoard().data?.agents ?? [];
   const [scheme, toggle] = useScheme();
   const out: Command[] = [];
-  for (const a of now) {
-    for (const w of a.waiting)
-      out.push({
-        id: `w-${a.name}-${w.id}`,
-        group: 'Waiting on you',
-        label: w.title,
-        hint: a.name,
-        icon: badge(a.name),
-        hue: a.name,
-        run: external(a.chat),
-      });
-    for (const r of a.running)
-      out.push({
-        id: `r-${a.name}-${r.id}`,
-        group: 'Running now',
-        label: r.title,
-        hint: a.name,
-        icon: badge(a.name),
-        hue: a.name,
-        run: external(a.chat),
-      });
-  }
   const go = (to: string) => () => {
     void navigate(to);
   };
@@ -124,7 +102,7 @@ const typing = (e: globalThis.KeyboardEvent) => {
 // "/" belongs to a page's own search box when it has one (ui/inputs SearchInput)
 const pageSearch = () => !!document.querySelector('main input[type="search"]');
 
-/** Ctrl/⌘+K (or / when not typing) opens a search over every page, agent, live chat and action. */
+/** Ctrl/⌘+K (or / when not typing) opens a search over every page, agent and action. */
 export function Palette({ menu }: { menu: Menu }) {
   const shown = useSyncExternalStore(subscribe, () => open);
   const commands = useCommands(menu);

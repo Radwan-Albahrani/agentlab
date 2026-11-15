@@ -134,17 +134,16 @@ def describe_approval(item):
 ACTIVE = ('queued', 'preparing', 'starting', 'running', 'waiting')
 RECENT_S = 6 * 3600
 SUBAGENT = "coalesce(json_extract(t.payload_json, '$.lineage.relationshipToParent'), '') = 'subagent'"
-CHAT = f'select t.thread_id, t.title, pr.title, {IS_WORKER}'
 FROM = """from orchestration_v2_projection_runs r
-          join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
-          left join projection_projects pr on pr.project_id = t.project_id"""
+          join orchestration_v2_projection_threads t on t.thread_id = r.thread_id"""
 
 
 def live(profile, now=None):
-    """The agent's chats right now: running (the owner's and background ones, e.g. a companion's), waiting on
-    an answer, and finished in the last hours. Subagents count towards their chat, not as chats of their own."""
+    """How busy the agent is, as counts only (never what a chat is about): chats running (the owner's, and background
+    ones such as a companion's), waiting on an answer, and finished or failed in the last hours. Subagents don't count
+    as chats of their own."""
     now = now or datetime.now(UTC).timestamp()
-    out = {'running': [], 'waiting': [], 'recent': []}
+    out = {'running': 0, 'background': 0, 'waiting': 0, 'done': 0, 'failed': 0}
     marks = ','.join('?' * len(ACTIVE))
     cutoff = datetime.fromtimestamp(now - RECENT_S, UTC).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     try:
@@ -153,63 +152,25 @@ def live(profile, now=None):
         return out
     try:
         q = con.execute
-        helpers = dict(
-            q(
-                f"""select json_extract(t.payload_json, '$.lineage.parentThreadId'), count(*) {FROM}
-                    where r.completed_at is null and r.status in ({marks}) and {SUBAGENT} group by 1""",
-                ACTIVE,
-            ).fetchall()
-        )
-        for tid, title, proj, bg, started in q(
-            f"""{CHAT}, min(r.requested_at) {FROM}
+        for worker, n in q(
+            f"""select {IS_WORKER}, count(distinct t.thread_id) {FROM}
                 where r.completed_at is null and r.status in ({marks}) and t.deleted_at is null and not {SUBAGENT}
-                group by t.thread_id order by 5""",
+                group by 1""",
             ACTIVE,
         ):
-            out['running'].append(
-                {
-                    'id': tid,
-                    'title': title,
-                    'project': proj or '',
-                    'background': bool(bg),
-                    'since': ts(started),
-                    'helpers': helpers.get(tid, 0),
-                }
-            )
-        for tid, title, proj, bg, kind, created in q(
-            f"""{CHAT}, rq.kind, rq.created_at from orchestration_v2_projection_runtime_requests rq
-                join orchestration_v2_projection_threads t on t.thread_id = rq.thread_id
-                left join projection_projects pr on pr.project_id = t.project_id
-                where rq.status = 'pending' and t.deleted_at is null order by rq.created_at"""
-        ):
-            out['waiting'].append(
-                {
-                    'id': tid,
-                    'title': title,
-                    'project': proj or '',
-                    'background': bool(bg),
-                    'kind': 'question' if kind == 'user_input' else 'approval',
-                    'since': ts(created),
-                }
-            )
-        busy = {r['id'] for r in out['running'] + out['waiting']}
-        for tid, title, proj, bg, status, done in q(
-            f"""{CHAT}, r.status, max(r.completed_at) {FROM}
-                where r.completed_at > ? and r.status != 'cancelled' and t.deleted_at is null and not {SUBAGENT}
-                group by t.thread_id order by 6 desc limit 12""",
+            out['background' if worker else 'running'] += n
+        out['waiting'] = q(
+            """select count(distinct rq.thread_id) from orchestration_v2_projection_runtime_requests rq
+               join orchestration_v2_projection_threads t on t.thread_id = rq.thread_id
+               where rq.status = 'pending' and t.deleted_at is null"""
+        ).fetchone()[0]
+        for status, n in q(
+            f"""select r.status, count(distinct t.thread_id) {FROM}
+                where r.completed_at > ? and r.status in ('completed', 'failed') and t.deleted_at is null
+                  and not {SUBAGENT} group by 1""",
             (cutoff,),
         ):
-            if tid not in busy:
-                out['recent'].append(
-                    {
-                        'id': tid,
-                        'title': title,
-                        'project': proj or '',
-                        'background': bool(bg),
-                        'status': status,
-                        'at': ts(done),
-                    }
-                )
+            out['done' if status == 'completed' else 'failed'] += n
     except sqlite3.Error:
         pass
     finally:

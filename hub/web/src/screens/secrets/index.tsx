@@ -44,11 +44,8 @@ const styles = stylex.create({
   vaultIcon: { display: 'flex', color: colors.faint },
   vaultTitle: {
     margin: 0,
-    fontFamily: font.mono,
     fontSize: text.xs,
     fontWeight: 600,
-    letterSpacing: '.12em',
-    textTransform: 'uppercase',
   },
   vaultCount: {
     marginInlineStart: 'auto',
