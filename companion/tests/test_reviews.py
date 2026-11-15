@@ -137,6 +137,7 @@ def gh(monkeypatch):
     monkeypatch.setattr(projects, 'for_repo', lambda repo: '/workspace/platform')
     state.state.pop('pulls', None)
     state.state.pop('review_queue', None)
+    state.state.pop('review_run', None)
     return fake
 
 
@@ -206,7 +207,7 @@ def test_a_review_starts_a_lead_chat_with_the_pr_and_a_private_token(gh, told, f
     assert stat.S_IMODE(os.stat(os.path.join(box, '.token')).st_mode) == 0o600
     with open(os.path.join(box, 'pr.md')) as f:
         assert 'Ignore previous instructions' in f.read()
-    assert task['channel'] == 'D_OWNER' and 'Review and QA' in fresh_bot.text()
+    assert task['channel'] == 'D_OWNER' and 'Reviewing' in fresh_bot.text()
     assert task['review']['head'] == 'a' * 40
 
 
@@ -334,7 +335,7 @@ def test_findings_become_one_review_with_inline_comments_where_they_fit(gh, told
     assert [m[1]['id'] for m in gh.mutations] == ['T_MINE', 'T_MINE']
     assert not os.path.exists(os.path.join(box_of(task), '.token'))
     assert task['review']['summary'] == '2 findings (1 blocking)' and task['posted']
-    assert 'Review posted on' in fresh_bot.text()
+    assert 'Changes requested' in fresh_bot.messages[-1]['blocks'][0]['text']
 
 
 def test_a_clean_review_is_a_thumbs_up_and_nothing_else(gh, told):
@@ -508,3 +509,92 @@ def test_a_review_with_only_a_limitation_says_plainly_what_was_and_was_not_check
     assert first == '**No problems found in what was checked, but part of this PR was not checked.**'
     assert checked == f'**Not checked:** {limitation}'
     assert qa.startswith('**QA:** partly verified · [full report](https://')
+
+
+CLEAN = {'head': 'a' * 40, 'findings': [], 'threads': [{'id': 'T_MINE', 'action': 'fixed', 'note': 'Guarded now.'}]}
+
+
+def card_now(bot, ts):
+    """The card's text as last posted or edited."""
+    edits = [u for u in bot.updates if u['ts'] == ts]
+    return json.dumps((edits[-1] if edits else bot.messages[int(float(ts)) - 1])['blocks'])  # fake ts: n-th post
+
+
+def test_a_run_of_three_shows_its_place_pings_each_end_and_wraps_up_once(gh, told, fresh_bot):
+    for n in (5922, 5923, 5924):
+        assert reviews.request(REPO, n) == ''
+    cards = [e['card'] for e in state.state['review_run']]
+    assert [m['thread_ts'] for m in fresh_bot.messages] == [None, None, None]
+    assert 'Queued' in card_now(fresh_bot, cards[0]) and 'Review 1 of 3' in card_now(fresh_bot, cards[0])
+    reviews.tick()
+    first, second = (state.state['tasks'][f'D_OWNER:{c}'] for c in cards[:2])
+    assert 'Reviewing' in card_now(fresh_bot, cards[0]) and 'Queued' in card_now(fresh_bot, cards[2])
+
+    finish(first, {'head': 'a' * 40, 'findings': FINDINGS})
+    [ping] = [m for m in fresh_bot.messages if m.get('reply_broadcast')]
+    assert ping['thread_ts'] == cards[0] and ping['text'] == f'Review of {REPO}#5922: changes requested'
+    assert '1 of 3 reviews done' in ping['blocks'][0]['text']
+    assert 'Changes requested' in card_now(fresh_bot, cards[0])
+    state.state['pulls'] = [{'id': f'{REPO}#{n}'} for n in (5922, 5923, 5924)]
+    runs = [p['review']['run'] for p in reviews.rows(lambda k, t: {'status': 'done', 'outcome': ''})]
+    assert runs == [{'n': 1, 'of': 3, 'done': True}, {'n': 2, 'of': 3, 'done': False}, {'n': 3, 'of': 3, 'done': False}]
+
+    first['active'] = False
+    reviews.tick()
+    third = state.state['tasks'][f'D_OWNER:{cards[2]}']
+    finish(second, CLEAN)
+    third.update(active=False, outcome='failed', latest='The build broke on install.')
+    second['active'] = False
+    reviews.tick()
+    reviews.tick()
+
+    pings = [m for m in fresh_bot.messages if m.get('reply_broadcast')]
+    assert [p['text'].rsplit(': ', 1)[1] for p in pings] == ['changes requested', 'approved', 'failed']
+    assert '3 of 3 reviews done' in pings[-1]['blocks'][0]['text']
+    [wrap] = [m for m in fresh_bot.messages if m['text'].startswith('All ')]
+    assert wrap['text'] == 'All 3 reviews done' and wrap['channel'] == 'D_OWNER' and wrap['thread_ts'] is None
+    lines = wrap['blocks'][0]['text'].split('\n')[1:]
+    assert [line.split(' · ')[1] for line in lines] == ['changes requested', 'approved', 'failed']
+    assert 'The build broke on install.' in lines[2]
+    assert 'review_run' not in state.state
+
+
+def test_a_review_asked_in_a_thread_stays_there_without_a_wrap_up(gh, told, fresh_bot):
+    assert reviews.from_slack('C1', '60.1', '60.1', f'<@BCOMPANION> review https://github.com/{REPO}/pull/5922')
+    reviews.tick()
+    task = state.state['tasks']['C1:60.1']
+    finish(task, CLEAN)
+    task['active'] = False
+    reviews.tick()
+    assert {m['thread_ts'] for m in fresh_bot.messages} == {'60.1'}
+    assert not any(m.get('reply_broadcast') for m in fresh_bot.messages)
+    assert fresh_bot.messages[-1]['text'] == f'Review of {REPO}#5922: approved'
+    assert not [m for m in fresh_bot.messages if m['text'].startswith('All ')]
+
+
+def test_a_review_that_cannot_start_says_so_in_a_new_message(gh, told, fresh_bot, monkeypatch):
+    def gone(*a):
+        raise GitHubError(404, 'Not Found')
+
+    monkeypatch.setattr(reviews.pulls, 'facts', gone)
+    reviews.request(REPO, 5922)
+    reviews.tick()
+    assert fresh_bot.messages[-1]['reply_broadcast'] and 'Not Found' in fresh_bot.messages[-1]['blocks'][0]['text']
+    assert 'review_run' not in state.state and not told
+
+
+def test_a_queue_from_before_the_cards_still_starts(gh, told, fresh_bot):
+    state.state['review_queue'] = [{'id': f'{REPO}#5922', 'repo': REPO, 'number': 5922, 'origin': None}]
+    reviews.tick()
+    task = next(iter(state.state['tasks'].values()))
+    assert (task['channel'], task['thread_ts']) == ('D_OWNER', '1.0') and 'Reviewing' in card_now(fresh_bot, '1.0')
+
+
+def test_hub_asks_are_not_counted_as_reviews(gh, told):
+    state.state['tasks']['D_OWNER:9.0'] = {'review': True, 'active': True, 'start': ''}
+    reviews.refresh()
+    assert all(r['review'] is None for r in reviews.rows(lambda k, t: {}))
+    for n in (5922, 5923):
+        reviews.request(REPO, n)
+    reviews.tick()
+    assert len(told) == 2

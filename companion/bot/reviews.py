@@ -11,8 +11,8 @@ from reviewer.github import App, GitHubError
 
 from . import projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, OWNER, evidence_repo, log, optional_secret
-from .state import key, lock, new_task, save, state
-from .text import first_sentence
+from .state import key, lock, new_task, review_of, save, state
+from .text import clock, first_sentence, no_emoji
 
 APP_ID, APP_KEY = 'github-app-id.txt', 'github-app-key.pem'
 MAX_RUNNING = 2
@@ -55,16 +55,18 @@ def refresh():
 
 def latest(pr_id):
     """(key, task) of the newest review of this PR, or (None, None)."""
-    found = [(k, t) for k, t in state['tasks'].items() if (t.get('review') or {}).get('id') == pr_id]
+    found = [(k, t) for k, t in state['tasks'].items() if review_of(t).get('id') == pr_id]
     return max(found, key=lambda kt: kt[1].get('start', ''), default=(None, None))
 
 
 def rows(card):
     """The hub's PR list, each with its latest review (card: publish.card)."""
     queued = {q['id'] for q in state.get('review_queue', [])}
+    entries = _run()
+    run = {e['id']: {'n': i + 1, 'of': len(entries), 'done': bool(e.get('verdict'))} for i, e in enumerate(entries)}
     newest = {}  # PR id -> (key, task) of its latest review
     for k, t in state['tasks'].items():
-        pr = (t.get('review') or {}).get('id')
+        pr = review_of(t).get('id')
         if pr and (pr not in newest or t.get('start', '') > newest[pr][1].get('start', '')):
             newest[pr] = (k, t)
     out = []
@@ -85,6 +87,8 @@ def rows(card):
                 'url': r.get('url', ''),
                 'counts': r.get('counts') or report.counts_of(r.get('summary', '')),
             }
+        if review and p['id'] in run:
+            review['run'] = run[p['id']]
         out.append(dict(p, review=review))
     return out
 
@@ -103,7 +107,9 @@ def request(repo, number, origin=None):
     _, t = latest(pr_id)
     if (t and t.get('active')) or any(q['id'] == pr_id for q in state.get('review_queue', [])):
         return f'{pr_id} is already being reviewed'
-    state.setdefault('review_queue', []).append({'id': pr_id, 'repo': repo, 'number': int(number), 'origin': origin})
+    item = {'id': pr_id, 'repo': repo, 'number': int(number), 'origin': origin}
+    _join(item)
+    state.setdefault('review_queue', []).append(item)
     save()
     return ''
 
@@ -168,27 +174,176 @@ def prune_tick():
 
 def tick():
     queue = state.get('review_queue') or []
-    running = sum(1 for t in state['tasks'].values() if t.get('review') and t.get('active'))
+    running = sum(1 for t in state['tasks'].values() if review_of(t) and t.get('active'))
     while queue and running < MAX_RUNNING:
         item = queue.pop(0)
+        e = _entry(item['id']) or _join(item)  # queued by a version without cards
         save()
         try:
-            start(item)
+            start(item, e)
             running += 1
-        except Exception as e:
-            log('review start failed:', item['id'], e)
-            _tell(item.get('origin'), f":warning: Couldn't start the review of {item['id']}: {str(e)[:200]}")
-            COMP.event('failed', f'Could not review {item["id"]}', detail=str(e)[:300], ok=False)
+        except Exception as ex:
+            log('review start failed:', item['id'], ex)
+            _finish(e, 'failed', f"Couldn't start: {str(ex)[:200]}")
+            COMP.event('failed', f'Could not review {item["id"]}', detail=str(ex)[:300], ok=False)
+    _settle(queue)
 
 
-def _tell(origin, md):
+# A run: every review asked for while others are queued or running; it ends when the queue is empty and all finished.
+VERDICTS = {
+    'approved': (':white_check_mark:', 'Approved'),
+    'changes': (':octagonal_sign:', 'Changes requested'),
+    'failed': (':x:', 'Failed'),
+    'stopped': (':black_square_for_stop:', 'Stopped'),
+    'asked': (':raised_hand:', 'Waiting for your answer'),
+}
+
+
+def _run():
+    return state.get('review_run') or []
+
+
+def _entry(pr_id):
+    """The current run's unfinished entry for this PR, or None."""
+    return next((e for e in reversed(_run()) if e['id'] == pr_id and not e.get('verdict')), None)
+
+
+def _join(item):
+    """Add a requested review to the run and post its card (into the asking thread, or a new DM for the hub)."""
+    e = {
+        'id': item['id'],
+        'url': f'https://github.com/{item["repo"]}/pull/{item["number"]}',
+        'title': next((p['title'] for p in state.get('pulls') or [] if p['id'] == item['id']), ''),
+        'hub': not item.get('origin'),
+    }
+    run = state.setdefault('review_run', [])
+    run.append(e)
+    md, note = _card(e)
+    origin = item.get('origin')
     if origin:
-        slack.post(origin['channel'], origin['thread_ts'], first_sentence(md, 150), md=md)
+        ch, tts = origin['channel'], origin['thread_ts']
+        ts = slack.post(ch, tts, f'Queued: review of {e["id"]}', md=md, note=note)
     else:
-        slack.post(slack.dm_owner(), None, first_sentence(md, 150), md=md)
+        ch = slack.dm_owner()
+        tts = ts = slack.post(ch, None, f'Queued: review of {e["id"]}', md=md, note=note)
+        if ts:
+            item['origin'] = {'channel': ch, 'thread_ts': ts, 'trigger_ts': ts}
+    e.update(channel=ch, thread=tts, card=ts)
+    for other in run[:-1]:  # their "n of N" changed
+        if not other.get('verdict'):
+            _show(other)
+    return e
 
 
-def start(item):
+def _place(e):
+    """'2 of 5' within the run; '' for a lone review."""
+    run = _run()
+    i = next((n for n, x in enumerate(run) if x is e), None)
+    return f'{i + 1} of {len(run)}' if i is not None and len(run) > 1 else ''
+
+
+def _card(e):
+    """(md, note) of a review's card in its current state."""
+    pr = f'<{e.get("link") or e["url"]}|{e["id"]}>' + (f': {e["title"]}' if e.get('title') else '')
+    place = _place(e) and f'Review {_place(e)}'
+    if e.get('verdict'):
+        icon, label = VERDICTS[e['verdict']]
+        md = f'{icon} **{label}** · {pr}' + (f'\n{e["detail"]}' if e.get('detail') else '')
+        bits = [place, f'finished {clock(time.time())}']
+    elif e.get('waiting'):
+        md = f':raised_hand: **Waiting for your answer** · {pr}'
+        bits = [place, 'the question is in the thread']
+    elif e.get('task'):
+        md = f':arrows_counterclockwise: **Reviewing…** · {pr}'
+        md += f'\nAgain, after {e["rereview"][:7]}' if e.get('rereview') else ''
+        bits = [place, 'review and QA in progress', 'reply in this thread to steer it' if e.get('hub') else '']
+    else:
+        md = f':hourglass_flowing_sand: **Queued** · {pr}'
+        bits = [place, f'starts when a slot frees up ({MAX_RUNNING} run at a time)', e.get('hub') and 'from the hub']
+    return md, ' · '.join(b for b in bits if b)
+
+
+def _show(e):
+    """Edit the card in place (no notification)."""
+    if e.get('card'):
+        md, note = _card(e)
+        slack.update(e['channel'], e['card'], no_emoji(md.split('\n')[0]), md=md, note=note)
+
+
+def _root(e):
+    """The card heads its own thread (hub reviews): the owner doesn't follow it, so replies there don't notify."""
+    return bool(e.get('card')) and e['card'] == e.get('thread')
+
+
+def _say(e, text, md):
+    """A new message in the review's thread, also shown in the conversation when the thread is the card's own."""
+    slack.post(e['channel'], e.get('thread'), text, md=md, broadcast=_root(e))
+
+
+def _finish(e, verdict, detail='', link='', ping=True):
+    """Close the card; ping: also say it in a new message (edits don't notify)."""
+    e.update(verdict=verdict, detail=detail, link=link or e['url'], waiting=False)
+    _show(e)
+    if ping:
+        md = _card(e)[0]
+        if _place(e):
+            md += f'\n{sum(1 for x in _run() if x.get("verdict"))} of {len(_run())} reviews done'
+        _say(e, f'Review of {e["id"]}: {VERDICTS[verdict][1].lower()}', md)
+    save()
+
+
+def _ended(t):
+    """(verdict, detail) of a review task that stopped without publishing."""
+    outcome = (t or {}).get('outcome')
+    if outcome == 'stopped':
+        return 'stopped', ''
+    if outcome == 'asked you':
+        return 'asked', 'It asked you a question in the thread.'
+    if outcome == 'failed':
+        return 'failed', first_sentence(no_emoji(t.get('latest', '')), 200) or 'The agent run failed.'
+    return 'failed', 'It ended without posting a review.'
+
+
+def _settle(queue):
+    """Follow the run's reviews to their end; once all are done, one wrap-up message."""
+    run = _run()
+    for e in run:
+        if e.get('verdict') or not e.get('task'):
+            continue
+        t = state['tasks'].get(e['task'])
+        if t and t.get('active'):
+            if bool(t.get('question')) != bool(e.get('waiting')):
+                e['waiting'] = bool(t.get('question'))
+                _show(e)
+                if e['waiting'] and _root(e):
+                    _say(
+                        e,
+                        f'{e["id"]} needs your answer',
+                        f':raised_hand: **{e["id"]} needs your answer** · the question is in the thread',
+                    )
+            continue
+        # tasks already replied in the thread; only a thread the owner doesn't follow needs the extra ping
+        _finish(e, *_ended(t), ping=_root(e))
+    if run and not queue and all(e.get('verdict') for e in run):
+        if len(run) > 1:
+            _wrap_up(run)
+        state.pop('review_run')
+        save()
+
+
+def _wrap_up(run):
+    """'All N reviews done' with a line per PR: in their shared thread, else the owner's DM."""
+    lines = []
+    for e in run:
+        icon, label = VERDICTS[e['verdict']]
+        lines.append(f'{icon} <{e["link"]}|{e["id"]}> · {label.lower()}' + (f' · {e["detail"]}' if e['detail'] else ''))
+    threads = {(e['channel'], e.get('thread')) for e in run}
+    ch, tts = next(iter(threads)) if len(threads) == 1 else (slack.dm_owner(), None)
+    md = f':checkered_flag: **All {len(run)} reviews done**\n' + '\n'.join(lines)
+    slack.post(ch, tts, f'All {len(run)} reviews done', md=md)
+
+
+def start(item, e):
     a = app()
     if not a:
         raise GitHubError(0, 'the GitHub App is not set up')
@@ -197,8 +352,11 @@ def start(item):
         raise GitHubError(0, f'the PR is {f["state"]}')
     if f['fork']:
         raise GitHubError(0, 'it comes from a fork; only branches of the repository itself are run here')
+    origin = item.get('origin')
+    if not origin:
+        raise RuntimeError("Slack refused the review's message")
     _, before = latest(f'{f["repo"]}#{f["number"]}')
-    rereview = ((before or {}).get('review') or {}).get('published', '')
+    rereview = review_of(before or {}).get('published', '')
     folder = f'review-{f["repo"].replace("/", "-")}-{f["number"]}-{int(time.time())}'
     box = os.path.join(FILES, 'outbox', folder)
     os.makedirs(box, exist_ok=True)
@@ -218,19 +376,7 @@ def start(item):
     )
     pr_id, short = f'{f["repo"]}#{f["number"]}', f'{f["repo"].rsplit("/", 1)[-1]}#{f["number"]}'
     title = f'Review {short}: {f["title"]}'[:90]
-    origin = item.get('origin')
-    if origin:
-        ch, tts, trigger = origin['channel'], origin['thread_ts'], origin['trigger_ts']
-    else:
-        ch = slack.dm_owner()
-        tts = trigger = slack.post(
-            ch,
-            None,
-            f'Reviewing {short}: {f["title"]}',
-            md=f':mag: **Review and QA** · <{f["url"]}|{pr_id}>: {f["title"]}'
-            + (f'\nAgain, after {rereview[:7]}' if rereview else ''),
-            note='Asked from the hub. Reply here to steer it.',
-        )
+    ch, tts, trigger = origin['channel'], origin['thread_ts'], origin['trigger_ts']
     tid, err = t3.start_thread(project or '/workspace', title, message)
     if not tid:
         raise GitHubError(0, f"T3 didn't start the chat: {err}")
@@ -251,8 +397,12 @@ def start(item):
             'head': f['head'],
             'installation': f['installation'],
             'rereview': rereview,
+            'title': f['title'],
+            'card': e.get('card'),
         },
     )
+    e.update(task=key(ch, tts), title=f['title'], url=f['url'], rereview=rereview)
+    _show(e)
     log('review started', pr_id, tid)
     COMP.event('started', title, task=key(ch, tts), detail=f'{pr_id} at {f["head"][:7]}')
 
@@ -305,7 +455,6 @@ def publish(task, box, data):
     note = f':white_check_mark: Review posted on <{link}|{r["id"]}> · {summary}'
     if problems:
         note = f':warning: Review of <{r["url"]}|{r["id"]}> · {summary} · trouble with ' + '; '.join(problems)
-    slack.note_only(ch, tts, note)
     counts = {
         'findings': len(findings),
         'blocking': sum(x['severity'] == 'blocking' for x in findings),
@@ -314,6 +463,18 @@ def publish(task, box, data):
     }
     r.update(published=head, summary=summary, url=link, counts=counts)
     task.update(closed=note, posted=True)
+    verdict = 'changes' if counts['blocking'] or counts['open'] or counts['qa'] == 'fail' else 'approved'
+    detail = summary + (' · :warning: trouble with ' + '; '.join(problems) if problems else '')
+    # a re-run from the thread after its run ended has no entry; its card still closes
+    e = next((x for x in _run() if x.get('task') == key(ch, tts) and not x.get('verdict')), None) or {
+        'id': r['id'],
+        'url': r['url'],
+        'title': r.get('title', ''),
+        'channel': ch,
+        'thread': tts,
+        'card': r.get('card'),
+    }
+    _finish(e, verdict, detail, link)
     with_token = os.path.join(box, '.token')
     if os.path.exists(with_token):
         os.remove(with_token)

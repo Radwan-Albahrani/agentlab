@@ -239,8 +239,9 @@ def _send(call, md, note, **kw):
     return None
 
 
-def post(channel, thread_ts, text, md=None, note=None):
-    """text: notification/fallback text; md and note: what the message shows."""
+def post(channel, thread_ts, text, md=None, note=None, broadcast=False):
+    """text: notification/fallback text; md and note: what the message shows; broadcast: a thread reply also shown in
+    the conversation (and notifying there)."""
     r = _send(
         app.client.chat_postMessage,
         md,
@@ -250,6 +251,7 @@ def post(channel, thread_ts, text, md=None, note=None):
         text=text[:3000],
         unfurl_links=False,
         unfurl_media=False,
+        **({'reply_broadcast': True} if broadcast and thread_ts else {}),
     )
     return r['ts'] if r else None
 

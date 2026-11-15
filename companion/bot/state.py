@@ -58,6 +58,12 @@ def task_of(channel, thread_ts):
     return state['tasks'].get(key(channel, thread_ts))
 
 
+def review_of(task):
+    """The PR review a task runs, or {} (a hub ask's `review` is its approve-before-posting flag)."""
+    r = task.get('review')
+    return r if isinstance(r, dict) else {}
+
+
 def now_iso():
     """Now in T3's timestamp format; compared as strings with T3's, so keep the format exact."""
     return datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'

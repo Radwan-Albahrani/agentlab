@@ -6,7 +6,7 @@ import time
 
 from . import polls, reviews, slack
 from .config import COMP, MODES, mode
-from .state import lock, state
+from .state import lock, review_of, state
 
 _last = 0.0
 _writing = threading.Lock()
@@ -47,7 +47,7 @@ def card(k, t):
     return {
         'id': k,
         'title': t.get('title') or '',
-        'kind': 'errand' if req else 'review' if t.get('review') else 'task',
+        'kind': 'errand' if req else 'review' if review_of(t) else 'task',
         'requester': slack.name(asker) if asker else '',
         'status': status,
         'waiting': waiting,

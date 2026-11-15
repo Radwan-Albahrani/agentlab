@@ -5,7 +5,7 @@ import time
 
 from . import errands, polls, projects, prompts, slack, t3
 from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
-from .state import key, lock, new_task, now_iso, parse_iso, save
+from .state import key, lock, new_task, now_iso, parse_iso, review_of, save
 from .text import first_sentence, mins, no_emoji
 
 THINKING = ':seedling: thinking…'
@@ -355,7 +355,7 @@ REVIEW_NUDGE = (
 
 
 def _finish_turn(task, s):
-    r = task.get('review')
+    r = review_of(task)
     if r and not r.get('published') and s['last_status'] == 'completed' and task.get('nudged', 0) < 2:
         # a lead chat often ends its turn before publishing review.json
         task['nudged'] = task.get('nudged', 0) + 1

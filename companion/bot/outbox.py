@@ -6,7 +6,7 @@ import time
 
 from . import errands, polls, posts, reviews, slack
 from .config import COMP, FILES, OWNER, log
-from .state import key, save
+from .state import key, review_of, save
 
 OUTBOX = os.path.join(FILES, 'outbox')
 DELIVER_TYPES = {
@@ -65,7 +65,7 @@ def tick(task):
         os.replace(os.path.join(box, 'poll-change.json'), os.path.join(box, f'poll-change-{int(time.time())}.json'))
         polls.change(c, task)
     r = _take(os.path.join(box, 'review.json'))
-    if r is not None and task.get('review'):
+    if r is not None and review_of(task):
         os.replace(os.path.join(box, 'review.json'), os.path.join(box, f'review-{int(time.time())}.json'))
         reviews.publish(task, box, r)
     m = _take(os.path.join(box, 'manifest.json'))
