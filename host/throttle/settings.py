@@ -7,7 +7,7 @@ DATA = cluster.data_dir(_cfg)
 
 POOL_HEADROOM_MB = 2048  # keeps admissions below the slice's MemoryHigh
 AGENT_HEADROOM_MB = 1024  # room for the agent's own T3, chats and MCP servers
-SWAP_CAP_MB = 1024  # admit nothing new while more swap than this is in use
+MEMORY_PRESSURE_MAX = 10  # PSI memory "some" avg10, %; swap in use alone isn't pressure (pages stay swapped out)
 
 IO_PRESSURE_MAX = (_cfg.get('limits') or {}).get('throttle', {}).get('io_psi_max', 25)  # PSI io "some" avg10, %
 ADMIT_GAP_S = 10  # PSI avg10 needs this long to show a new job's load

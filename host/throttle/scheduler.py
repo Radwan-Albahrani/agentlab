@@ -1,9 +1,9 @@
 """Which queued heavy jobs may start now; with nothing running, the next job always starts."""
 
-from .settings import ADMIT_GAP_S, AGENT_HEADROOM_MB, IO_PRESSURE_MAX, POOL_HEADROOM_MB, SWAP_CAP_MB
+from .settings import ADMIT_GAP_S, AGENT_HEADROOM_MB, IO_PRESSURE_MAX, MEMORY_PRESSURE_MAX, POOL_HEADROOM_MB
 
 
-def to_admit(jobs, pool, agents, swap_mb, io_pressure, since_last_start_s):
+def to_admit(jobs, pool, agents, memory_pressure, io_pressure, since_last_start_s):
     """pool: (used, limit) MB; agents: {agent: (used, limit) or None}; returns the jobs to start now."""
     running = [j for j in jobs if j.admitted]
     if running and (io_pressure > IO_PRESSURE_MAX or since_last_start_s < ADMIT_GAP_S):
@@ -18,7 +18,7 @@ def to_admit(jobs, pool, agents, swap_mb, io_pressure, since_last_start_s):
         idle = not running and not admitted
         if admitted:
             break  # one start at a time; the next waits out ADMIT_GAP_S
-        if not idle and swap_mb > SWAP_CAP_MB:
+        if not idle and memory_pressure > MEMORY_PRESSURE_MAX:
             break
         if not idle and job.estimate_mb > free['pool']:
             break

@@ -26,7 +26,7 @@ class Broker:
                 del folders[agent]
         agents = {agent: facts.agent_mb(agent) for agent in folders}
         for job in scheduler.to_admit(
-            jobs, facts.pool_mb(), agents, facts.swap_used_mb(), facts.io_pressure(), time.time() - self.last_start
+            jobs, facts.pool_mb(), agents, facts.memory_pressure(), facts.io_pressure(), time.time() - self.last_start
         ):
             spool.admit(folders[job.agent], job)
             job.admitted = True
