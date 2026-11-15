@@ -47,7 +47,7 @@ RUN apt-get update && apt-get -y upgrade && rm -rf /var/lib/apt/lists/* \
 # Agent user, rootless-Docker id ranges, docker group, sudo rule, runtime dir; interactive bash loads load-env.sh.
 RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
  && install -d -o agent -g agent /workspace /home/linuxbrew /usr/local/lib/agent-shims \
- && install -d -m 755 /etc/agent /opt/android-sdk \
+ && install -d -m 755 /etc/agent /etc/claude-code /opt/android-sdk \
  && install -d -o agent -g agent -m 700 /run/user/1000 \
  && echo 'agent:100000:65536' > /etc/subuid && echo 'agent:100000:65536' > /etc/subgid \
  && usermod -aG docker agent \
