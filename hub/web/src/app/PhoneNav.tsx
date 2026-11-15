@@ -9,6 +9,7 @@ import { Badge, Count, Dot } from '../ui/status';
 import { isActive, type Menu, type MenuItem } from './menu';
 import { openPalette } from './Palette';
 import { ThemeToggle } from './ThemeToggle';
+import { Pressable } from '../ui/Button';
 
 const styles = stylex.create({
   top: {
@@ -122,9 +123,9 @@ export function PhoneNav({ menu }: { menu: Menu }) {
         <Link to="/" {...stylex.props(styles.brand)}>
           Agents
         </Link>
-        <button type="button" {...stylex.props(styles.iconBtn)} onClick={openPalette} aria-label="Search">
+        <Pressable look={styles.iconBtn} onClick={openPalette} label="Search">
           <Icon name="search" />
-        </button>
+        </Pressable>
         <ThemeToggle />
       </div>
       <nav {...stylex.props(styles.tabs)} aria-label="Main">
@@ -145,13 +146,12 @@ export function PhoneNav({ menu }: { menu: Menu }) {
             Agents
           </Link>
         )}
-        <button type="button" {...stylex.props(styles.tab)} onClick={openPalette}>
+        <Pressable look={styles.tab} onClick={openPalette}>
           <Icon name="search" size={22} />
           Search
-        </button>
-        <button
-          type="button"
-          {...stylex.props(styles.tab, sheet && styles.tabOn)}
+        </Pressable>
+        <Pressable
+          look={[styles.tab, sheet && styles.tabOn]}
           onClick={() => {
             setSheet(true);
           }}
@@ -163,7 +163,7 @@ export function PhoneNav({ menu }: { menu: Menu }) {
               <Count n={waiting} />
             </span>
           )}
-        </button>
+        </Pressable>
       </nav>
       <Sheet open={sheet} onOpenChange={setSheet} label="Menu">
         {(

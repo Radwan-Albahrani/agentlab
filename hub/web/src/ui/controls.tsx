@@ -4,7 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
 import { Radio, RadioGroup, RadioIndicator } from '@ui-sdk/react/radio';
 import { Switch as SwitchRoot, SwitchThumb } from '@ui-sdk/react/switch';
 import { Toggle, ToggleGroup } from '@ui-sdk/react/toggle';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Hint } from './Button';
 import { Icon } from './Icon';
@@ -14,6 +14,8 @@ const cls = (...s: stylex.StyleXStyles[]) => stylex.props(...s).className ?? '';
 const fading = ':is([data-starting-style], [data-ending-style])';
 const checked = ':is([data-checked])';
 const opened = ':is([data-open])';
+const holdsChecked = ':has([data-checked])';
+const hoverUnchecked = ':hover:not(:has([data-checked]))';
 
 const styles = stylex.create({
   segments: {
@@ -204,19 +206,15 @@ const styles = stylex.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: { default: colors.line2, ':hover': colors.faint },
-    backgroundColor: colors.panel,
+    borderColor: { default: colors.line2, [hoverUnchecked]: colors.faint, [holdsChecked]: colors.accent },
+    backgroundColor: { default: colors.panel, [holdsChecked]: colors.accentSoft },
     cursor: 'pointer',
     transitionProperty: 'border-color, background-color',
     transitionDuration: '140ms',
   },
-  choiceOn: {
-    borderColor: { default: colors.accent, ':hover': colors.accent },
-    backgroundColor: colors.accentSoft,
-  },
-  choiceOnDanger: {
-    borderColor: { default: colors.bad, ':hover': colors.bad },
-    backgroundColor: colors.badSoft,
+  choiceDanger: {
+    borderColor: { default: colors.line2, [hoverUnchecked]: colors.faint, [holdsChecked]: colors.bad },
+    backgroundColor: { default: colors.panel, [holdsChecked]: colors.badSoft },
   },
   radio: {
     width: 16,
@@ -350,13 +348,26 @@ export function ChoiceCards({
 }
 
 export function Switch({ on, label, onToggle }: { on: boolean; label: string; onToggle: () => unknown }) {
+  const [saving, setSaving] = useState(false);
   return (
     <SwitchRoot
       checked={on}
-      onCheckedChange={() => {
-        void onToggle();
+      onCheckedChange={(_next, details) => {
+        // the owner's value moves once the save lands; a press meanwhile would send the same change twice
+        if (saving) {
+          details.cancel();
+          return;
+        }
+        const done = onToggle();
+        if (done instanceof Promise) {
+          setSaving(true);
+          void done.finally(() => {
+            setSaving(false);
+          });
+        }
       }}
       aria-label={label}
+      aria-busy={saving || undefined}
       {...stylex.props(styles.switch)}
     >
       <SwitchThumb {...stylex.props(styles.thumb)} />
@@ -415,10 +426,7 @@ export function RadioCards<V extends string>({
       {...stylex.props(styles.choices)}
     >
       {options.map((o) => (
-        <label
-          key={o.value}
-          {...stylex.props(styles.choice, o.value === value && (o.danger ? styles.choiceOnDanger : styles.choiceOn))}
-        >
+        <label key={o.value} {...stylex.props(styles.choice, o.danger && styles.choiceDanger)}>
           <Radio value={o.value} {...stylex.props(styles.radio, o.danger && styles.radioDanger)}>
             <RadioIndicator {...stylex.props(styles.dot, o.danger && styles.dotDanger)} />
           </Radio>

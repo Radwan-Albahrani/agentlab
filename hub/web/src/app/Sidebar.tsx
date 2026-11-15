@@ -10,6 +10,7 @@ import { Badge, Count, Dot } from '../ui/status';
 import { isActive, type Menu, type MenuItem } from './menu';
 import { openPalette } from './Palette';
 import { ThemeToggle } from './ThemeToggle';
+import { Pressable } from '../ui/Button';
 
 const blink = stylex.keyframes({ '50%': { opacity: 0.2 } });
 
@@ -268,11 +269,11 @@ export function Sidebar({ menu, onLogo }: { menu: Menu; onLogo: (e: MouseEvent) 
           <span {...stylex.props(styles.brandName)}>Agents</span>
         </Link>
       </div>
-      <button type="button" {...stylex.props(styles.search)} onClick={openPalette}>
+      <Pressable look={styles.search} onClick={openPalette}>
         <Icon name="search" size={15} />
         Search
         <kbd {...stylex.props(styles.kbd)}>Ctrl K</kbd>
-      </button>
+      </Pressable>
       <nav {...stylex.props(styles.nav)} aria-label="Main">
         <Group items={menu.main} activity={activity} />
         <Group title="Agents" items={menu.agents} activity={activity} />

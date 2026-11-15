@@ -6,9 +6,13 @@ import { Card } from './Card';
 import { Icon } from './Icon';
 
 const styles = stylex.create({
+  // the aside sits beside the trigger, not in it: a button can't hold other controls
+  bar: { display: 'flex', alignItems: 'center' },
+  aside: { display: 'flex', alignItems: 'center', paddingInlineEnd: space.xl },
   head: {
     appearance: 'none',
-    width: '100%',
+    flexGrow: 1,
+    minWidth: 0,
     display: 'flex',
     alignItems: 'center',
     gap: space.lg,
@@ -33,17 +37,19 @@ export function Expandable({ summary, aside, children }: { summary: ReactNode; a
   return (
     <Card>
       <Collapsible>
-        <CollapsibleTrigger {...stylex.props(styles.head)}>
-          {(s) => (
-            <>
-              <span {...stylex.props(styles.caret, s.open && styles.caretOpen)}>
-                <Icon name="chevron" size={16} />
-              </span>
-              <span {...stylex.props(styles.summary)}>{summary}</span>
-              {aside}
-            </>
-          )}
-        </CollapsibleTrigger>
+        <div {...stylex.props(styles.bar)}>
+          <CollapsibleTrigger {...stylex.props(styles.head)}>
+            {(s) => (
+              <>
+                <span {...stylex.props(styles.caret, s.open && styles.caretOpen)}>
+                  <Icon name="chevron" size={16} />
+                </span>
+                <span {...stylex.props(styles.summary)}>{summary}</span>
+              </>
+            )}
+          </CollapsibleTrigger>
+          {aside && <span {...stylex.props(styles.aside)}>{aside}</span>}
+        </div>
         <CollapsiblePanel {...stylex.props(styles.body)}>{children}</CollapsiblePanel>
       </Collapsible>
     </Card>

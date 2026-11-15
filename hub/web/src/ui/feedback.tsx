@@ -115,7 +115,15 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       <ConfirmDialog text={ask?.text ?? null} onAnswer={answer} />
-      <ToastRegion toaster={toaster} side="bottom" align="end" maxVisible={3} {...stylex.props(styles.region)}>
+      <ToastRegion
+        toaster={toaster}
+        side="bottom"
+        align="end"
+        maxVisible={3}
+        // it drops its name while empty, and agents read results from the page itself
+        data-agent-hidden
+        {...stylex.props(styles.region)}
+      >
         {(t) => (
           <Toast {...stylex.props(styles.toast)}>
             <span {...stylex.props(styles.mark, t.type === 'error' && styles.markBad)}>

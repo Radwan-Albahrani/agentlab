@@ -102,6 +102,7 @@ SCHEMA = [
         'key': 'github_user',
         'label': 'Your GitHub username',
         'type': 'text',
+        'source': 'github_people',  # the hub offers a picker of the people the GitHub App sees
         'default': os.environ.get('COMPANION_GITHUB_USER', ''),
         'help': 'Pull requests you opened are listed first, under "Authored".',
     },
@@ -134,6 +135,7 @@ SCHEMA = [
         'key': 'publish_channel',
         'label': 'Product updates channel',
         'type': 'text',
+        'source': 'channels',  # the hub offers a picker of the channels the bot can see
         'default': os.environ.get('COMPANION_PUBLISH_CHANNEL', ''),
         'help': 'Slack channel id that approved product-update drafts are posted to.',
     },

@@ -10,7 +10,7 @@ import { useNow } from '../../lib/useNow';
 import { hueTheme } from '../../theme/hues';
 import { colors, font, media, radius, space, text } from '../../theme/tokens.stylex';
 import { ActButton } from '../../ui/actions';
-import { Button, LinkButton } from '../../ui/Button';
+import { Button, LinkButton, Pressable } from '../../ui/Button';
 import { Card } from '../../ui/Card';
 import { FeedSection } from '../../ui/Feed';
 import { StatGrid } from '../../ui/layout';
@@ -212,6 +212,7 @@ function CompanionView({ d }: { d: Data }) {
               fields={d.settings}
               authors={authorsOf(d)}
               github={d.pulls?.github.people ?? []}
+              channels={d.channels ?? []}
             />
           </Card>
         </Section>
@@ -290,13 +291,13 @@ function Metric({
   onClick: () => void;
 }) {
   return (
-    <button type="button" {...stylex.props(styles.metric)} onClick={onClick}>
+    <Pressable look={styles.metric} onClick={onClick}>
       <span {...stylex.props(styles.metricValue, tone ?? styles.quiet)}>
         <Num value={value} />
         {live && <Blink />}
       </span>
       <span {...stylex.props(styles.metricLabel)}>{label}</span>
-    </button>
+    </Pressable>
   );
 }
 

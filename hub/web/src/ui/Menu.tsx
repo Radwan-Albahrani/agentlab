@@ -1,5 +1,14 @@
 import * as stylex from '@stylexjs/stylex';
-import { Menu, MenuContent, MenuItem, MenuItemIndicator, MenuRadioGroup, MenuRadioItem, MenuTrigger } from '@ui-sdk/react/menu';
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuItemIcon,
+  MenuItemIndicator,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from '@ui-sdk/react/menu';
 import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Hint, look } from './Button';
 import { Icon } from './Icon';
@@ -50,6 +59,7 @@ const styles = stylex.create({
     color: { default: colors.bad, [off]: colors.faint },
     backgroundColor: { default: 'transparent', [lit]: colors.badSoft },
   },
+  icon: { display: 'flex' },
   hint: {
     marginInlineStart: 'auto',
     paddingInlineStart: space.lg,
@@ -129,7 +139,11 @@ export function MoreMenu({ label, entries }: { label: string; entries: MenuEntry
             }}
             {...stylex.props(styles.item, e.danger && styles.danger)}
           >
-            {e.icon && <Icon name={e.icon} size={16} />}
+            {e.icon && (
+              <MenuItemIcon {...stylex.props(styles.icon)}>
+                <Icon name={e.icon} size={16} />
+              </MenuItemIcon>
+            )}
             <span>{e.label}</span>
             {e.hint && <span {...stylex.props(styles.hint)}>{e.hint}</span>}
           </MenuItem>

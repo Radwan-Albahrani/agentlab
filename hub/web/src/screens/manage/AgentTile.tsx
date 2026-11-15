@@ -3,7 +3,7 @@ import type { Job, ManagedAgent } from '../../api/types';
 import { elapsed, gb, pct } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
 import { colors, font, radius, space, text } from '../../theme/tokens.stylex';
-import { Button } from '../../ui/Button';
+import { Button, Pressable } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { MoreMenu } from '../../ui/Menu';
 import { Badge, Meter, Pill } from '../../ui/status';
@@ -283,12 +283,12 @@ export function AgentTile({
 
 export function AddTile({ disabled, onAdd }: { disabled: boolean; onAdd: () => void }) {
   return (
-    <button type="button" {...stylex.props(styles.add, disabled && styles.addDisabled)} disabled={disabled} onClick={onAdd}>
+    <Pressable look={[styles.add, disabled && styles.addDisabled]} disabled={disabled} onClick={onAdd}>
       <span {...stylex.props(styles.addIcon)}>
         <Icon name="plus" size={18} />
       </span>
       <span>Add an agent</span>
       <span {...stylex.props(styles.addSub)}>Everything it needs is set up for you</span>
-    </button>
+    </Pressable>
   );
 }

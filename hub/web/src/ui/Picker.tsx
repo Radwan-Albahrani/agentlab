@@ -98,9 +98,8 @@ const styles = stylex.create({
     fontSize: text.xs,
     color: colors.faint,
   },
-  // the empty part stays in the page and only fills in when nothing matches
   empty: {
-    display: { default: 'block', ':empty': 'none' },
+    display: { default: 'none', ':is([data-empty])': 'block' },
     paddingBlock: space.md,
     paddingInline: space.md,
     fontSize: text.base,

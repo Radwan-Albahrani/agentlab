@@ -117,7 +117,8 @@ export function Hint({
   return (
     <Tooltip type={names ? 'label' : 'description'}>
       <TooltipTrigger render={render}>{children}</TooltipTrigger>
-      <TooltipContent sideOffset={6} {...stylex.props(styles.tip)}>
+      {/* the control it names or describes is what an agent finds; the tip would only repeat its name */}
+      <TooltipContent sideOffset={6} data-agent-hidden {...stylex.props(styles.tip)}>
         {tip}
       </TooltipContent>
     </Tooltip>
@@ -188,5 +189,28 @@ export function Button({
     >
       {inner(l)}
     </WithTip>
+  );
+}
+
+/** A UI SDK button with the caller's own look, for controls that aren't styled like buttons (tabs, tiles, search bars). */
+export function Pressable({
+  look: own,
+  onClick,
+  label,
+  disabled,
+  title,
+  children,
+}: {
+  look: stylex.StyleXStyles;
+  onClick?: () => unknown;
+  label?: string; // for a control without visible text
+  disabled?: boolean;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <ButtonRoot type="button" {...stylex.props(own)} onClick={onClick} disabled={disabled} title={title} aria-label={label}>
+      {children}
+    </ButtonRoot>
   );
 }

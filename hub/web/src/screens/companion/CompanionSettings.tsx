@@ -1,7 +1,8 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
-import type { GithubPerson, SettingField } from '../../api/types';
-import { ChoiceCards, Disclosure, Switch } from '../../ui/controls';
+import type { Channel, GithubPerson, SettingField } from '../../api/types';
+import { Select } from '../../ui/Select';
+import { Disclosure, Switch } from '../../ui/controls';
 import { useAct } from '../../ui/feedback';
 import { Icon } from '../../ui/Icon';
 import { SubmitField, TextInput } from '../../ui/inputs';
@@ -89,12 +90,14 @@ export function CompanionSettings({
   fields,
   authors = [],
   github = [],
+  channels = [],
 }: {
   name: string;
   display: string;
   fields: SettingField[];
   authors?: Author[];
   github?: GithubPerson[];
+  channels?: Channel[];
 }) {
   const act = useAct();
   const set = (key: string, value: unknown) => act(`/api/companions/${name}/settings`, { key, value });
@@ -106,7 +109,7 @@ export function CompanionSettings({
     <Settings>
       {shown.map((f) => (
         <Setting key={f.key} label={f.label} help={f.help}>
-          <Control field={f} onChange={(v) => set(f.key, v)} authors={authors} github={github} />
+          <Control field={f} onChange={(v) => set(f.key, v)} authors={authors} github={github} channels={channels} />
         </Setting>
       ))}
     </Settings>
@@ -118,14 +121,33 @@ function Control({
   onChange,
   authors,
   github,
+  channels,
 }: {
   field: SettingField;
   onChange: (v: unknown) => unknown;
   authors: Author[];
   github: GithubPerson[];
+  channels: Channel[];
 }) {
   if (f.type === 'choice')
-    return <ChoiceCards label={f.label} value={String(f.value)} options={f.options ?? []} onChange={onChange} />;
+    return <Select label={f.label} value={String(f.value)} options={f.options ?? []} onChange={onChange} />;
+  const source =
+    f.source === 'channels'
+      ? channels.map((c) => ({ value: c.id, label: `#${c.name}` }))
+      : f.source === 'github_people'
+        ? github.map((g) => ({ value: g.login, label: g.login }))
+        : null;
+  if (f.type === 'text' && source?.length)
+    return (
+      <Picker
+        items={source}
+        value={typeof f.value === 'string' ? f.value : ''}
+        label={f.label}
+        placeholder={f.source === 'channels' ? 'Search channels…' : 'Search GitHub people…'}
+        empty="Nothing matches"
+        onChange={onChange}
+      />
+    );
   if (f.type === 'bool') return <Switch on={!!f.value} label={f.label} onToggle={() => onChange(!f.value)} />;
   if (f.type === 'people') return <People field={f} onChange={onChange} />;
   if (f.type === 'links') return <Links field={f} onChange={onChange} authors={authors} github={github} />;

@@ -7,9 +7,11 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  type CommandData,
+  type CommandDataItem,
 } from '@ui-sdk/react/command';
 import { Dialog, DialogBackdrop, DialogContent } from '@ui-sdk/react/dialog';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { hueTheme } from '../theme/hues';
 import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
@@ -120,8 +122,12 @@ const styles = stylex.create({
   label: { flex: '1', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 },
   hint: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint, whiteSpace: 'nowrap' },
   enter: { color: colors.accent, display: 'flex' },
-  // the empty part stays in the page and only fills in when nothing matches
-  empty: { display: { default: 'block', ':empty': 'none' }, paddingBlock: space.huge, textAlign: 'center', color: colors.faint },
+  empty: {
+    display: { default: 'none', ':is([data-empty])': 'block' },
+    paddingBlock: space.huge,
+    textAlign: 'center',
+    color: colors.faint,
+  },
   foot: {
     display: 'flex',
     gap: space.xxl,
@@ -145,11 +151,13 @@ export interface CommandEntry {
   hue?: string; // an agent's colour around the icon, which then keeps its own fill when highlighted
 }
 
+const toItem = (e: CommandEntry): CommandDataItem => ({ value: e.id, label: e.label });
+
 /** Groups in order of first appearance, so the list never repeats a heading. */
-function byGroup<E extends CommandEntry>(entries: E[]): [string, E[]][] {
-  const groups = new Map<string, E[]>();
-  for (const e of entries) groups.set(e.group, [...(groups.get(e.group) ?? []), e]);
-  return [...groups];
+function byGroup(entries: CommandEntry[]): CommandData {
+  const groups = new Map<string, CommandDataItem[]>();
+  for (const e of entries) groups.set(e.group, [...(groups.get(e.group) ?? []), toItem(e)]);
+  return [...groups].map(([label, items]) => ({ type: 'group', label, items }));
 }
 
 interface SearchProps<E extends CommandEntry> {
@@ -178,45 +186,44 @@ export function CommandPalette<E extends CommandEntry>({
 
 // mounts with the dialog's content, so every opening starts from an empty search
 function Search<E extends CommandEntry>({ label, placeholder, entries, rank, onRun }: SearchProps<E>) {
-  const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
-  const hits = useMemo(() => rank(entries, query), [rank, entries, query]);
-  const groups = query.trim() ? null : byGroup(hits);
-  const shown = groups ? groups.flatMap(([, list]) => list) : hits;
-  // the ranking owns the highlight: the best hit unless the person moved it
-  const highlighted = shown.some((e) => e.id === picked) ? picked : (shown[0]?.id ?? null);
+  const byId = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries]);
+  const all = useMemo(() => entries.map(toItem), [entries]);
+  const grouped = useMemo(() => byGroup(entries), [entries]);
+  // the caller's ranking scores each command: earlier hits score higher, a miss scores 0 and hides
+  const filter = (item: { value: string }, query: string) => {
+    const hits = rank(entries, query);
+    const at = hits.findIndex((e) => e.id === item.value);
+    return at < 0 ? 0 : hits.length - at;
+  };
 
-  const item = (e: E) => (
-    <CommandItem key={e.id} value={e.id} label={e.label} {...stylex.props(styles.item)}>
-      {(s) => (
-        <>
-          <span {...stylex.props(hueTheme(e.hue), styles.icon, s.highlighted && !e.hue && styles.iconActive)}>{e.icon}</span>
-          <span {...stylex.props(styles.label)}>{e.label}</span>
-          {e.hint && <span {...stylex.props(styles.hint)}>{e.hint}</span>}
-          {s.highlighted && (
-            <span {...stylex.props(styles.enter)}>
-              <Icon name="arrow" size={16} />
-            </span>
-          )}
-        </>
-      )}
-    </CommandItem>
-  );
+  const item = (c: CommandDataItem) => {
+    const e = byId.get(c.value);
+    if (!e) return null;
+    return (
+      <CommandItem key={e.id} value={e.id} label={e.label} {...stylex.props(styles.item)}>
+        {(s) => (
+          <>
+            <span {...stylex.props(hueTheme(e.hue), styles.icon, s.highlighted && !e.hue && styles.iconActive)}>{e.icon}</span>
+            <span {...stylex.props(styles.label)}>{e.label}</span>
+            {e.hint && <span {...stylex.props(styles.hint)}>{e.hint}</span>}
+            {s.highlighted && (
+              <span {...stylex.props(styles.enter)}>
+                <Icon name="arrow" size={16} />
+              </span>
+            )}
+          </>
+        )}
+      </CommandItem>
+    );
+  };
 
   return (
     <Command
-      filter={false}
-      query={query}
-      onQueryChange={(q) => {
-        setQuery(q);
-        setPicked(null);
-      }}
-      value={highlighted}
-      onValueChange={(v, d) => {
-        if (d.reason === 'list-navigation' || d.reason === 'item-hover') setPicked(v);
-      }}
+      items={all}
+      emptyItems={grouped}
+      filter={filter}
       onAction={(id) => {
-        const e = shown.find((x) => x.id === id);
+        const e = byId.get(id);
         if (e) onRun(e);
       }}
     >
@@ -225,16 +232,23 @@ function Search<E extends CommandEntry>({ label, placeholder, entries, rank, onR
         <CommandInput {...stylex.props(styles.input)} placeholder={placeholder} aria-label={label} />
         <kbd {...stylex.props(styles.kbd)}>Esc</kbd>
       </div>
-      <CommandEmpty {...stylex.props(styles.empty)}>Nothing matches “{query}”.</CommandEmpty>
+      <CommandEmpty {...stylex.props(styles.empty)}>{(s) => `Nothing matches “${s.query}”.`}</CommandEmpty>
+      {/* the list's own state.items: the ranked hits, or the groups while nothing is typed */}
       <CommandList {...stylex.props(styles.list)}>
-        {groups
-          ? groups.map(([name, list]) => (
-              <CommandGroup key={name}>
-                <CommandGroupLabel {...stylex.props(styles.group)}>{name}</CommandGroupLabel>
-                {list.map(item)}
-              </CommandGroup>
-            ))
-          : hits.map(item)}
+        {(s) =>
+          s.items.map((entry) =>
+            typeof entry !== 'string' && 'type' in entry
+              ? entry.type === 'group' && (
+                  <CommandGroup key={entry.label}>
+                    <CommandGroupLabel {...stylex.props(styles.group)}>{entry.label}</CommandGroupLabel>
+                    {entry.items.map((c) => (typeof c === 'string' ? null : item(c)))}
+                  </CommandGroup>
+                )
+              : typeof entry === 'string'
+                ? null
+                : item(entry),
+          )
+        }
       </CommandList>
       <div {...stylex.props(styles.foot)}>
         <span {...stylex.props(styles.footItem)}>

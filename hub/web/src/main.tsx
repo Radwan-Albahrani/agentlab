@@ -6,10 +6,12 @@ import { ApiError } from './api/client';
 import { App } from './App';
 import { LogsProvider } from './app/logs';
 import { applyScheme } from './theme/mode';
+import { startAgent } from './ui/agent';
 import { FeedbackProvider } from './ui/feedback';
 import './theme/global.css';
 
 applyScheme();
+startAgent();
 
 const queryClient = new QueryClient({
   defaultOptions: {

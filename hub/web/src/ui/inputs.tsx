@@ -53,6 +53,7 @@ const styles = stylex.create({
 
 interface InputProps {
   value: string;
+  label?: string; // its name when no Field labels it; else the placeholder names it
   onChange: (v: string) => void;
   placeholder?: string;
   type?: 'text' | 'password' | 'number' | 'datetime-local';
@@ -100,7 +101,7 @@ export function SearchInput({ value, onChange, label }: { value: string; onChang
   );
 }
 
-export function TextInput({ value, onChange, type = 'text', width = 'grow', mono, onEnter, ...rest }: InputProps) {
+export function TextInput({ value, onChange, type = 'text', width = 'grow', mono, onEnter, label, ...rest }: InputProps) {
   return (
     <Input
       {...stylex.props(styles.input, styles[width], mono && styles.mono)}
@@ -115,6 +116,7 @@ export function TextInput({ value, onChange, type = 'text', width = 'grow', mono
       }}
       autoComplete={type === 'password' ? 'new-password' : 'off'}
       spellCheck={false}
+      aria-label={label ?? rest.placeholder}
       {...rest}
     />
   );
@@ -129,8 +131,14 @@ export function TextArea({
   prose,
   onKeyDown,
   areaRef,
+  label,
+  look,
+  spellCheck,
 }: {
   value: string;
+  label?: string; // its name when no Field labels it
+  look?: stylex.StyleXStyles; // replaces the default box
+  spellCheck?: boolean;
   onChange?: (v: string) => void;
   placeholder?: string;
   readOnly?: boolean;
@@ -142,14 +150,15 @@ export function TextArea({
   return (
     <Textarea
       ref={areaRef}
-      {...stylex.props(styles.input, styles.area, editor && styles.editor, prose && styles.prose)}
+      {...stylex.props(...(look ? [look] : [styles.input, styles.area, editor && styles.editor, prose && styles.prose]))}
       value={value}
       readOnly={readOnly}
       onValueChange={(v) => onChange?.(v)}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
-      spellCheck={!!prose}
+      spellCheck={spellCheck ?? !!prose}
       autoComplete="off"
+      aria-label={label}
     />
   );
 }

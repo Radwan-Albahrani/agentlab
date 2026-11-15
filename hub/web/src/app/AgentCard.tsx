@@ -4,7 +4,7 @@ import type { AgentCard as Data } from '../api/types';
 import { capitalize, pct } from '../lib/format';
 import { hueTheme } from '../theme/hues';
 import { colors, font, radius, space, text } from '../theme/tokens.stylex';
-import { LinkButton } from '../ui/Button';
+import { LinkButton, Pressable } from '../ui/Button';
 import { Brand, Icon } from '../ui/Icon';
 import { Inline, Split, Stack } from '../ui/layout';
 import { IconBox, List, Row } from '../ui/Row';
@@ -81,15 +81,10 @@ function readiness(a: Data): string {
 function Tile({ to, icon, label }: { to: string | null; icon: string; label: string }) {
   if (!to)
     return (
-      <button
-        type="button"
-        disabled
-        {...stylex.props(styles.tile, styles.tileOff)}
-        title="No browser open: the view starts when the agent opens one"
-      >
+      <Pressable look={[styles.tile, styles.tileOff]} disabled title="No browser open: the view starts when the agent opens one">
         <Icon name={icon} size={15} />
         {label}
-      </button>
+      </Pressable>
     );
   return (
     <a href={to} target="_blank" rel="noopener" {...stylex.props(styles.tile)}>

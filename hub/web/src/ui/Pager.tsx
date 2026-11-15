@@ -24,21 +24,25 @@ export function Pager({ page, pages, setPage }: { page: number; pages: number; s
       }}
     >
       <PaginationList {...stylex.props(styles.list)}>
-        <PaginationItem>
-          <Hint tip="Newer" names render={<PaginationPrevious {...step('Newer')} aria-label="Newer" />}>
-            <Icon name="back" size={16} />
-          </Hint>
-        </PaginationItem>
-        <PaginationItem>
-          <Text tone="muted" size="md">
-            {page + 1} / {pages}
-          </Text>
-        </PaginationItem>
-        <PaginationItem>
-          <Hint tip="Older" names render={<PaginationNext {...step('Older')} aria-label="Older" />}>
-            <Icon name="arrow" size={16} />
-          </Hint>
-        </PaginationItem>
+        {(s) => (
+          <>
+            <PaginationItem>
+              <Hint tip="Newer" names render={<PaginationPrevious {...step('Newer')} aria-label="Newer" />}>
+                <Icon name="back" size={16} />
+              </Hint>
+            </PaginationItem>
+            <PaginationItem>
+              <Text tone="muted" size="md">
+                {s.page} / {s.pageCount}
+              </Text>
+            </PaginationItem>
+            <PaginationItem>
+              <Hint tip="Older" names render={<PaginationNext {...step('Older')} aria-label="Older" />}>
+                <Icon name="arrow" size={16} />
+              </Hint>
+            </PaginationItem>
+          </>
+        )}
       </PaginationList>
     </Pagination>
   );

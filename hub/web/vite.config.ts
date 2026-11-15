@@ -12,5 +12,11 @@ export default defineConfig({
   // Vite's default target rewrites light-dark() into a fallback that ignores the theme toggle.
   build: { outDir: 'dist', sourcemap: false, target: TARGETS, cssTarget: TARGETS },
   server: { proxy: { '/api': process.env.HUB_URL ?? 'http://127.0.0.1:7189' } },
-  test: { environment: 'jsdom', globals: true, include: ['src/**/*.test.{ts,tsx}'] },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./src/test/setup.ts'],
+    css: false,
+  },
 });

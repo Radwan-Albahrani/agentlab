@@ -6,6 +6,7 @@ import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/controls';
 import { useAct } from '../../ui/feedback';
 import { Section } from '../../ui/page';
+import { TextArea } from '../../ui/inputs';
 import { Picker, type PickItem } from '../../ui/Picker';
 
 const styles = stylex.create({
@@ -106,14 +107,12 @@ export function AskBox({ name, display, channels }: { name: string; display: str
       sub="Post or run a poll in a channel. Say it in plain words; the agent prepares it."
     >
       <div {...stylex.props(styles.composer)}>
-        <textarea
-          {...stylex.props(styles.area)}
+        <TextArea
+          look={styles.area}
           value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-          }}
+          onChange={setDraft}
           placeholder={PLACEHOLDER}
-          aria-label={`Tell ${nice}`}
+          label={`Tell ${nice}`}
           spellCheck
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void send();

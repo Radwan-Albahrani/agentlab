@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { Tabs as Root, TabsIndicator, TabsList, TabsPanel, TabsTab } from '@ui-sdk/react/tabs';
+import { Tabs as Root, TabsIndicator, TabsList, TabsPanel, TabsTab, TabsTabIcon } from '@ui-sdk/react/tabs';
 import type { ReactNode } from 'react';
 import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
@@ -46,7 +46,8 @@ const styles = stylex.create({
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: colors.line2,
-    transitionProperty: { default: 'left, width', [motion.still]: 'none' },
+    // no slide for the first placement, when nothing was activated yet
+    transitionProperty: { default: 'left, width', [motion.still]: 'none', ':is([data-activation-direction="none"])': 'none' },
     transitionDuration: '160ms',
     transitionTimingFunction: motion.settle,
   },
@@ -72,6 +73,7 @@ const styles = stylex.create({
     outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
     outlineOffset: 2,
   },
+  icon: { display: 'flex' },
   count: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint, fontVariantNumeric: 'tabular-nums' },
   alert: {
     minWidth: 18,
@@ -130,7 +132,11 @@ export function Tabs({
           <TabsIndicator {...stylex.props(styles.indicator)} />
           {items.map((t) => (
             <TabsTab key={t.value} value={t.value} {...stylex.props(styles.tab)}>
-              {t.icon && <Icon name={t.icon} size={16} />}
+              {t.icon && (
+                <TabsTabIcon {...stylex.props(styles.icon)}>
+                  <Icon name={t.icon} size={16} />
+                </TabsTabIcon>
+              )}
               <span>{t.label}</span>
               {!!t.count && <span {...stylex.props(t.alert ? styles.alert : styles.count)}>{t.count}</span>}
             </TabsTab>

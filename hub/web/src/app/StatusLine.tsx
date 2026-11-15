@@ -5,6 +5,7 @@ import { plural } from '../lib/format';
 import { useNow } from '../lib/useNow';
 import { colors, font, media, space, text } from '../theme/tokens.stylex';
 import { openPalette } from './Palette';
+import { Pressable } from '../ui/Button';
 
 const blink = stylex.keyframes({ '50%': { opacity: 0.2 } });
 
@@ -83,9 +84,9 @@ export function StatusLine() {
         {waiting} waiting on you
       </Link>
       <span {...stylex.props(styles.end)}>
-        <button type="button" {...stylex.props(styles.kbd)} onClick={openPalette}>
+        <Pressable look={styles.kbd} onClick={openPalette}>
           Ctrl K · search
-        </button>
+        </Pressable>
       </span>
     </div>
   );

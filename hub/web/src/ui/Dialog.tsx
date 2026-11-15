@@ -137,7 +137,7 @@ export function ConfirmDialog({ text, onAnswer }: { text: string | null; onAnswe
         <AlertDialogDescription {...stylex.props(styles.text)}>{text}</AlertDialogDescription>
         <DialogActions>
           <AlertDialogClose {...look({ label: 'Cancel' })}>Cancel</AlertDialogClose>
-          <AlertDialogClose {...look({ label: 'Continue', variant: 'primary' })} value="confirm">
+          <AlertDialogClose {...look({ label: 'Continue', variant: 'primary' })} value="confirm" data-agent-confirm={text ?? ''}>
             Continue
           </AlertDialogClose>
         </DialogActions>

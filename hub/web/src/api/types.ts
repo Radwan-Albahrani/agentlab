@@ -245,6 +245,8 @@ export interface SettingField {
   label: string;
   help?: string;
   type: 'choice' | 'bool' | 'text' | 'people' | 'links';
+  /** For text: where its values come from, so the hub offers a picker instead of a box. */
+  source?: 'channels' | 'github_people';
   options?: { value: string; label: string; help?: string; avatar?: string }[];
   /** Shown only while each named setting has one of these values. */
   when?: Record<string, string[]>;
