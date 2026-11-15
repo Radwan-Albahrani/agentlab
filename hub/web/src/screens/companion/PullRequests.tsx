@@ -28,7 +28,6 @@ const styles = stylex.create({
   sep: { color: colors.faint },
   glyph: { display: 'inline-flex' },
   faint: { color: colors.faint },
-  muted: { color: colors.muted },
   bad: { color: colors.bad },
   warn: { color: colors.warn },
   ok: { color: colors.ok },
@@ -109,8 +108,17 @@ const styles = stylex.create({
     transitionProperty: 'background-color',
     transitionDuration: '120ms',
   },
-  state: { alignSelf: 'flex-start', display: 'grid', placeItems: 'center', height: 20, flexShrink: 0, color: colors.muted },
+  // GitHub's convention, which people already read at a glance: green = open and ready, grey = draft
+  state: { alignSelf: 'flex-start', display: 'grid', placeItems: 'center', height: 20, flexShrink: 0, color: colors.ok },
   stateDraft: { color: colors.faint },
+  titleDraft: { color: { default: colors.muted, ':hover': colors.info } },
+  draftTag: {
+    fontSize: text.xs,
+    paddingInline: space.xs,
+    borderRadius: radius.lg,
+    backgroundColor: colors.idleSoft,
+    color: colors.muted,
+  },
   main: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, display: 'grid', gap: space.xxxs },
   line1: { fontSize: text.body, lineHeight: 1.45, overflowWrap: 'anywhere' },
   title: {
@@ -374,7 +382,7 @@ function PullRow({ p, name }: { p: Pull; name: string }) {
       </span>
       <div {...stylex.props(styles.main)}>
         <div {...stylex.props(styles.line1)}>
-          <a {...stylex.props(styles.title)} href={p.url} target="_blank" rel="noopener">
+          <a {...stylex.props(styles.title, p.draft && styles.titleDraft)} href={p.url} target="_blank" rel="noopener">
             {p.title}
           </a>
           {p.ci && <Checks ci={p.ci} />}
@@ -386,6 +394,12 @@ function PullRow({ p, name }: { p: Pull; name: string }) {
           ))}
         </div>
         <div {...stylex.props(styles.meta)}>
+          {p.draft && (
+            <>
+              <span {...stylex.props(styles.draftTag)}>Draft</span>
+              <Sep />
+            </>
+          )}
           <span {...stylex.props(styles.num)}>#{p.number}</span>
           <Sep />
           <span>{p.author}</span>
@@ -523,9 +537,9 @@ function ReviewCell({ p, name }: { p: Pull; name: string }) {
 }
 
 const QA: Record<string, [string, stylex.StyleXStyles]> = {
-  pass: ['QA ✓', styles.muted],
+  pass: ['QA ✓', styles.ok],
   fail: ['QA ✗', styles.bad],
-  partial: ['QA partial', styles.muted],
+  partial: ['QA partial', styles.warn],
 };
 
 /** The review's outcome in plain words: its worst finding, then QA. */
@@ -546,7 +560,7 @@ function Result({ r }: { r: PullReview }) {
       <span {...stylex.props(styles.glyph, tone)}>
         <Icon name={icon} size={14} />
       </span>
-      <span>{label}</span>
+      <span {...stylex.props(tone)}>{label}</span>
       {qa && (
         <>
           <Sep />

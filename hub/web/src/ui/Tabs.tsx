@@ -1,13 +1,24 @@
 import * as stylex from '@stylexjs/stylex';
 import { Tabs as Root, TabsIndicator, TabsList, TabsPanel, TabsTab } from '@ui-sdk/react/tabs';
 import type { ReactNode } from 'react';
-import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
 const styles = stylex.create({
   // minWidth 0: on phones the tab list scrolls instead of widening the page
   root: { display: 'grid', gap: space.lg, minWidth: 0 },
-  bar: { minWidth: 0, position: 'sticky', top: 0, zIndex: 20, paddingBlock: space.sm, backgroundColor: colors.bg },
+  // its background covers the page gutter too (32px, 16px on phones), so nothing scrolling beneath peeks past it
+  bar: {
+    minWidth: 0,
+    position: 'sticky',
+    // just under the shell's own sticky bar: the status line (34px) or, on phones, the top bar (53px)
+    top: { default: 34, [media.nav]: 53 },
+    zIndex: 14,
+    paddingBlock: space.sm,
+    backgroundColor: colors.bg,
+    boxShadow: { default: `0 0 0 32px ${colors.bg}`, [media.nav]: `0 0 0 16px ${colors.bg}` },
+    clipPath: { default: 'inset(0 -32px)', [media.nav]: 'inset(0 -16px)' },
+  },
   list: {
     position: 'relative',
     display: 'inline-flex',

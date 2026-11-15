@@ -256,6 +256,8 @@ create table pulls (id text primary key, repo text, number integer, updated text
         ),
     ):
         p = dict(pull, title=title, url=f'https://github.com/example/app/pull/{number}', review=review)
+        if number == 14:
+            p['draft'] = True
         if number == 15:
             p['labels'] = [{'name': 'lane:red', 'color': 'd73a4a'}, {'name': 'agent', 'color': 'ededed'}]
             p.update(additions=3684, deletions=67853, head='new5678')
