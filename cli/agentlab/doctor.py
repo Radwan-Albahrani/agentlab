@@ -13,6 +13,8 @@ from . import cloudflare, config, coolify, deploy, disks, health, preflight, ren
 from .util import LOCK, is_root, lock_holder, run, size_bytes
 
 LOCK_HOURS = 6
+PF_EXITING = 0x4
+DUMPING = ('do_coredump', 'coredump_wait', 'wait_task_inactive')
 
 
 class Checks:
@@ -530,6 +532,7 @@ def cluster(cfg, c):
     updates(cfg, c)
     c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'agentctl install')
     lock(c)
+    stuck(c)
     if not is_root():
         c.sudo('firewall', 'the agentlab firewall table (nft needs root)')
         rules = None
@@ -627,4 +630,63 @@ def lock(c, path=LOCK, hours=LOCK_HOURS):
         age_h < hours,
         f'agentctl change running: {holder or "unknown holder"}',
         'if that process is stuck, stop it; other changes (the nightly update too) wait behind it',
+    )
+
+
+def _stuck_tasks(proc):
+    """{pid: (name, why)} for threads in uninterruptible sleep while dying or dumping core: they never wake."""
+    out = {}
+    for pid in filter(str.isdigit, os.listdir(proc)):
+        try:
+            tids = os.listdir(f'{proc}/{pid}/task')
+        except OSError:
+            continue
+        for tid in tids:
+            try:
+                with open(f'{proc}/{pid}/task/{tid}/stat') as f:
+                    stat = f.read()
+                with open(f'{proc}/{pid}/task/{tid}/wchan') as f:
+                    wchan = f.read().strip()
+            except OSError:
+                continue
+            name, rest = stat[stat.find('(') + 1 : stat.rfind(')')], stat[stat.rfind(')') + 2 :].split()
+            if rest[0] != 'D':
+                continue
+            if wchan in DUMPING:
+                out[pid] = (name, 'dumping core')
+            elif int(rest[6]) & PF_EXITING:
+                out.setdefault(pid, (name, 'exiting'))
+    return out
+
+
+def _container_of(proc, pid):
+    try:
+        with open(f'{proc}/{pid}/cgroup') as f:
+            m = re.search(r'(?:docker-|/docker/)([0-9a-f]{64})', f.read())
+    except OSError:
+        return ''
+    return m.group(1) if m else ''
+
+
+def stuck(c, proc='/proc', sleep=time.sleep):
+    """A task hung in the kernel can't be killed, and a normal reboot tends to hang waiting on it (#31)."""
+    found = _stuck_tasks(proc)
+    if found:
+        sleep(3)  # a dying process may be flushing its files: count only what's still there
+        found = {p: v for p, v in _stuck_tasks(proc).items() if p in found}
+    if not found:
+        return
+    listed = run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{.ID}} {{.Names}}'], check=False)[1]
+    names = dict(line.split(' ', 1) for line in listed.splitlines() if ' ' in line)
+    tasks = []
+    for pid, (name, why) in sorted(found.items(), key=lambda kv: int(kv[0])):
+        cid = _container_of(proc, pid)
+        where = f', {names.get(cid, f"removed container {cid[:12]}")}' if cid else ''
+        tasks.append(f'pid {pid} {name} ({why}{where})')
+    c.add(
+        'stuck-tasks',
+        False,
+        f'stuck in the kernel, unkillable: {"; ".join(tasks)}',
+        'it goes only with a reboot, and a normal reboot will likely hang on it: plan a forced reset (power-cycle)',
+        'warning',
     )

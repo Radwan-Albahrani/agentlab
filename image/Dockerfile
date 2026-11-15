@@ -68,6 +68,8 @@ COPY --chmod=644 supervisord.conf /etc/agent-supervisord.conf
 COPY skills /etc/agent/skills
 COPY accounts /opt/accounts
 COPY throttle /usr/local/lib/agent-throttle
+COPY nodump.c /tmp/
+RUN gcc -shared -fPIC -O2 -o /usr/local/lib/agent-nodump.so /tmp/nodump.c && rm /tmp/nodump.c
 # The build context may be on a Windows drive (everything 777).
 RUN chmod -R u=rwX,go=rX /opt/accounts /usr/local/lib/agent-throttle /etc/agent/skills \
  && chmod 755 /usr/local/lib/agent-throttle/shim /usr/local/lib/agent-throttle/shim-sync

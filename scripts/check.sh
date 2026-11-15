@@ -35,7 +35,10 @@ part_host() {  # git for the janitor's worktree tests
 }
 part_gate() { py gate 'cd gate && pip install -q -r requirements.txt && python -m unittest discover -s tests -t . 2>&1 | tail -3'; }
 part_companion() { py companion 'cd companion && pip install -q -r tests/requirements.txt && python -m pytest -q -p no:cacheprovider tests 2>&1 | tail -3'; }
-part_image() { py image 'pip install -q pytest==8.3.4 && python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'; }
+part_image() {  # gcc for the emulator's non-dumpable preload
+  py image 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null
+    pip install -q pytest==8.3.4 && python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'
+}
 part_shell() {
   docker run --rm -v "$REPO:/repo:ro" -w /repo "$SHELLCHECK" sh -c \
     'shellcheck -x -P SCRIPTDIR host/install/*.sh scripts/check.sh hub/test.sh image/build.sh image/entrypoint.sh image/tools.sh image/adb \

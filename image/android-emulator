@@ -89,7 +89,9 @@ status() {
 run() {
   ensure_avd
   export DISPLAY=:99 ANDROID_SDK_ROOT=${SDK} ANDROID_AVD_HOME=${AVD_HOME}
-  ulimit -c 0   # a crash dump of a KVM guest can hang in the kernel and wedge the whole container
+  # Non-dumpable, so a crash never waits on the kernel's core dump, which can hang the guest's process for good
+  # (ulimit -c 0 doesn't help: the kernel waits for every thread before it checks the limit).
+  export LD_PRELOAD=${AGENT_NODUMP:-/usr/local/lib/agent-nodump.so}${LD_PRELOAD:+:${LD_PRELOAD}}
   exec "${SDK}/emulator/emulator" -avd "${AVD}" -no-audio -no-boot-anim -no-snapshot-save -no-metrics \
     -gpu swiftshader_indirect
 }

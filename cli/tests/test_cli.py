@@ -298,6 +298,45 @@ class DoctorHost(unittest.TestCase):
             self.assertFalse(got['sysbox-dropin']['ok'])
             self.assertIn('agentctl install --only sysbox', got['sysbox-dropin']['fix'])
 
+    def test_tasks_hung_dying_or_dumping_core_are_flagged_with_their_container(self):
+        cid = 'a' * 64
+        tasks = {  # pid: [(tid, state, flags, wchan)]
+            '100': [('100', 'D', 0, 'wait_task_inactive'), ('101', 'D', 0x4, 'do_exit')],  # the qemu of #31
+            '200': [('200', 'D', 0x4, 'do_exit')],  # dying while it flushes, gone on the second look
+            '300': [('300', 'D', 0, 'io_schedule')],  # an ordinary disk wait
+            '400': [('400', 'S', 0x4, 'do_wait')],
+        }
+        with tempfile.TemporaryDirectory() as proc:
+            for pid, threads in tasks.items():
+                for tid, state, flags, wchan in threads:
+                    os.makedirs(f'{proc}/{pid}/task/{tid}')
+                    with open(f'{proc}/{pid}/task/{tid}/stat', 'w') as f:
+                        f.write(f'{tid} (qemu-system-x86) {state} 1 1 1 0 -1 {flags} 0 0\n')
+                    with open(f'{proc}/{pid}/task/{tid}/wchan', 'w') as f:
+                        f.write(wchan)
+                with open(f'{proc}/{pid}/cgroup', 'w') as f:
+                    f.write(f'0::/system.slice/docker-{cid}.scope\n')
+
+            def recover(_):
+                with open(f'{proc}/200/task/200/stat', 'w') as f:
+                    f.write('200 (qemu-system-x86) R 1 1 1 0 -1 4 0 0\n')
+
+            checks = doctor.Checks()
+            with mock.patch.object(doctor, 'run', return_value=(0, f'{cid} agent-netzero\n')):
+                doctor.stuck(checks, proc, sleep=recover)
+        (got,) = checks.items
+        self.assertEqual((got['id'], got['severity']), ('stuck-tasks', 'warning'))
+        self.assertEqual(
+            got['message'], 'stuck in the kernel, unkillable: pid 100 qemu-system-x86 (dumping core, agent-netzero)'
+        )
+        self.assertIn('forced reset', got['fix'])
+
+    def test_no_stuck_tasks_no_check(self):
+        with tempfile.TemporaryDirectory() as proc:
+            checks = doctor.Checks()
+            doctor.stuck(checks, proc, sleep=self.fail)
+        self.assertEqual(checks.items, [])
+
 
 class Migration(unittest.TestCase):
     ONE = BASE.replace('owner = "omar@example.com"', 'owner = "sara@example.com"').replace(
