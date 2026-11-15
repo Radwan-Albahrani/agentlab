@@ -80,7 +80,7 @@ SCHEMA = {  # section -> {key: default}; None = required
         'person_sizes': {},
         'host_reserve': '15%',
     },
-    'limits': {'total_memory': '96g', 'throttle_io_psi_max': 25},
+    'limits': {'total_memory': '96g', 'host_reserve': '15%', 'throttle_io_psi_max': 25},
     'android': {'enabled': False, 'system_image': 'system-images;android-35;google_apis;x86_64'},
     'backups': {'enabled': True, 'keep_days': 14, 'time': '03:30'},
     'cloudflare': {'account_id': '', 'zone': '', 'api_token_file': '', 'acme_token_file': ''},
@@ -177,6 +177,49 @@ def _size(value, where, problems):
     return str(value).lower().removesuffix('b')
 
 
+def _reserve(value, where, problems):
+    """A share ("15%") or a size ("4g") kept back for the host."""
+    reserve = str(value).strip()
+    if reserve.endswith('%'):
+        if not reserve[:-1].isdigit() or not 0 <= int(reserve[:-1]) < 100:
+            problems.append(f'{where}: a percentage must be 0% to 99%')
+        return reserve
+    return _size(reserve, where, problems)
+
+
+def reserved(reserve, total):
+    return total * int(reserve[:-1]) // 100 if reserve.endswith('%') else size_bytes(reserve)
+
+
+def ram_bytes():
+    try:
+        with open('/proc/meminfo') as f:
+            return int(next(line for line in f if line.startswith('MemTotal')).split()[1]) * 1024
+    except (OSError, StopIteration, ValueError):
+        return 0
+
+
+def _total_memory(limits, problems):
+    """[limits] total_memory; "auto" is this host's RAM minus host_reserve."""
+    limits['host_reserve'] = _reserve(limits['host_reserve'], '[limits] host_reserve', problems)
+    if str(limits['total_memory']).strip().lower() != 'auto':
+        return _size(limits['total_memory'], '[limits] total_memory', problems)
+    ram = ram_bytes()
+    try:
+        left = ram - reserved(limits['host_reserve'], ram)
+    except ValueError:
+        left = 0
+    if left < 2**30:
+        problems.append('[limits] total_memory "auto": under 1 GiB of RAM is left after host_reserve')
+        return '1g'
+    return f'{left // 2**20}m'
+
+
+def _memory(value, total, where, problems):
+    """An agent's memory; "auto" lets it use all of total_memory."""
+    return total if str(value).strip().lower() == 'auto' else _size(value, where, problems)
+
+
 def _cpus(value, where, problems):
     if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
         problems.append(f'{where}: cpus must be a positive number')
@@ -222,12 +265,7 @@ def _storage(raw, problems):
         s['person_size'] = 'auto'
     else:
         s['person_size'] = _size(s['person_size'], '[storage] person_size', problems)
-    reserve = str(s['host_reserve']).strip()
-    if reserve.endswith('%'):
-        if not reserve[:-1].isdigit() or not 0 <= int(reserve[:-1]) < 100:
-            problems.append('[storage] host_reserve: a percentage must be 0% to 99%')
-    else:
-        s['host_reserve'] = _size(reserve, '[storage] host_reserve', problems)
+    s['host_reserve'] = _reserve(s['host_reserve'], '[storage] host_reserve', problems)
     if s['pool_image'] and not str(s['pool_image']).startswith('/'):
         problems.append('[storage] pool_image must be an absolute path')
     if not isinstance(s['person_sizes'], dict):
@@ -445,9 +483,9 @@ def resolve(raw, previous=None, state=None):
         problems.append('[cluster] data must be an absolute path')
     c['data'] = str(c.get('data', '')).rstrip('/') or '/'
 
-    default_memory = _size(defaults['memory'], '[defaults] memory', problems)
+    total = _total_memory(limits, problems)
+    default_memory = _memory(defaults['memory'], total, '[defaults] memory', problems)
     default_cpus = _cpus(defaults['cpus'], '[defaults] cpus', problems)
-    total = _size(limits['total_memory'], '[limits] total_memory', problems)
 
     agents, seen = [], []
     raw_agents = raw.get('agents', [])
@@ -484,7 +522,7 @@ def resolve(raw, previous=None, state=None):
             {
                 'id': aid,
                 'owner': owner,
-                'memory': _size(a.get('memory', default_memory), f'{where} memory', problems),
+                'memory': _memory(a.get('memory', default_memory), total, f'{where} memory', problems),
                 'cpus': _cpus(a.get('cpus', default_cpus), f'{where} cpus', problems),
                 'upstream': f'http://agent-{aid}',
                 'hostname': str(a.get('hostname') or f'agent-{aid}'),
@@ -627,6 +665,7 @@ def resolve(raw, previous=None, state=None):
         },
         'limits': {
             'total_memory': total,
+            'host_reserve': limits['host_reserve'],
             'throttle': {'agent_gb': gb(default_memory), 'pool_gb': gb(total), 'io_psi_max': psi},
         },
         'android': {'enabled': bool(android['enabled']), 'system_image': android['system_image']},

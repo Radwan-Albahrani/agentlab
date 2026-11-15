@@ -101,6 +101,16 @@ class Config(unittest.TestCase):
         self.assertEqual([a['id'] for a in cfg['agents']], ['admin', 'sara', 'sara-mobile'])
         self.assertEqual(cfg['auth']['ingress'], 'cloudflared')
 
+    def test_auto_memory_is_the_ram_left_after_the_reserve_and_agents_may_use_all_of_it(self):
+        sara = BASE.replace('owner = "sara@example.com"', 'owner = "sara@example.com"\nmemory = "8g"')
+        with mock.patch.object(config, 'ram_bytes', return_value=32 * 2**30):
+            cfg = resolve(sara, limits__total_memory='auto', limits__host_reserve='4g', defaults__memory='auto')
+            self.assertEqual(cfg['limits']['total_memory'], '28672m')
+            self.assertEqual({a['id']: a['memory'] for a in cfg['agents']}, {'sara': '8g', 'omar': '28672m'})
+            self.assertEqual(resolve(limits__total_memory='auto')['limits']['total_memory'], '27852m')  # 15 %
+            self.assertIn('under 1 GiB', problems(limits__total_memory='auto', limits__host_reserve='40g'))
+        self.assertIn('0% to 99%', problems(limits__host_reserve='120%'))
+
     def test_machine_names_and_ips_only_where_people_reach_it_inside_their_network(self):
         tailnet = BASE.replace('mode = "cloudflare-access"', 'mode = "tailscale"').replace(
             'domain = "agents.example.com"', 'domain = "my-server"'

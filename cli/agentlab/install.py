@@ -5,7 +5,7 @@ import os
 import subprocess
 
 from . import cloudflare, config, images, preflight
-from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes
+from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes, warn
 
 
 def step_env(cfg, config_path):
@@ -36,6 +36,19 @@ def step_env(cfg, config_path):
         'AGENTLAB_ADMIN_EMAIL': cfg['auth']['admins'][0],
         'AGENTLAB_TUNNEL_TOKEN': f'{cfg["data"]}/secrets/cloudflare-tunnel.token',
     }
+
+
+def units(cfg, config_path, plan):
+    """Re-render the host's systemd units on an installed host, e.g. the slice's cap after total_memory changes."""
+    if plan.dry or not os.path.exists('/etc/systemd/system/agentlab.slice'):
+        return
+    path = os.path.join(REPO, 'host', 'install', '70-units.sh')
+    p = subprocess.run(['bash', path], env=step_env(cfg, config_path), check=False, capture_output=True, text=True)
+    for line in (p.stdout + p.stderr).splitlines():
+        if line.startswith('changed'):
+            say(f'  {line}')
+    if p.returncode:
+        warn(f'host units not updated (exit {p.returncode}): run agentctl install --only units')
 
 
 def tunnel_first(cfg, env, config_path):

@@ -7,7 +7,7 @@ import secrets
 import shutil
 import subprocess
 
-from . import cloudflare, config, deploy, disks, health, hostsfile, images, render, template, wslhost
+from . import cloudflare, config, deploy, disks, health, hostsfile, images, install, render, template, wslhost
 from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
 
 FIREWALL_UNIT = 'agentlab-firewall.service'
@@ -333,6 +333,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     files = render.all_files(cfg)
     changed = write_rendered(cfg, plan)
     firewall(cfg, changed, plan)
+    install.units(cfg, config_path, plan)
     host_services(plan)
     hostsfile.ensure([], plan)
     wslhost.ensure(cfg, plan)

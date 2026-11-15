@@ -126,11 +126,12 @@ def host(cfg, c):
     )
     total = _mem_total()
     want = size_bytes(cfg['limits']['total_memory'])
+    reserve = cfg['limits'].get('host_reserve') or '15%'
     c.add(
         'memory',
-        total and want <= total * 0.85,
+        total and want <= total - config.reserved(reserve, total),
         f'limits.total_memory {cfg["limits"]["total_memory"]} of {total / 2**30:.0f} GiB RAM',
-        'leave at least 15% of RAM to the host: lower [limits] total_memory',
+        f'leave [limits] host_reserve ({reserve}) to the host: lower total_memory, or set it to "auto"',
         'error' if want > total else 'warning',
     )
     storage(cfg, c)

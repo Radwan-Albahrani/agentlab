@@ -28,7 +28,8 @@ so); that takes seconds.
 
 If it's memory, the dashboard's agent page shows usage. Heavy jobs wait their turn in the throttle (`journalctl -u
 agentlab-throttle`) rather than all running at once; raise an agent's `memory` only when the machine has room under
-`limits.total_memory`. Restarting an agent (dashboard → agent → Restart, or `docker restart`) keeps its chats and
+`limits.total_memory`. `total_memory = "auto"` is the RAM minus `[limits] host_reserve` (15 % by default) and follows the
+machine's RAM; an agent's `memory = "auto"` lets it use all of that; `agentctl apply` puts a new cap in place. Restarting an agent (dashboard → agent → Restart, or `docker restart`) keeps its chats and
 files.
 
 ## Disk space
