@@ -7,3 +7,5 @@ Type=oneshot
 ExecStart=/usr/bin/python3 @REPO@/cli/agentctl --config @CONFIG@ backup run
 Nice=10
 IOSchedulingClass=idle
+# a stuck run would hold agentctl's lock and stall every other change, the nightly update included
+TimeoutStartSec=3h

@@ -27,16 +27,21 @@ def t3_root(cfg, agent_id):
     return f'{config.agent(cfg, agent_id)["path"]}/home/.t3'
 
 
+BUSY_S = 30  # how long a locked database may hold up its copy before it's reported as failed
+
+
 def copy_db(src, dst):
+    # VACUUM INTO gives up after the busy timeout; sqlite3.backup() retries a locked source forever
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    source = sqlite3.connect(src, timeout=30)
-    target = sqlite3.connect(dst + '.tmp')
+    tmp = dst + '.tmp'
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    source = sqlite3.connect(src, timeout=BUSY_S)
     try:
-        source.backup(target)
+        source.execute('VACUUM INTO ?', (tmp,))
     finally:
-        target.close()
         source.close()
-    os.replace(dst + '.tmp', dst)
+    os.replace(tmp, dst)
 
 
 def run(cfg, config_path, today=None):

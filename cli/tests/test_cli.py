@@ -461,6 +461,24 @@ class Migration(unittest.TestCase):
             with open(f'{d}/backups/2026-01-02/hub/notify.json') as f:
                 self.assertEqual(json.load(f), {'device': 'x'})
 
+    def test_a_locked_database_fails_its_copy_instead_of_hanging_the_backup(self):
+        import sqlite3  # noqa: PLC0415
+
+        from agentlab import backup  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as d:
+            db = sqlite3.connect(f'{d}/a.db', isolation_level=None)
+            db.execute('create table t (x)')
+            db.execute('insert into t values (1)')
+            db.execute('begin exclusive')  # held, as by a process that never lets go
+            try:
+                with mock.patch.object(backup, 'BUSY_S', 0.2), self.assertRaises(sqlite3.OperationalError):
+                    backup.copy_db(f'{d}/a.db', f'{d}/out/a.db')
+            finally:
+                db.execute('rollback')
+            backup.copy_db(f'{d}/a.db', f'{d}/out/a.db')
+            self.assertEqual(sqlite3.connect(f'{d}/out/a.db').execute('select x from t').fetchall(), [(1,)])
+
     def test_extra_stacks(self):
         cfg = resolve(hub__extra_stacks=['media-arr', 'media_jellyfin'])
         self.assertEqual(json.loads(config.to_json(cfg))['hub']['extra_stacks'], ['media-arr', 'media_jellyfin'])
