@@ -10,7 +10,7 @@ from datetime import datetime
 from slack_bolt import App
 
 from .config import AGENT_FILES, FILES, OWNER, RECENT, log, secret
-from .text import to_slack
+from .text import to_slack, without_mention
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
 try:
@@ -114,6 +114,11 @@ def find_user(text):
         None,
         f'"{text}" matches {len(hits)} people ({", ".join(name(u["id"]) for u in hits[:5])}); be more specific.',
     )
+
+
+def ask(text):
+    """The person's words, readable: without the @-mention that addressed the companion (its bot, or its owner's tag)."""
+    return readable(without_mention(text, {bot_user(), OWNER}))
 
 
 def bot_user():

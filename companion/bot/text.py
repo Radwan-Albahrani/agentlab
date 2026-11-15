@@ -24,9 +24,10 @@ def no_emoji(text):
     return re.sub(r':[a-z0-9_+-]+:\s*', '', text or '')
 
 
-def without_mention(text):
-    """Drop the leading @-mention that addressed the companion."""
-    return re.sub(r'<@[A-Z0-9]+>\s*', '', text or '', count=1)
+def without_mention(text, addressed):
+    """Drop a leading @-mention of the companion (an id in `addressed`); any other mention is part of the ask."""
+    m = re.match(r'\s*<@([A-Z0-9]+)>\s*', text or '')
+    return (text or '')[m.end() :] if m and m.group(1) in addressed else text or ''
 
 
 def to_slack(md, limit=3500):

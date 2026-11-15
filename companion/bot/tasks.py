@@ -6,7 +6,7 @@ import time
 from . import errands, polls, projects, prompts, slack, t3
 from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, lock, new_task, now_iso, parse_iso, save
-from .text import first_sentence, mins, no_emoji, without_mention
+from .text import first_sentence, mins, no_emoji
 
 THINKING = ':seedling: thinking…'
 
@@ -18,7 +18,7 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
     folder = f'{channel}-{thread_ts.replace(".", "")}'
     msgs = elsewhere[1] if elsewhere else slack.thread_messages(channel, thread_ts, trigger_ts)
     lines, files = slack.transcript(msgs, folder)
-    ask = slack.readable(without_mention(text)).strip() or 'Look at this thread and handle it.'
+    ask = slack.ask(text).strip() or 'Look at this thread and handle it.'
     if elsewhere:
         where = elsewhere[0]
     else:
@@ -69,7 +69,7 @@ def is_status_ask(msg):
 
 def follow_up(task, text, files, ts, by=None):
     ch = task['channel']
-    msg = slack.readable(without_mention(text)).strip()
+    msg = slack.ask(text).strip()
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
     if m and m.group(1) in task.get('options', {}):  # "1" picks option 1 of the last question
         msg = task['options'][m.group(1)]
