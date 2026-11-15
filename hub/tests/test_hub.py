@@ -419,6 +419,24 @@ class Screens(unittest.TestCase):
         finally:
             scope.use(scope.ADMIN)
 
+    def test_overview_sums_up_each_companions_reviews(self):
+        [r] = screens.overview()['reviews']
+        self.assertEqual(r['name'], 'scout')
+        self.assertEqual(r['counts'], {'findings': 1, 'reviewing': 2, 'blocking': 1})
+        self.assertEqual(
+            r['batch'], {'of': 3, 'done': 1, 'now': {'number': 13, 'title': 'Fix the date picker on Safari'}}
+        )
+
+    def test_github_people_are_checked_pairs_one_per_login(self):
+        from store import companions  # noqa: PLC0415
+
+        field = {'key': 'github_people', 'type': 'links'}
+        pairs = [{'github': 'Mi3lix9', 'slack': 'U1'}, {'github': 'mi3lix9', 'slack': 'U2'}]
+        self.assertEqual(companions._checked(field, pairs), [{'github': 'mi3lix9', 'slack': 'U2'}])
+        for bad in ([{'github': 'a b', 'slack': 'U1'}], [{'github': 'ok', 'slack': ''}], 'x'):
+            with self.assertRaises(ValueError):
+                companions._checked(field, bad)
+
     def test_agents_come_from_the_config(self):
         nav = screens.nav()
         self.assertEqual([a['name'] for a in nav['agents']], ['admin', 'sara', 'lab'])

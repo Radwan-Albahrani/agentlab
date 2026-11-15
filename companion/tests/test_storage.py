@@ -35,6 +35,8 @@ def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
         'default_project',
         'github_user',
         'qa_evidence_repo',
+        'review_slots',
+        'github_people',
         'publish_channel',
     ]
     row = config.COMP.db.execute("select title, status, kind from tasks where id = 'C1:3.1'").fetchone()

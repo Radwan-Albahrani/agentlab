@@ -41,8 +41,9 @@ describe('pull requests', () => {
     expect(arrange(items, '', 'updated', 'all').map((p) => p.id)).toEqual(['b', 'c', 'a']);
     expect(arrange(items, '', 'largest', 'all')[0]?.id).toBe('a');
     expect(arrange(items, '', 'updated', 'unreviewed').map((p) => p.id)).toEqual(['a']);
-    expect(arrange(items, '', 'updated', 'reviewed').map((p) => p.id)).toEqual(['c']);
-    expect(arrange(items, '', 'updated', 'drafts').map((p) => p.id)).toEqual(['b']);
+    expect(arrange(items, '', 'updated', 'clean').map((p) => p.id)).toEqual(['c']);
+    expect(arrange(items, '', 'updated', 'draft').map((p) => p.id)).toEqual(['b']);
+    expect(arrange(items, '', 'updated', 'blocking')).toEqual([]);
   });
 
   it('puts your own first and notices reviews of older commits', () => {

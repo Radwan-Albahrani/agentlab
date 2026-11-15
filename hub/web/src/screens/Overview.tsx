@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { useNowBoard, useOverview } from '../api/queries';
 import type { NowAgent, Overview as Data } from '../api/types';
 import { NowBoard } from '../app/NowBoard';
+import { Reviews } from '../app/Reviews';
 import { Screen } from '../app/Screen';
 import { WATCHER_PENDING } from '../app/stacks';
 import { useCanSee } from '../app/useCanSee';
@@ -295,6 +296,11 @@ function OverviewView({ d, agents }: { d: Data; agents?: NowAgent[] }) {
       {agents && agents.length > 0 && (
         <Section title="Your agents, now" sub="live · refreshes every 3 s">
           <NowBoard agents={agents} />
+        </Section>
+      )}
+      {!!d.reviews?.length && (
+        <Section title="Pull request reviews" sub="click a count to see those pull requests">
+          <Reviews reviews={d.reviews} />
         </Section>
       )}
       {(d.activity ?? d.stacks) && (

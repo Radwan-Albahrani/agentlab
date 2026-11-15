@@ -4,7 +4,7 @@ from datetime import datetime
 
 from . import jobs, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, default_project, log, mode
-from .state import key, lock, new_task, save, state
+from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
 
 
@@ -132,7 +132,7 @@ def approver(task):
 def ask_approval(task, a):
     """approval.json -> owner-only Approve / Reject, in the owner's DM when a colleague asked."""
     who = slack.name(task.get('requester') or task.get('guest') or OWNER)
-    k = key(task['channel'], task['thread_ts'])
+    k = key_of(task)
     action = a.get('action', '')
     link = slack.permalink(task['channel'], task['thread_ts']) if task.get('guest') else ''
     md = (
@@ -229,7 +229,7 @@ def reply_requester(task, text, files=(), approved=False):
     if approved:
         send_to_requester(task, text, files)
         return
-    k = key(task['channel'], task['thread_ts'])
+    k = key_of(task)
     md = (
         f':outbox_tray: **Send to {who}?**\n'
         + quote(text)
@@ -285,7 +285,7 @@ def send_to_requester(task, text, files=()):
     COMP.event(
         'sent',
         f'Message to {who}' + (f' with {len(files)} file{"s" if len(files) != 1 else ""}' if files else ''),
-        task=key(task['channel'], task['thread_ts']),
+        task=key_of(task),
         to=who,
         detail=text,
     )
@@ -331,7 +331,7 @@ def ask_credential(task, c):
             md=':no_entry: The agent handed over a login, but there is nobody else to send it to. It was discarded.',
         )
         return
-    k = key(task['channel'], task['thread_ts'])
+    k = key_of(task)
     who = slack.name(req)
     c = {f: str(c.get(f) or '')[:300] for f in ('service', 'url', 'username', 'password', 'note')}
     _creds[k] = c

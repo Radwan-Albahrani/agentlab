@@ -1,7 +1,21 @@
 import type { Pull } from '../api/types';
 
 export type PullSort = 'updated' | 'created' | 'smallest' | 'largest';
-export type PullFilter = 'all' | 'unreviewed' | 'reviewed' | 'drafts';
+/** Where a PR stands, one answer each: what the filter counts and narrows by. */
+export type Outcome = 'blocking' | 'findings' | 'clean' | 'reviewing' | 'failed' | 'unreviewed' | 'draft';
+export type PullFilter = 'all' | Outcome;
+
+const BUSY = new Set(['queued', 'working', 'waiting']);
+
+export function outcomeOf(p: Pull): Outcome {
+  const r = p.review;
+  if (!r) return p.draft ? 'draft' : 'unreviewed';
+  if (BUSY.has(r.status)) return 'reviewing';
+  if (r.status !== 'done') return 'failed';
+  if (r.counts?.blocking) return 'blocking';
+  if (r.counts && (r.counts.findings || r.counts.open)) return 'findings';
+  return 'clean';
+}
 
 export const SORTS: { value: PullSort; label: string }[] = [
   { value: 'updated', label: 'Recently updated' },
@@ -12,9 +26,13 @@ export const SORTS: { value: PullSort; label: string }[] = [
 
 export const FILTERS: { value: PullFilter; label: string }[] = [
   { value: 'all', label: 'All' },
+  { value: 'blocking', label: 'Blocking' },
+  { value: 'findings', label: 'With findings' },
+  { value: 'clean', label: 'Clean' },
+  { value: 'reviewing', label: 'In review' },
+  { value: 'failed', label: 'Review failed' },
   { value: 'unreviewed', label: 'Not reviewed' },
-  { value: 'reviewed', label: 'Reviewed' },
-  { value: 'drafts', label: 'Drafts' },
+  { value: 'draft', label: 'Drafts' },
 ];
 
 const size = (p: Pull) => p.additions + p.deletions;
@@ -37,14 +55,7 @@ export function matches(p: Pull, query: string): boolean {
 }
 
 export function arrange(items: Pull[], query: string, sort: PullSort, filter: PullFilter): Pull[] {
-  const kept = items.filter(
-    (p) =>
-      matches(p, query) &&
-      (filter === 'all' ||
-        (filter === 'drafts' && p.draft) ||
-        (filter === 'reviewed' && !!p.review) ||
-        (filter === 'unreviewed' && !p.review && !p.draft)),
-  );
+  const kept = items.filter((p) => matches(p, query) && (filter === 'all' || outcomeOf(p) === filter));
   const by: Record<PullSort, (a: Pull, b: Pull) => number> = {
     updated: (a, b) => b.updated.localeCompare(a.updated),
     created: (a, b) => b.created.localeCompare(a.created),

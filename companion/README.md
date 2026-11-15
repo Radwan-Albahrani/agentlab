@@ -20,10 +20,12 @@ What it does:
 - **Pull request review and QA.** From the hub's Pull requests tab or Slack (`@Companion <PR link>`, or "review"
   under a message linking a PR). A lead T3 chat reviews in lanes and runs the app to QA it, then the companion posts
   one review as its GitHub App: findings on their lines (one-click suggestions when small), a QA comment with
-  screenshots, and on a re-review it edits its own comments and resolves the threads that were fixed. Each review
-  gets one Slack card that moves from Queued to Reviewing to its outcome, and every finish is a new message (so it
-  notifies). Reviews asked for while others are still going form a batch, which ends with one "All N reviews done"
-  summary; the hub shows the batch's progress too.
+  screenshots, and on a re-review it edits its own comments and resolves the threads that were fixed. Reviews asked
+  for while others are still going form a batch with one Slack card (in your DM for the hub, in the asking thread for
+  Slack), edited as each PR moves from queued to reviewing to its outcome; each finished PR is a reply in the card's
+  thread, and the batch ends with one "All N reviews done" message. A review's questions come in that thread too:
+  reply there (start with `#5922` when several reviews ask at once). "Reviews at a time" is a hub setting, and
+  "GitHub people" pairs GitHub logins with Slack people, who get a DM with the result of a review of their PR.
 
 Everything it does is shown on the hub (task cards, events, polls, pull requests, settings).
 

@@ -5,10 +5,15 @@ import time
 
 from . import errands, polls, projects, prompts, slack, t3
 from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
-from .state import key, lock, new_task, now_iso, parse_iso, review_of, save
+from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
 from .text import first_sentence, mins, no_emoji
 
 THINKING = ':seedling: thinking…'
+
+
+def quiet(task):
+    """A PR review: its progress shows on the batch card (reviews.py), so its thread gets only questions."""
+    return bool(review_of(task))
 
 
 def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
@@ -80,7 +85,7 @@ def follow_up(task, text, files, ts, by=None):
         msg = f'{slack.name(by or OWNER)}: {msg}'
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
-    between, more = since_last(task, ts, folder)
+    between, more = ([], []) if quiet(task) else since_last(task, ts, folder)  # a batch thread mixes reviews
     if between:
         msg = 'Meanwhile in the Slack thread:\n' + '\n'.join(between) + '\n\nMy message now:\n' + msg
         paths += more
@@ -108,7 +113,7 @@ def follow_up(task, text, files, ts, by=None):
         task.update(
             trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, question=False, last_status='', last_status_at=0
         )
-        if not task.get('status_ts'):
+        if not task.get('status_ts') and not quiet(task):
             task.update(status_ts=slack.note_only(ch, task['thread_ts'], THINKING), line_start=time.time())
     save()
 
@@ -181,6 +186,9 @@ def working_line(task, s, now):
 def reply(task, md, note=None, outcome='answered below'):
     """Post the answer as a new message (Slack notifies on new messages, not edits) and close the thinking line."""
     ch, tts = task['channel'], task['thread_ts']
+    r = review_of(task)
+    if r:  # reviews of a batch share its thread
+        md = f':mag: **<{r["url"]}|{r["id"]}>**\n{md}'
     if task.get('status_ts'):
         elapsed = time.time() - (task.get('line_start') or parse_iso(task.get('burst_start')))
         n = task.get('workers_said', 0)
@@ -218,7 +226,7 @@ def retry_transient(task, s, now):
             COMP.event(
                 'retry',
                 f'Model busy, said "continue" ({task.get("retries")}/{len(RETRY_WAITS)})',
-                task=key(task['channel'], task['thread_ts']),
+                task=key_of(task),
                 detail=task.get('title', ''),
             )
             return True
@@ -236,7 +244,7 @@ def retry_transient(task, s, now):
     line = f':hourglass_flowing_sand: The model is busy, so I\'ll say "continue" in {wait} s ({n}/{len(RETRY_WAITS)})'
     if task.get('status_ts'):
         slack.update(task['channel'], task['status_ts'], 'Retrying soon', note=line)
-    else:
+    elif not quiet(task):
         task['status_ts'] = slack.note_only(task['channel'], task['thread_ts'], line)
     return True
 
@@ -277,6 +285,8 @@ def tick(task):
         return
     if s['running'] or any(r for _, _, r in s['workers']):
         task['quiet_since'] = 0
+        if quiet(task):
+            return
         if not task.get('status_ts'):
             task.update(status_ts=slack.note_only(ch, tts, THINKING), line_start=time.time())
         line = working_line(task, s, now)
@@ -298,8 +308,11 @@ def tick(task):
 def how_to_answer(task, opts):
     dm = task['channel'].startswith('D')
     if opts:
-        return 'Reply with a number or in your own words.' if dm else 'Tag me with a number or your own words.'
-    return 'Reply in this thread.' if dm else 'Tag me in this thread to answer.'
+        how = 'Reply with a number or in your own words.' if dm else 'Tag me with a number or your own words.'
+    else:
+        how = 'Reply in this thread.' if dm else 'Tag me in this thread to answer.'
+    r = review_of(task)
+    return how + (f' If other reviews here ask too, start with #{r["number"]}.' if r else '')
 
 
 def _ask_by_message(task, final, items, foot):
@@ -330,6 +343,9 @@ def _post_questions(task, s):
 def _post_milestones(task, s):
     """Post new workers and pull requests as short lines."""
     ch, tts = task['channel'], task['thread_ts']
+    if quiet(task):
+        task['workers_said'] = len(s['workers'])
+        return
     if len(s['workers']) > task['workers_said']:
         new = [t for _, t, _ in s['workers']][task['workers_said'] :]
         slack.note_only(ch, tts, f':jigsaw: Splitting this up: {", ".join(new[:6])}{"…" if len(new) > 6 else ""}')
@@ -364,7 +380,7 @@ def _finish_turn(task, s):
             task['quiet_since'] = 0
             log('review nudged to finish', r['id'])
             return
-    ch, tts = task['channel'], task['thread_ts']
+    ch = task['channel']
     task['retries'] = 0
     final = task.get('latest', '')
     took = parse_iso(s['last_done']) - parse_iso(task['burst_start']) if s['last_done'] else 0
@@ -391,24 +407,27 @@ def _finish_turn(task, s):
         errands.close_head(task, ':white_check_mark: Nothing needed', 'white_check_mark')
         outcome = 'nothing needed'
     elif status == 'failed':
-        reply(task, ':x: **That failed.**\n\n' + final, foot, 'failed')
         outcome = 'failed'
+        if not quiet(task):  # a review's end is told by reviews.py, from `outcome`
+            reply(task, ':x: **That failed.**\n\n' + final, foot, 'failed')
     elif status == 'cancelled':
-        reply(task, ':black_square_for_stop: Stopped.', foot, 'stopped')
         outcome = 'stopped'
+        if not quiet(task):
+            reply(task, ':black_square_for_stop: Stopped.', foot, 'stopped')
     elif s.get('asked'):
         _ask_by_message(task, final, s['asked'], foot)
         outcome = 'asked you'
     else:
-        reply(task, final or '_(no reply)_', foot)
         outcome = 'answered'
+        if not quiet(task):
+            reply(task, final or '_(no reply)_', foot)
     if task.get('reply_pending') and status == 'completed':
         errands.reply_requester(task, task.pop('reply_pending'), approved=True)
     slack.react(ch, task['trigger_ts'], 'eyes', remove=True)
     COMP.event(
         'failed' if outcome == 'failed' else 'finished',
         f'{task.get("title", "")[:80]}: {outcome}',
-        task=key(ch, tts),
+        task=key_of(task),
         detail=first_sentence(no_emoji(final), 300),
         ok=outcome != 'failed',
     )

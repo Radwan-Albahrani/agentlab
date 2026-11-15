@@ -6,7 +6,7 @@ import time
 
 from . import errands, polls, posts, reviews, slack
 from .config import COMP, FILES, OWNER, log
-from .state import key, review_of, save
+from .state import key_of, review_of, save
 
 OUTBOX = os.path.join(FILES, 'outbox')
 DELIVER_TYPES = {
@@ -117,7 +117,7 @@ def _deliver(task, box, m):
         COMP.event(
             'files',
             f'{len(ok)} file{"s" if len(ok) != 1 else ""} in the thread: {what}',
-            task=key(ch, tts),
+            task=key_of(task),
             to=f'#{where}' if where else slack.name(OWNER),
             ok=not refused,
             detail=('held back: ' + ', '.join(refused)) if refused else ', '.join(os.path.basename(p) for p in ok),

@@ -75,6 +75,17 @@ export interface Overview {
   needs?: NeedItem[];
   activity?: Event[];
   stacks?: { at?: number; rows: Stack[] };
+  reviews?: ReviewSummary[];
+}
+
+/** A companion's PR reviews at a glance (outcome names as in lib/pulls.ts). */
+export interface ReviewSummary {
+  name: string;
+  display: string;
+  profile: string;
+  open: number;
+  counts: Partial<Record<string, number>>;
+  batch: { of: number; done: number; now: { number: number; title: string } | null } | null;
 }
 
 /** How busy an agent is, as counts only: the hub never sends what a chat is about. */
@@ -231,7 +242,7 @@ export interface SettingField {
   key: string;
   label: string;
   help?: string;
-  type: 'choice' | 'bool' | 'text' | 'people';
+  type: 'choice' | 'bool' | 'text' | 'people' | 'links';
   options?: { value: string; label: string; help?: string; avatar?: string }[];
   /** Shown only while each named setting has one of these values. */
   when?: Record<string, string[]>;
@@ -297,6 +308,23 @@ export interface PullReview {
   // open = earlier findings that still stand
   counts?: { findings: number; blocking: number; open: number; qa: string } | null;
   run?: { n: number; of: number; done: boolean }; // its place in the batch being reviewed now
+  detail?: ReviewDetail; // only once the review is done
+}
+
+/** A finished review in brief; GitHub keeps the full text. */
+export interface ReviewDetail {
+  findings: {
+    title: string;
+    severity: 'blocking' | 'non-blocking';
+    lane: string;
+    path: string;
+    line: number | null;
+    start_line: number | null;
+    body: string;
+    link: string;
+  }[];
+  qa: { verdict: string; text: string; url: string };
+  review_url: string;
 }
 
 export interface CompanionSecrets {

@@ -5,7 +5,7 @@ from datetime import datetime
 
 from . import errands, polls, slack
 from .config import COMP, NAME, OWNER, log
-from .state import key, save
+from .state import key_of, save
 from .text import clock, first_sentence, quote
 
 MAX_OPTIONS = 10
@@ -99,7 +99,7 @@ def offer(task, p):
     if asked_here or not task.get('review', True):
         send(task, post)
         return
-    k = key(ch, tts)
+    k = key_of(task)
     old = task.pop('post_draft', None)
     if old:
         line = ':pencil2: Replaced by the version below'
@@ -150,7 +150,7 @@ def decide(task, k, send_it):
 
 
 def send(task, post):
-    ch, tts, k = task['channel'], task['thread_ts'], key(task['channel'], task['thread_ts'])
+    ch, tts, k = task['channel'], task['thread_ts'], key_of(task)
     dest = where(post)
     try:
         if post.get('poll'):

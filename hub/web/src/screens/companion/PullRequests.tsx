@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import { useCompanionPoll, usePullsRefresh } from '../../api/queries';
 import type { Ci, Pull, PullReview, Pulls } from '../../api/types';
 import { ago, plural } from '../../lib/format';
@@ -18,6 +19,7 @@ import { Appear } from '../../ui/motion';
 import { Empty, EmptyCard, Section } from '../../ui/page';
 import { Pager } from '../../ui/Pager';
 import { Blink, LiveLine } from './parts';
+import { ReviewView } from './ReviewView';
 
 const PAGE = 10;
 
@@ -64,19 +66,6 @@ const styles = stylex.create({
     transitionDuration: '300ms',
   },
   fillDone: { backgroundColor: colors.ok },
-  counts: {
-    display: 'flex',
-    alignItems: 'baseline',
-    flexWrap: 'wrap',
-    columnGap: space.sm,
-    rowGap: space.xxs,
-    paddingBlock: space.md,
-    paddingInline: { default: space.xxl, [media.phone]: space.lg },
-    fontSize: text.md,
-    color: colors.muted,
-  },
-  countsLead: { color: colors.fg, fontWeight: 600 },
-  count: { display: 'inline-flex', alignItems: 'baseline', gap: space.xs },
   group: {
     display: 'flex',
     alignItems: 'center',
@@ -92,6 +81,8 @@ const styles = stylex.create({
     color: colors.fg,
   },
   row: {
+    // scrolled to, it stops below the sticky status line and tab bar instead of under them
+    scrollMarginTop: 120,
     position: 'relative',
     display: 'flex',
     alignItems: 'center',
@@ -199,30 +190,6 @@ const styles = stylex.create({
   },
 });
 
-type Outcome = 'blocking' | 'findings' | 'clean' | 'reviewing' | 'failed' | 'unreviewed' | 'draft';
-
-const BUSY = new Set(['queued', 'working', 'waiting']);
-
-function outcomeOf(p: Pull): Outcome {
-  const r = p.review;
-  if (!r) return p.draft ? 'draft' : 'unreviewed';
-  if (BUSY.has(r.status)) return 'reviewing';
-  if (r.status !== 'done') return 'failed';
-  if (r.counts?.blocking) return 'blocking';
-  if (r.counts && (r.counts.findings || r.counts.open)) return 'findings';
-  return 'clean';
-}
-
-const LEGEND: [Outcome, string][] = [
-  ['blocking', 'Blocking'],
-  ['findings', 'With findings'],
-  ['clean', 'Clean'],
-  ['reviewing', 'In review'],
-  ['failed', 'Review failed'],
-  ['unreviewed', 'Not reviewed'],
-  ['draft', 'Drafts'],
-];
-
 const Sep = () => (
   <span {...stylex.props(styles.sep)} aria-hidden="true">
     ·
@@ -234,7 +201,25 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
   const [refreshing, refresh] = usePullsRefresh(name, github.at);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<PullSort>('updated');
-  const [filter, setFilter] = useState<PullFilter>('all');
+  // the filter and the open review live in the URL, so the Overview can link to "Blocking" and Back closes a review
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('filter');
+  const filter: PullFilter = FILTERS.some((f) => f.value === asked) ? (asked as PullFilter) : 'all';
+  const setParam = (key: string, value: string | null) => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { replace: key === 'filter' || !value, preventScrollReset: true },
+    );
+  };
+  const setFilter = (v: PullFilter) => {
+    setParam('filter', v === 'all' ? null : v);
+  };
+  const open = pulls.items.find((p) => String(p.number) === params.get('pr') && p.id) ?? null;
   if (!github.ready && github.error === 'not set up')
     return (
       <Section title="Pull requests" icon="pr" id="pulls">
@@ -246,7 +231,10 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
       </Section>
     );
   const shown = arrange(pulls.items, query, sort, filter);
-  const filters = FILTERS.map((f) => ({ ...f, count: arrange(pulls.items, query, sort, f.value).length }));
+  // one clickable count per outcome that has any (the selected one stays even at 0, so it can be left)
+  const filters = FILTERS.map((f) => ({ ...f, count: arrange(pulls.items, query, sort, f.value).length })).filter(
+    (f) => f.value === 'all' || f.value === filter || f.count > 0,
+  );
   const { mine, others } = grouped(shown, pulls.me);
   const where = github.accounts.length ? ` in ${github.accounts.join(', ')}` : '';
   return (
@@ -261,6 +249,12 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
       }
       right={<Button label="Refresh" icon="refresh" small iconOnly busy={refreshing} onClick={refresh} />}
     >
+      <ReviewView
+        p={open}
+        onClose={() => {
+          setParam('pr', null);
+        }}
+      />
       <Batch items={pulls.items} />
       <div {...stylex.props(styles.toolbar)}>
         <div {...stylex.props(styles.search)}>
@@ -270,7 +264,6 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
         <PickMenu label="Sort" icon="sort" value={sort} options={SORTS} onChange={setSort} />
       </div>
       <Card>
-        {pulls.items.length > 0 && <Counts items={pulls.items} />}
         {shown.length ? (
           <>
             <Group title="Authored" items={mine} name={name} />
@@ -289,27 +282,6 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
         )}
       </Card>
     </Section>
-  );
-}
-
-/** One quiet line: how many are open, and how their reviews came out. */
-function Counts({ items }: { items: Pull[] }) {
-  const count = new Map<Outcome, number>();
-  for (const p of items) count.set(outcomeOf(p), (count.get(outcomeOf(p)) ?? 0) + 1);
-  return (
-    <div {...stylex.props(styles.counts)}>
-      <span {...stylex.props(styles.count, styles.countsLead)}>
-        Open <span {...stylex.props(styles.num)}>{items.length}</span>
-      </span>
-      {LEGEND.filter(([key]) => count.get(key)).map(([key, label]) => (
-        <Fragment key={key}>
-          <Sep />
-          <span {...stylex.props(styles.count)}>
-            {label} <span {...stylex.props(styles.num, styles.faint)}>{count.get(key)}</span>
-          </span>
-        </Fragment>
-      ))}
-    </div>
   );
 }
 
@@ -375,6 +347,9 @@ function Group({ title, items, name }: { title: string; items: Pull[]; name: str
 }
 
 function PullRow({ p, name }: { p: Pull; name: string }) {
+  const [params] = useSearchParams();
+  const review = new URLSearchParams(params);
+  review.set('pr', String(p.number));
   return (
     <div {...stylex.props(stylex.defaultMarker(), styles.row)} data-testid="pull">
       <span {...stylex.props(styles.state, p.draft && styles.stateDraft)} title={p.draft ? 'Draft' : 'Open'}>
@@ -382,9 +357,13 @@ function PullRow({ p, name }: { p: Pull; name: string }) {
       </span>
       <div {...stylex.props(styles.main)}>
         <div {...stylex.props(styles.line1)}>
-          <a {...stylex.props(styles.title, p.draft && styles.titleDraft)} href={p.url} target="_blank" rel="noopener">
+          <Link
+            {...stylex.props(styles.title, p.draft && styles.titleDraft)}
+            to={{ search: `?${review.toString()}`, hash: '#pulls' }}
+            preventScrollReset
+          >
             {p.title}
-          </a>
+          </Link>
           {p.ci && <Checks ci={p.ci} />}
           {p.labels.map((l) => (
             <span key={l.name} {...stylex.props(styles.label)}>

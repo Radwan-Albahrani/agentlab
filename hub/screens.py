@@ -108,6 +108,8 @@ def overview():
         if see('page.services'):
             activity += [dict(e, source='server') for e in store.watch.events(None, 40) if e.get('kind') != 'scan']
         out['activity'] = sorted(activity, key=lambda e: e.get('at', 0), reverse=True)[:14]
+    if see('companion.pulls'):
+        out['reviews'] = [r for r in (review_summary(c) for c in comps) if r]
     if see('overview.stacks') and see('page.services'):
         groups = domains.by_stack()
         out['stacks'] = {
@@ -126,6 +128,52 @@ def now():
     return {
         'agents': [{'name': p, 'chat': cluster.links(p)['chat'], **notify.live(p)} for p in mine],
         'at': time.time(),
+    }
+
+
+BUSY = ('queued', 'working', 'waiting')
+
+
+def outcome(p):
+    """Where a PR stands (the web app's lib/pulls.ts outcomeOf, kept the same)."""
+    r = p.get('review')
+    if not r:
+        return 'draft' if p.get('draft') else 'unreviewed'
+    if r.get('status') in BUSY:
+        return 'reviewing'
+    if r.get('status') != 'done':
+        return 'failed'
+    c = r.get('counts') or {}
+    if c.get('blocking'):
+        return 'blocking'
+    return 'findings' if c.get('findings') or c.get('open') else 'clean'
+
+
+def review_summary(c):
+    """A companion's PR reviews at a glance: outcome counts and the batch under way; None when it reviews none."""
+    pulls = c.get('pulls') or []
+    if not pulls:
+        return None
+    counts = {}
+    for p in pulls:
+        counts[outcome(p)] = counts.get(outcome(p), 0) + 1
+    run = sorted(
+        ((p['review']['run'], p) for p in pulls if (p.get('review') or {}).get('run')), key=lambda x: x[0]['n']
+    )
+    now = next((p for r, p in run if not r['done'] and p['review'].get('status') in ('working', 'waiting')), None)
+    return {
+        'name': c['name'],
+        'display': c['display'],
+        'profile': c['profile'],
+        'open': len(pulls),
+        'counts': counts,
+        'batch': {
+            'of': len(run),
+            'done': sum(1 for r, _ in run if r['done']),
+            'now': {'number': now['number'], 'title': now['title']} if now else None,
+        }
+        if len(run) > 1
+        else None,
     }
 
 
@@ -264,7 +312,7 @@ def companion(name):
     if see('companion.settings'):
         people = [{'value': p['id'], 'label': p['name'], 'avatar': p.get('avatar', '')} for p in hb.get('people') or []]
         out['settings'] = [
-            dict(f, value=v, **({'options': people} if f['type'] == 'people' else {})) for f, v in settings
+            dict(f, value=v, **({'options': people} if f['type'] in ('people', 'links') else {})) for f, v in settings
         ]
     return out
 

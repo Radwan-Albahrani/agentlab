@@ -252,6 +252,38 @@ create table pulls (id text primary key, repo text, number integer, updated text
                 'head': 'old1234',
                 'at': iso(NOW - 5000),
                 'counts': {'findings': 2, 'blocking': 1, 'open': 0, 'qa': 'partial'},
+                'detail': {
+                    'findings': [
+                        {
+                            'title': 'Revoked grants survive the migration',
+                            'severity': 'blocking',
+                            'lane': 'correctness',
+                            'path': 'api/src/migrate/inputs.ts',
+                            'line': 88,
+                            'start_line': 80,
+                            'body': 'The stop list is applied before the role defaults, so a grant revoked for a role '
+                            'comes back on the next run.',
+                            'link': 'https://github.com/example/app/blob/old1234/api/src/migrate/inputs.ts#L80-L88',
+                        },
+                        {
+                            'title': 'migratedAdditionsFor re-reads the same table per role',
+                            'severity': 'non-blocking',
+                            'lane': 'performance',
+                            'path': 'api/src/migrate/additions.ts',
+                            'line': 41,
+                            'start_line': None,
+                            'body': 'Load the grants once and group them; 40 roles means 40 queries today.',
+                            'link': 'https://github.com/example/app/blob/old1234/api/src/migrate/additions.ts#L41',
+                        },
+                    ],
+                    'qa': {
+                        'verdict': 'partial',
+                        'text': '4 of 6 claims verified. Revoking a grant could not be checked: the staging seed has no '
+                        'revoked grants.',
+                        'url': 'https://github.com/example/app/pull/15#issuecomment-1',
+                    },
+                    'review_url': 'https://github.com/example/app/pull/15#pullrequestreview-1',
+                },
             },
         ),
     ):

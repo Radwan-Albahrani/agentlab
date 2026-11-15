@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -149,7 +150,25 @@ def _checked(field, value):
         if not isinstance(value, list) or not all(isinstance(u, str) and u.isalnum() for u in value):
             raise ValueError('Expected a list of people.')
         return list(dict.fromkeys(value))[:100]
+    if field['type'] == 'links':
+        return _links(value)
     return value
+
+
+GITHUB_LOGIN = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$')
+
+
+def _links(value):
+    """[{github, slack}]: a GitHub login paired with a Slack user id, one pair per login."""
+    if not isinstance(value, list):
+        raise ValueError('Expected a list of GitHub and Slack pairs.')
+    out = {}
+    for pair in value:
+        gh, slack = (pair or {}).get('github', ''), (pair or {}).get('slack', '')
+        if not (isinstance(gh, str) and GITHUB_LOGIN.match(gh) and isinstance(slack, str) and slack.isalnum()):
+            raise ValueError('Each pair needs a GitHub username and a Slack person.')
+        out[gh.lower()] = {'github': gh, 'slack': slack}
+    return list(out.values())[:200]
 
 
 def set_setting(name, key, value):

@@ -115,6 +115,22 @@ SCHEMA = [
         'screenshots as not attached.',
     },
     {
+        'key': 'review_slots',
+        'label': 'Reviews at a time',
+        'type': 'choice',
+        'options': [{'value': str(n), 'label': str(n)} for n in range(1, 7)],
+        'default': '4',
+        'help': 'How many pull request reviews run at once. More finishes a batch sooner and uses more memory.',
+    },
+    {
+        'key': 'github_people',
+        'label': 'GitHub people',
+        'type': 'links',
+        'default': [],
+        'help': f'Pair a GitHub username with a Slack person; when a review of their pull request finishes, {NAME} DMs '
+        'them the result.',
+    },
+    {
         'key': 'publish_channel',
         'label': 'Product updates channel',
         'type': 'text',
@@ -153,6 +169,20 @@ def publish_channel():
 
 def evidence_repo():
     return (COMP.setting('qa_evidence_repo') or '').strip()
+
+
+def review_slots():
+    """How many reviews run at once (hub setting, applies live)."""
+    try:
+        return max(1, int(COMP.setting('review_slots')))
+    except (TypeError, ValueError):
+        return 4
+
+
+def slack_for_github(login):
+    """The Slack user id linked to this GitHub login (case-insensitive), or ''."""
+    login = (login or '').casefold()
+    return next((p['slack'] for p in COMP.setting('github_people') if login and p['github'].casefold() == login), '')
 
 
 def work_tools():

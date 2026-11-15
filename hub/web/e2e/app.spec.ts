@@ -482,6 +482,33 @@ test('search: Ctrl+K finds a page by a few letters and Enter goes there', async 
   await expect(search).toHaveCount(0);
 });
 
+test('reviews: an Overview count opens the list filtered to it, and a pull request opens its review', async ({ page }) => {
+  await guard(page);
+  await page.goto('/');
+  await settled(page);
+  const reviews = page.locator('section', { has: page.getByRole('heading', { name: 'Pull request reviews' }) });
+  await reviews.getByRole('link', { name: /Blocking/ }).click();
+  await expect(page).toHaveURL(/\/agents\/admin\/scout\?filter=blocking#pulls$/);
+  const rows = page.getByTestId('pull');
+  await expect(rows).toHaveCount(1);
+  await page.getByRole('group', { name: 'Filter pull requests' }).getByRole('button', { name: /All/ }).click();
+  await expect(rows).toHaveCount(4);
+  await expect(page).not.toHaveURL(/filter=/);
+  await rows
+    .filter({ hasText: 'migratedAdditionsFor' })
+    .getByRole('link', { name: /refactor\(api\)/ })
+    .click();
+  const view = page.getByRole('dialog');
+  await expect(view).toContainText('Changes requested');
+  await expect(view).toContainText('Revoked grants survive the migration');
+  await expect(view.getByRole('link', { name: 'api/src/migrate/inputs.ts:80-88' })).toHaveAttribute('href', /#L80-L88$/);
+  await expect(view).toContainText('QA partly verified');
+  await expect(page).toHaveURL(/pr=15/);
+  await page.keyboard.press('Escape');
+  await expect(view).toHaveCount(0);
+  await expect(page).not.toHaveURL(/pr=/);
+});
+
 test('pull requests: a batch of reviews shows how far along it is', async ({ page }) => {
   await guard(page);
   await page.goto('/agents/admin/scout#pulls');

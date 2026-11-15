@@ -14,8 +14,9 @@ heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "wor
                       channels: [{"id", "name", "member"}] (member: bot can post);
                       people: [{"id", "name", "avatar"}] the options of "people" settings;
                       github: {"ready", "bot", "accounts", "at", "error"}
-settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text"|"people", "options": [{"value", "label", "help"}],
-                        "default", "when"?: {"<other key>": [values it shows for]}}]; people: a list of user ids
+settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text"|"people"|"links",
+                        "options": [{"value", "label", "help"}], "default", "when"?: {"<other key>": [values it shows for]}}];
+                      people: a list of user ids; links: [{"github": login, "slack": user id}]
 settings.json         written by the hub; re-read on every setting() call
 asks/<id>.json        written by the hub, removed by take_asks:
                       {"type": "ask", "text", "channel" (an id or ""), "review" (bool), "at"}
@@ -97,6 +98,13 @@ class Companion:
             return bool(value)
         if field['type'] == 'people':
             return [str(u) for u in value] if isinstance(value, list) else []
+        if field['type'] == 'links':
+            pairs = value if isinstance(value, list) else []
+            return [
+                {'github': str(p['github']).strip(), 'slack': str(p['slack']).strip()}
+                for p in pairs
+                if isinstance(p, dict) and str(p.get('github') or '').strip() and str(p.get('slack') or '').strip()
+            ]
         return value
 
     def take_asks(self):

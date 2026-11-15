@@ -1,4 +1,4 @@
-"""The companion's persisted state (tasks keyed by Slack thread, polls, drafts...); access it under `lock`."""
+"""The companion's persisted state (tasks keyed by Slack thread, see key_of; polls, drafts...); access it under `lock`."""
 
 import json
 import threading
@@ -48,6 +48,11 @@ def save():
 
 def key(channel, thread_ts):
     return f'{channel}:{thread_ts}'
+
+
+def key_of(task):
+    """The task's key in state['tasks']: its thread's, unless it shares the thread (reviews of one batch)."""
+    return task.get('key') or key(task['channel'], task['thread_ts'])
 
 
 def tasks():
@@ -100,7 +105,7 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
         **extra,
     }
     with lock:
-        state['tasks'][key(channel, thread_ts)] = t
+        state['tasks'][key_of(t)] = t
     save()
     return t
 

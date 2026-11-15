@@ -49,6 +49,7 @@ def route(ev, mentioned):
         and thr
         and not in_dm
         and key(ch, thr) not in state['tasks']
+        and not reviews.in_thread(ch, thr)
         and requests.thread_root_user(ch, thr) not in (OWNER, None)
     ):
         jobs.run_later(requests.tagged_in_thread, ev)
@@ -75,7 +76,12 @@ def route(ev, mentioned):
         jobs.run_later(drafts.revise, dkey, draft, ev.get('text', ''), ts)
         return
     task = state['tasks'].get(key(ch, tts))
-    if task and (mentioned or in_dm):
+    review = thr and (mentioned or in_dm) and reviews.for_reply(ch, thr, ev.get('text', ''), others=bool(task))
+    if review == 'which':
+        jobs.run_later(reviews.which, ch, thr)
+    elif review:
+        jobs.run_later(reviews.answer, review, ev.get('text', ''), ev.get('files'), ts)
+    elif task and (mentioned or in_dm):
         jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts)
     elif mentioned and not in_dm and not slack.bot_in(ch):
         requests.await_invite(ev)
