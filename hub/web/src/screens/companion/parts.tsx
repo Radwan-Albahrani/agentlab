@@ -1,12 +1,14 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { colors, font, radius, space, text } from '../../theme/tokens.stylex';
+import { slackParts } from '../../lib/companion';
 import { Icon } from '../../ui/Icon';
 
 const run = stylex.keyframes({ to: { backgroundPosition: '20px 0' } });
 const blink = stylex.keyframes({ '50%': { opacity: 0 } });
 
 const styles = stylex.create({
+  slackLink: { color: { default: colors.info, ':hover': colors.fg }, overflowWrap: 'anywhere' },
   notice: {
     display: 'flex',
     alignItems: 'center',
@@ -115,6 +117,23 @@ export const LiveLine = ({ inline }: { inline?: boolean }) => (
 export const Blink = () => <i {...stylex.props(styles.block)} aria-hidden="true" />;
 
 /** Numbers, times and ids. */
+/** Slack text with its <url|label> links as real links. */
+export function SlackText({ text: s }: { text: string }) {
+  return (
+    <>
+      {slackParts(s).map((p, i) =>
+        typeof p === 'string' ? (
+          p
+        ) : (
+          <a key={i} href={p.url} target="_blank" rel="noopener" {...stylex.props(styles.slackLink)}>
+            {p.label}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
 export const Mono = ({ children }: { children: ReactNode }) => <span {...stylex.props(styles.mono)}>{children}</span>;
 
 /** A person's round picture (people are round, agents square), or their initial when there is none. */

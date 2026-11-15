@@ -332,6 +332,35 @@ test('restart asks first and goes nowhere in tests', async ({ page }) => {
   await expect(confirm).toHaveCount(0);
 });
 
+test('companion settings: the QA repository is picked from the private repos the App sees, not typed', async ({ page }) => {
+  await guard(page);
+  let saved: Record<string, unknown> | null = null;
+  await page.route(/\/api\/companions\/scout\/settings$/, (route) => {
+    saved = route.request().postDataJSON() as Record<string, unknown>;
+    return route.fulfill({ json: { ok: true, message: '(test) not saved' } });
+  });
+  await page.goto('/agents/admin/scout#settings');
+  await settled(page);
+  const picker = page.getByRole('combobox', { name: 'QA screenshots repository' });
+  await picker.fill('qa');
+  await expect(page.getByRole('option')).toHaveCount(1);
+  await page.getByRole('option', { name: 'example/qa-evidence' }).click();
+  await expect.poll(() => saved).toMatchObject({ key: 'qa_evidence_repo', value: 'example/qa-evidence' });
+});
+
+test('tasks: filter by who asked, and Slack links read as links', async ({ page }) => {
+  await guard(page);
+  await page.goto('/agents/admin/scout#tasks');
+  await settled(page);
+  const tasks = page.getByRole('tabpanel');
+  await expect(tasks.getByRole('link', { name: 'example/app#12' })).toHaveAttribute('href', /pull\/12/);
+  await expect(tasks).not.toContainText('<https://');
+  await page.getByRole('combobox', { name: 'Asked by' }).click();
+  await page.getByRole('option', { name: /^Sara/ }).click();
+  await expect(tasks).toContainText('Summarise the incident thread');
+  await expect(tasks).not.toContainText('Review example/app#12');
+});
+
 test('display settings: three states per item', async ({ page }) => {
   await guard(page);
   await page.goto('/display');

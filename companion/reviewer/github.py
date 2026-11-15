@@ -101,6 +101,20 @@ class App:
         found = self.pages(f'/repos/{repo}/assignees', self.installation_for(repo), limit)
         return [{'login': u['login'], 'avatar': u.get('avatar_url', '')} for u in found]
 
+    def repositories(self, limit=1000):
+        """[{name, private}] of every repo the App is installed on, as owner/repo."""
+        out = []
+        for inst in self.installations():
+            page = 1
+            while len(out) < limit:
+                r = self.call('GET', f'/installation/repositories?per_page=100&page={page}', installation=inst['id'])
+                found = r.get('repositories') or []
+                out += [{'name': x['full_name'], 'private': bool(x.get('private'))} for x in found]
+                if len(found) < 100:
+                    break
+                page += 1
+        return out[:limit]
+
     def graphql(self, query, installation, **variables):
         r = self.call('POST', '/graphql', {'query': query, 'variables': variables}, installation=installation)
         if r.get('errors'):

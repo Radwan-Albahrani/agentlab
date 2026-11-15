@@ -24,6 +24,44 @@ export function taskAge(t: Task, now = Date.now() / 1000): string {
   return duration((going ? now : (t.endedAt ?? now)) - t.startedAt);
 }
 
+/** Slack text in pieces: plain strings and {url, label} for its <url|label> and <url> links. */
+export function slackParts(s: string): (string | { url: string; label: string })[] {
+  const out: (string | { url: string; label: string })[] = [];
+  let at = 0;
+  for (const m of s.matchAll(/<(https?:\/\/[^|>\s]+)(?:\|([^>]*))?>/g)) {
+    if (m.index > at) out.push(s.slice(at, m.index));
+    const url = m[1] ?? '';
+    out.push({ url, label: m[2] || url });
+    at = m.index + m[0].length;
+  }
+  if (at < s.length) out.push(s.slice(at));
+  return out;
+}
+
+/** Slack text with links reduced to their labels, for tooltips. */
+export const slackPlain = (s: string) =>
+  slackParts(s)
+    .map((p) => (typeof p === 'string' ? p : p.label))
+    .join('');
+
+/** Who asked: '' is you; a task's starter, an errand's requester. */
+export const ME = '';
+export function askers(tasks: Task[]): { value: string; label: string }[] {
+  const n = new Map<string, number>();
+  for (const t of tasks) n.set(t.requester || ME, (n.get(t.requester || ME) ?? 0) + 1);
+  const others = [...n.keys()].filter((k) => k !== ME).sort((a, b) => a.localeCompare(b));
+  return [
+    { value: '*', label: `Anyone · ${tasks.length}` },
+    ...(n.has(ME) ? [{ value: 'me', label: `You · ${n.get(ME)}` }] : []),
+    ...others.map((k) => ({ value: `@${k}`, label: `${k} · ${n.get(k)}` })),
+  ];
+}
+export function askedBy(tasks: Task[], who: string): Task[] {
+  if (who === '*') return tasks;
+  const want = who === 'me' ? ME : who.slice(1);
+  return tasks.filter((t) => (t.requester || ME) === want);
+}
+
 /** An errand is done for someone; a task or review was started by them (or by you). */
 export function taskWho(t: Task): string {
   return `${t.kind === 'errand' ? 'for' : 'started by'} ${t.requester || 'you'}`;

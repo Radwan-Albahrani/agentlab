@@ -246,7 +246,7 @@ export interface SettingField {
   help?: string;
   type: 'choice' | 'bool' | 'text' | 'people' | 'links';
   /** For text: where its values come from, so the hub offers a picker instead of a box. */
-  source?: 'channels' | 'github_people';
+  source?: 'channels' | 'github_people' | 'github_repos';
   options?: { value: string; label: string; help?: string; avatar?: string }[];
   /** Shown only while each named setting has one of these values. */
   when?: Record<string, string[]>;
@@ -275,7 +275,15 @@ export interface Companion {
 
 export interface Pulls {
   // people: who can work on the repos the App sees (Leafy refreshes it hourly)
-  github: { ready: boolean; bot: string; accounts: string[]; at: number; error: string; people?: GithubPerson[] };
+  github: {
+    ready: boolean;
+    bot: string;
+    accounts: string[];
+    at: number;
+    error: string;
+    people?: GithubPerson[];
+    repos?: string[];
+  };
   me: string; // the owner's GitHub username
   items: Pull[];
 }

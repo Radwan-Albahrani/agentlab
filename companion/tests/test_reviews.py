@@ -50,6 +50,13 @@ class FakeGitHub:
     def installation_for(self, repo):
         return 7 if repo.startswith('example-org/') else None
 
+    def repositories(self):
+        return [
+            {'name': 'example-org/web', 'private': False},
+            {'name': 'example-org/qa-evidence', 'private': True},
+            {'name': 'example-org/API', 'private': True},
+        ]
+
     def token(self, installation):
         return 'ghs_secret'
 
@@ -140,6 +147,7 @@ def gh(monkeypatch):
     monkeypatch.setattr(projects, 'for_repo', lambda repo: '/workspace/platform')
     monkeypatch.setattr(t3, 'run_error', lambda tid: '')
     state.state.pop('github_people', None)
+    state.state.pop('github_repos', None)
     state.state.pop('pulls', None)
     state.state.pop('review_queue', None)
     state.state.pop('review_run', None)
@@ -873,6 +881,7 @@ def test_the_people_who_can_work_on_the_repos_are_merged_once_and_capped(gh):
     people = reviews.heartbeat()['people']
     assert [p['login'] for p in people] == ['ali-example', 'Sam-Albahrani']
     assert people[1]['avatar'] == 'https://img/a.png'  # the author's own entry comes first
+    assert reviews.heartbeat()['repos'] == ['example-org/API', 'example-org/qa-evidence']  # private ones only
 
     class Denied:
         def assignees(self, repo, limit):

@@ -90,6 +90,7 @@ export function CompanionSettings({
   fields,
   authors = [],
   github = [],
+  repos = [],
   channels = [],
 }: {
   name: string;
@@ -97,6 +98,7 @@ export function CompanionSettings({
   fields: SettingField[];
   authors?: Author[];
   github?: GithubPerson[];
+  repos?: string[];
   channels?: Channel[];
 }) {
   const act = useAct();
@@ -109,24 +111,39 @@ export function CompanionSettings({
     <Settings>
       {shown.map((f) => (
         <Setting key={f.key} label={f.label} help={f.help}>
-          <Control field={f} onChange={(v) => set(f.key, v)} authors={authors} github={github} channels={channels} />
+          <Control
+            field={f}
+            onChange={(v) => set(f.key, v)}
+            authors={authors}
+            github={github}
+            repos={repos}
+            channels={channels}
+          />
         </Setting>
       ))}
     </Settings>
   );
 }
 
+const SEARCH = {
+  channels: 'Search channels…',
+  github_people: 'Search GitHub people…',
+  github_repos: 'Search private repositories…',
+};
+
 function Control({
   field: f,
   onChange,
   authors,
   github,
+  repos,
   channels,
 }: {
   field: SettingField;
   onChange: (v: unknown) => unknown;
   authors: Author[];
   github: GithubPerson[];
+  repos: string[];
   channels: Channel[];
 }) {
   if (f.type === 'choice')
@@ -136,14 +153,16 @@ function Control({
       ? channels.map((c) => ({ value: c.id, label: `#${c.name}` }))
       : f.source === 'github_people'
         ? github.map((g) => ({ value: g.login, label: g.login }))
-        : null;
+        : f.source === 'github_repos'
+          ? repos.map((r) => ({ value: r, label: r }))
+          : null;
   if (f.type === 'text' && source?.length)
     return (
       <Picker
         items={source}
         value={typeof f.value === 'string' ? f.value : ''}
         label={f.label}
-        placeholder={f.source === 'channels' ? 'Search channels…' : 'Search GitHub people…'}
+        placeholder={SEARCH[f.source ?? 'channels']}
         empty="Nothing matches"
         onChange={onChange}
       />

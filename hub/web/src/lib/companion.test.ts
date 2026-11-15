@@ -1,5 +1,16 @@
 import type { Event, Poll, Task } from '../api/types';
-import { filterTasks, pollSummary, resumesLabel, taskAge, taskWho, weekStats } from './companion';
+import {
+  askedBy,
+  askers,
+  filterTasks,
+  pollSummary,
+  resumesLabel,
+  slackParts,
+  slackPlain,
+  taskAge,
+  taskWho,
+  weekStats,
+} from './companion';
 
 const now = 1_800_000_000;
 const task = (over: Partial<Task>): Task => ({
@@ -86,5 +97,27 @@ describe('pollSummary', () => {
     expect(pollSummary(poll([2, 2]))).toMatch(/^Leading: O0, O1 · 2 votes each · /);
     expect(pollSummary(poll([1, 3], false))).toMatch(/^Winner: O1 · 3 votes · 3 people voted · closed /);
     expect(pollSummary(poll([0, 0]))).toMatch(/^No votes yet · closes /);
+  });
+});
+
+describe('slack text and who asked', () => {
+  it('turns Slack links into parts and labels', () => {
+    const s = 'Review posted on <https://github.com/o/r/pull/1#c|o/r#1> · no findings';
+    expect(slackParts(s)).toEqual([
+      'Review posted on ',
+      { url: 'https://github.com/o/r/pull/1#c', label: 'o/r#1' },
+      ' · no findings',
+    ]);
+    expect(slackPlain(s)).toBe('Review posted on o/r#1 · no findings');
+    expect(slackPlain('see <https://x.io>')).toBe('see https://x.io');
+  });
+
+  it('offers anyone, you, then each person, and filters by them', () => {
+    const t = (requester: string) => ({ requester }) as Task;
+    const tasks = [t(''), t('Sara'), t('Ali'), t('Sara')];
+    expect(askers(tasks).map((o) => o.label)).toEqual(['Anyone · 4', 'You · 1', 'Ali · 1', 'Sara · 2']);
+    expect(askedBy(tasks, '@Sara')).toHaveLength(2);
+    expect(askedBy(tasks, 'me')).toHaveLength(1);
+    expect(askedBy(tasks, '*')).toHaveLength(4);
   });
 });

@@ -111,6 +111,7 @@ SCHEMA = [
         'label': 'QA screenshots repository',
         'type': 'text',
         'default': os.environ.get('COMPANION_QA_EVIDENCE', ''),
+        'source': 'github_repos',  # the hub offers a picker of the private repos the GitHub App is installed on
         'help': 'A private owner/repo the GitHub App is installed on. QA screenshots are kept there, never in the '
         'reviewed repository, and anything older than 60 days is pruned monthly. Empty: QA reports list their '
         'screenshots as not attached.',

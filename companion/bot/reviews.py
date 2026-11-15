@@ -57,7 +57,9 @@ def refresh():
 
 
 def _refresh_people(a):
-    """Hourly: who can work on the repos with open PRs (the hub's GitHub username picker); failures keep the last."""
+    """Hourly: who can work on the repos with open PRs, and the App's private repos (the hub's pickers).
+
+    Failures keep the last list."""
     known = state.get('github_people') or {}
     if time.time() - known.get('at', 0) < PEOPLE_EVERY:
         return
@@ -67,6 +69,12 @@ def _refresh_people(a):
         log('GitHub people unavailable:', e)
         found = known.get('list') or []
     state['github_people'] = {'at': time.time(), 'list': found}
+    try:
+        repos = sorted((r['name'] for r in a.repositories() if r['private']), key=str.casefold)
+    except Exception as e:
+        log('GitHub repositories unavailable:', e)
+        repos = (state.get('github_repos') or {}).get('list') or []
+    state['github_repos'] = {'at': time.time(), 'list': repos}
 
 
 def latest(pr_id):
@@ -836,4 +844,8 @@ def _post_qa(a, f, box, text, problems):
 
 def heartbeat():
     app()
-    return dict(status, people=(state.get('github_people') or {}).get('list') or [])
+    return dict(
+        status,
+        people=(state.get('github_people') or {}).get('list') or [],
+        repos=(state.get('github_repos') or {}).get('list') or [],
+    )

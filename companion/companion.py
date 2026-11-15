@@ -18,7 +18,7 @@ heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "wor
 settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text"|"people"|"links",
                         "options": [{"value", "label", "help"}], "default", "when"?: {"<other key>": [values it shows for]}}];
                       people: a list of user ids; links: [{"github": login, "slack": user id}]
-                      text may name a "source" ("channels" | "github_people"): the hub then offers a picker
+                      text may name a "source" ("channels" | "github_people" | "github_repos"): the hub then offers a picker
 settings.json         written by the hub; re-read on every setting() call
 asks/<id>.json        written by the hub, removed by take_asks:
                       {"type": "ask", "text", "channel" (an id or ""), "review" (bool), "at"}

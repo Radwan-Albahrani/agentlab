@@ -7,6 +7,7 @@ import { colors, font, radius, space, text } from '../../theme/tokens.stylex';
 import { LinkButton } from '../../ui/Button';
 import { Dialog } from '../../ui/Dialog';
 import { Icon } from '../../ui/Icon';
+import { SlackText } from './parts';
 
 const styles = stylex.create({
   body: { display: 'grid', gap: space.xxl, minWidth: 0 },
@@ -182,7 +183,9 @@ export function ReviewView({ p, onClose }: { p: Pull | null; onClose: () => void
             </>
           ) : (
             p.review?.status === 'done' && (
-              <p {...stylex.props(styles.qa)}>{p.review.outcome || 'Reviewed.'} The full review is on GitHub.</p>
+              <p {...stylex.props(styles.qa)}>
+                {p.review.outcome ? <SlackText text={p.review.outcome} /> : 'Reviewed.'} The full review is on GitHub.
+              </p>
             )
           )}
           <div {...stylex.props(styles.actions)}>

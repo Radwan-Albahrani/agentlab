@@ -180,10 +180,10 @@ create table pulls (id text primary key, repo text, number integer, updated text
             't4',
             'Review example/app#12',
             'review',
-            'Admin',
+            '',
             'done',
             '',
-            '2 findings',
+            'Review posted on <https://github.com/example/app/pull/12#issuecomment-1|example/app#12> · 2 findings',
             iso(NOW - 5000),
             iso(NOW - 4000),
             'th4',
@@ -338,7 +338,14 @@ def companion(root):
                 {'id': 'C2', 'name': 'random', 'member': False},
             ],
             'people': [{'id': 'U0ALI', 'name': 'Ali', 'avatar': ''}],
-            'github': {'ready': True, 'bot': 'scout-example', 'accounts': ['example'], 'at': NOW, 'error': ''},
+            'github': {
+                'ready': True,
+                'bot': 'scout-example',
+                'accounts': ['example'],
+                'at': NOW,
+                'error': '',
+                'repos': ['example/qa-evidence', 'example/secrets'],
+            },
         },
     )
     dump(
@@ -356,6 +363,13 @@ def companion(root):
             },
             {'key': 'github_user', 'label': 'Your GitHub username', 'type': 'text', 'default': 'example-admin'},
             {'key': 'access', 'label': 'People', 'type': 'people', 'when': {'mode': ['review']}, 'default': []},
+            {
+                'key': 'qa_evidence_repo',
+                'label': 'QA screenshots repository',
+                'type': 'text',
+                'default': '',
+                'source': 'github_repos',
+            },
         ],
     )
     dump(f'{folder}/settings.json', {})

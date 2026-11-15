@@ -212,6 +212,7 @@ function CompanionView({ d }: { d: Data }) {
               fields={d.settings}
               authors={authorsOf(d)}
               github={d.pulls?.github.people ?? []}
+              repos={d.pulls?.github.repos ?? []}
               channels={d.channels ?? []}
             />
           </Card>

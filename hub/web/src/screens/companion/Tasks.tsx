@@ -2,7 +2,10 @@ import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import type { Task } from '../../api/types';
 import {
+  askedBy,
+  askers,
   filterTasks,
+  slackPlain,
   resumesLabel,
   TASK_FILTERS,
   TASK_PILL,
@@ -27,7 +30,8 @@ import { IconBox, List, Row } from '../../ui/Row';
 import { Count, Pill } from '../../ui/status';
 import { Table, Td, Th, Tr } from '../../ui/Table';
 import { When } from '../../ui/When';
-import { Blink, LiveLine, Mono } from './parts';
+import { Select } from '../../ui/Select';
+import { Blink, LiveLine, Mono, SlackText } from './parts';
 
 const PAGE = 12;
 
@@ -195,7 +199,9 @@ export function WorkingTasks({ tasks, name }: { tasks: Task[]; name: string }) {
                     <div {...stylex.props(styles.liveTitle)} title={t.title}>
                       {t.title}
                     </div>
-                    <div {...stylex.props(styles.liveMeta)}>{t.poll ? t.outcome : `${capitalize(t.kind)} · ${taskWho(t)}`}</div>
+                    <div {...stylex.props(styles.liveMeta)}>
+                      {t.poll ? slackPlain(t.outcome) : `${capitalize(t.kind)} · ${taskWho(t)}`}
+                    </div>
                   </div>
                   {t.status === 'paused' ? (
                     <span {...stylex.props(styles.paused)} title="Stopped by the usage limit; T3 picks it up again on its own">
@@ -230,8 +236,11 @@ export function WorkingTasks({ tasks, name }: { tasks: Task[]; name: string }) {
 
 export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
   const [filter, setFilter] = useState<TaskFilter>('all');
-  const pages = usePages(filterTasks(tasks, filter), PAGE);
-  const options = TASK_FILTERS.map((f) => ({ ...f, count: filterTasks(tasks, f.value).length }));
+  const [who, setWho] = useState('*');
+  const mine = askedBy(tasks, who);
+  const pages = usePages(filterTasks(mine, filter), PAGE);
+  const options = TASK_FILTERS.map((f) => ({ ...f, count: filterTasks(mine, f.value).length }));
+  const people = askers(tasks);
   return (
     <Section
       title="Tasks"
@@ -239,6 +248,17 @@ export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
       sub="Everything it took on, with who asked and how it went."
       right={
         <Inline gap="md">
+          {people.length > 2 && (
+            <Select
+              label="Asked by"
+              value={who}
+              options={people}
+              onChange={(v) => {
+                setWho(v);
+                pages.setPage(0);
+              }}
+            />
+          )}
           <Segments
             label="Filter tasks"
             value={filter}
@@ -295,7 +315,12 @@ function TaskRow({ t, now }: { t: Task; now: number }) {
           <Icon name={KIND_ICON[t.kind] ?? 'chat'} size={13} />
           <span>
             {capitalize(t.kind)} · {taskWho(t)}
-            {t.outcome ? ` · ${t.outcome}` : ''}
+            {t.outcome && (
+              <>
+                {' · '}
+                <SlackText text={t.outcome} />
+              </>
+            )}
             {t.status === 'paused' ? ` · ${resumesLabel(t.resumesAt, now)}` : ''}
           </span>
         </div>

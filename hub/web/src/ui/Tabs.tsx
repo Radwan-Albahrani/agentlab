@@ -73,7 +73,8 @@ const styles = stylex.create({
     outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
     outlineOffset: 2,
   },
-  icon: { display: 'flex' },
+  // phones: text only, so every tab fits the width
+  icon: { display: { default: 'flex', [media.phone]: 'none' } },
   count: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint, fontVariantNumeric: 'tabular-nums' },
   alert: {
     minWidth: 18,

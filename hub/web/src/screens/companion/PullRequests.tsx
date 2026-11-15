@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useCompanionPoll, usePullsRefresh } from '../../api/queries';
 import type { Ci, Pull, PullReview, Pulls } from '../../api/types';
-import { resumesLabel } from '../../lib/companion';
+import { resumesLabel, slackPlain } from '../../lib/companion';
 import { ago, plural } from '../../lib/format';
 import { arrange, FILTERS, grouped, outdated, type PullFilter, type PullSort, SORTS } from '../../lib/pulls';
 import { usePages } from '../../lib/usePages';
@@ -524,7 +524,7 @@ function ReviewCell({ p, name }: { p: Pull; name: string }) {
   const newer = outdated(p);
   return (
     <>
-      <a {...stylex.props(styles.result)} href={r.url || p.url} target="_blank" rel="noopener" title={r.outcome}>
+      <a {...stylex.props(styles.result)} href={r.url || p.url} target="_blank" rel="noopener" title={slackPlain(r.outcome)}>
         <Result r={r} />
       </a>
       {newer && (
