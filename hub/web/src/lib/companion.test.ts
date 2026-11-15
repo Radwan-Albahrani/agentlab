@@ -2,6 +2,7 @@ import type { Event, Poll, Task } from '../api/types';
 import {
   askedBy,
   askers,
+  sentTo,
   filterTasks,
   pollSummary,
   resumesLabel,
@@ -122,5 +123,15 @@ describe('slack text and who asked', () => {
     expect(askedBy(tasks, '@Sara')).toHaveLength(2);
     expect(askedBy(tasks, 'me')).toHaveLength(1);
     expect(askedBy(tasks, '*')).toHaveLength(4);
+  });
+});
+
+describe('deliveries', () => {
+  const e = (to: string) => ({ to }) as Event;
+  it('tells DMs to people from channels and pull requests', () => {
+    expect(sentTo(e('Sara Ali'))).toBe('person');
+    expect(sentTo(e('#general'))).toBe('channel');
+    expect(sentTo(e('netzerosa/platform#6182'))).toBe('github');
+    expect(sentTo(e('app#12'))).toBe('github');
   });
 });

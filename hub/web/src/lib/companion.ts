@@ -25,6 +25,22 @@ export function taskAge(t: Task, now = Date.now() / 1000): string {
   return duration((going ? now : (t.endedAt ?? now)) - t.startedAt);
 }
 
+export type SentTo = 'all' | 'person' | 'channel' | 'github';
+export const SENT_FILTERS: { value: SentTo; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'person', label: 'To people' },
+  { value: 'channel', label: 'In channels' },
+  { value: 'github', label: 'On GitHub' },
+];
+
+/** Where a delivery went: a #channel, a pull request (owner/repo#12 or repo#12), or else a person's DM. */
+export function sentTo(e: Event): Exclude<SentTo, 'all'> {
+  const to = e.to ?? '';
+  if (/^[\w.-]+(\/[\w.-]+)?#\d+$/.test(to)) return 'github';
+  if (!to || to.startsWith('#')) return 'channel';
+  return 'person';
+}
+
 /** Slack text in pieces: plain strings and {url, label} for its <url|label> and <url> links. */
 export function slackParts(s: string): (string | { url: string; label: string })[] {
   const out: (string | { url: string; label: string })[] = [];

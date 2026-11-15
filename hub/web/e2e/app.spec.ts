@@ -361,6 +361,22 @@ test('tasks: filter by who asked, and Slack links read as links', async ({ page 
   await expect(tasks).not.toContainText('Review example/app#12');
 });
 
+test('sent: the header card opens its own tab, and DMs to people filter out', async ({ page }) => {
+  await guard(page);
+  await page.goto('/agents/admin/scout');
+  await settled(page);
+  await page.getByRole('button', { name: /Sent this week/ }).click();
+  await expect(page).toHaveURL(/#sent$/);
+  const sent = page.getByRole('tabpanel', { name: 'Sent' });
+  await expect(sent).toContainText('Booked the meeting room');
+  await sent
+    .getByRole('group', { name: 'Filter deliveries' })
+    .getByRole('button', { name: /To people/ })
+    .click();
+  await expect(sent).toContainText('Shared the report');
+  await expect(sent).not.toContainText('Booked the meeting room');
+});
+
 test('display settings: three states per item', async ({ page }) => {
   await guard(page);
   await page.goto('/display');

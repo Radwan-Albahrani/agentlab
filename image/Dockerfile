@@ -62,6 +62,9 @@ COPY --chmod=755 entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY --chmod=755 agent-config agent-terminal agent-janitor browser-idle-reaper browser-mcp-lazy chrome-on-demand \
      docker-on-demand agent-dockerd android-emulator adb companion agent-updater /usr/local/bin/
 COPY --chmod=755 agent-dockerd-root /usr/local/sbin/
+# T3 chats delegate to T3 child threads (tracked and shown in T3), not built-in subagents
+COPY --chmod=755 use-t3-threads /usr/local/bin/
+COPY --chmod=644 claude-managed-settings.json /etc/claude-code/managed-settings.json
 COPY --chmod=644 profile.sh /etc/profile.d/zz-agent.sh
 COPY --chmod=644 playwright-mcp.json agent-instructions.md load-env.sh tools.sh /etc/agent/
 COPY --chmod=644 supervisord.conf /etc/agent-supervisord.conf

@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import type { Event } from '../../api/types';
+import { SENT_FILTERS, sentTo, type SentTo } from '../../lib/companion';
 import { usePages } from '../../lib/usePages';
 import { Card } from '../../ui/Card';
+import { Segments } from '../../ui/controls';
+import { Inline } from '../../ui/layout';
 import { Appear } from '../../ui/motion';
 import { Empty, Section } from '../../ui/page';
 import { Pager } from '../../ui/Pager';
@@ -10,10 +14,34 @@ import { Mono } from './parts';
 
 const PAGE = 6;
 
-export function Delivered({ events }: { events: Event[] }) {
+export function Delivered({ events: all }: { events: Event[] }) {
+  const [to, setTo] = useState<SentTo>('all');
+  const events = to === 'all' ? all : all.filter((e) => sentTo(e) === to);
   const pages = usePages(events, PAGE);
+  const options = SENT_FILTERS.map((f) => ({
+    ...f,
+    count: f.value === 'all' ? all.length : all.filter((e) => sentTo(e) === f.value).length,
+  }));
   return (
-    <Section title="Delivered" icon="send" sub="Who received what." right={<Pager {...pages} />}>
+    <Section
+      title="Sent"
+      icon="send"
+      sub="Everything it delivered: DMs to people, channel posts, files and GitHub reviews."
+      right={
+        <Inline gap="md">
+          <Segments
+            label="Filter deliveries"
+            value={to}
+            options={options}
+            onChange={(v) => {
+              setTo(v);
+              pages.setPage(0);
+            }}
+          />
+          <Pager {...pages} />
+        </Inline>
+      }
+    >
       <Card>
         {events.length ? (
           <List>
@@ -40,7 +68,11 @@ export function Delivered({ events }: { events: Event[] }) {
             ))}
           </List>
         ) : (
-          <Empty title="Nothing sent yet" text="Messages, files and logins sent for you show up here." icon="send" />
+          <Empty
+            title={all.length ? 'Nothing here' : 'Nothing sent yet'}
+            text={all.length ? 'Nothing it sent matches this filter.' : 'Messages, files and logins sent for you show up here.'}
+            icon="send"
+          />
         )}
       </Card>
     </Section>

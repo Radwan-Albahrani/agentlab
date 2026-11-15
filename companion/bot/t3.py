@@ -1,6 +1,7 @@
 """The agent's T3: actions via the Accounts bridge over HTTP, progress read from its database (read-only)."""
 
 import json
+import re
 import sqlite3
 import time
 import urllib.error
@@ -8,6 +9,7 @@ import urllib.request
 from datetime import UTC, datetime
 
 from .config import BRIDGE, T3, log, secret
+from .state import parse_iso
 
 BRIDGE_KEY = secret('agent-key.txt')
 
@@ -138,15 +140,25 @@ def snapshot(tid, since_iso):
                     break
         workers = q(
             """select t.thread_id, t.title,
-                              exists(select 1 from orchestration_v2_projection_runs r where r.thread_id = t.thread_id and r.completed_at is null)
+                              exists(select 1 from orchestration_v2_projection_runs r where r.thread_id = t.thread_id and r.completed_at is null),
+                              t.updated_at
                        from orchestration_v2_projection_threads t where coalesce(
                          json_extract(t.payload_json, '$.lineage.parentThreadId'),
                          json_extract(t.payload_json, '$.parentThreadId')) = ?""",
             (tid,),
         ).fetchall()
+        reported = [
+            text or ''
+            for (text,) in q(
+                """select json_extract(payload_json, '$.text') from orchestration_v2_projection_messages
+                     where thread_id = ? and role = 'user'""",
+                (tid,),
+            )
+        ]
+        workers = [(w, title, bool(r) or _subagent_busy(w, updated, reported)) for w, title, r, updated in workers]
         row = q('select payload_json from orchestration_v2_projection_threads where thread_id = ?', (tid,)).fetchone()
         prs = list(json.loads(row[0]).get('pullRequests') or []) if row else []
-        for w_tid, _, _ in workers:
+        for w_tid, *_ in workers:
             wr = q(
                 'select payload_json from orchestration_v2_projection_threads where thread_id = ?', (w_tid,)
             ).fetchone()
@@ -162,9 +174,23 @@ def snapshot(tid, since_iso):
         'messages': msgs,
         'requests': [(rid, kind, items.get(rid, {})) for rid, kind in reqs],
         'asked': [items.get(rid, {}) for rid, _, by_message in pending if by_message],
-        'workers': [(w, t, bool(r)) for w, t, r in workers],
+        'workers': workers,
         'prs': prs,
     }
+
+
+NATIVE_AGENT = re.compile(r'native-thread.*?([0-9a-f]{12,})$')
+SUBAGENT_STALE = 20 * 60  # a subagent quiet this long without reporting counts as gone
+
+
+def _subagent_busy(w_tid, updated, reported, now=None):
+    """A Claude subagent's chat has no T3 runs: it is working until the lead hears its report (by its agent id)."""
+    m = NATIVE_AGENT.search(w_tid or '')
+    if not m:
+        return False
+    if any(m.group(1) in text for text in reported):
+        return False
+    return (now or time.time()) - parse_iso(updated) < SUBAGENT_STALE
 
 
 def busy(tid):

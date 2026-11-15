@@ -798,11 +798,16 @@ def test_hub_asks_are_not_counted_as_reviews(gh, told):
 )
 def test_a_linked_author_hears_the_result_once(gh, told, fresh_bot, linked, mode, dms):
     set_settings({'mode': mode, 'github_people': [{'github': linked, 'slack': 'U_ALI'}, {'github': 'x'}]})
+    t0 = time.time()
     task = started(gh, told)
     finish(task, {'head': 'a' * 40, 'findings': FINDINGS})
     finish(task, {'head': 'a' * 40, 'findings': FINDINGS})  # published again for the same commit
     sent = [m for m in fresh_bot.messages if m['channel'] == 'D_U_ALI']
     assert len(sent) == dms
+    logged = config.COMP.db.execute(
+        "select title, ok from events where title like 'Review result for%' and at >= ?", (t0,)
+    ).fetchall()
+    assert logged == [('Review result for app#5922', 1)] * dms  # the hub's Delivered list shows each DM
     if dms:
         assert sent[0]['blocks'][0]['text'] == (
             f':mag: Companion reviewed your pull request <https://github.com/{REPO}/pull/5922|app#5922>: '

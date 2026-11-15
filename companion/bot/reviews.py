@@ -752,12 +752,16 @@ def _tell_author(r, verdict, link):
     url = f'https://github.com/{r["repo"]}/pull/{r["number"]}'  # r['url'] is the review's by now
     md = f':mag: {NAME} reviewed your pull request <{url}|{_short(r["id"])}>: {VERDICTS[verdict][1].lower()}'
     md += f' · {r["summary"]}' + (f' — <{link}|see the review>' if link != url else '')
+    name, title = slack.name(who), f'Review result for {_short(r["id"])}'
     try:
         dm = slack.app.client.conversations_open(users=who)['channel']['id']
     except Exception as e:
         log('author DM failed:', who, e)
+        COMP.event('sent', title, to=name, detail=f'Slack refused the DM: {e}', ok=False)
         return
-    slack.post(dm, None, f'{NAME} reviewed your pull request {_short(r["id"])}', md=md)
+    ok = bool(slack.post(dm, None, f'{NAME} reviewed your pull request {_short(r["id"])}', md=md))
+    plain = f'{VERDICTS[verdict][1]} · {r["summary"]}'
+    COMP.event('sent', title, to=name, detail=plain if ok else 'Slack did not take the message', ok=ok)
 
 
 MAX_SHOWN = 20  # findings in the hub's short review; GitHub has them all

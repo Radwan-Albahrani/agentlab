@@ -1,0 +1,10 @@
+#!/bin/sh
+# PreToolUse hook (Agent/Task): in T3 chats, send helpers to T3 child threads, where T3 tracks and shows them.
+[ -n "$T3CODE_THREAD_ID" ] || exit 0
+cat >&2 <<'MSG'
+Built-in subagents are blocked here: use a T3 child thread instead. Start this same work with
+mcp__t3-code__delegate_task, passing the same instructions (one call per helper; calls made together run in
+parallel). Each child thread's report arrives in this chat as a message when it finishes, and T3 shows it to the
+user meanwhile. Then carry on exactly as you planned.
+MSG
+exit 2

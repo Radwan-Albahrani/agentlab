@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Agent|Task)$",
+        "hooks": [{ "type": "command", "command": "/usr/local/bin/use-t3-threads", "timeout": 5 }]
+      }
+    ]
+  }
+}

@@ -3,7 +3,7 @@ import { useParams } from 'react-router';
 import { useCompanion } from '../../api/queries';
 import type { Companion as Data } from '../../api/types';
 import { NotFound, Screen } from '../../app/Screen';
-import { STATE_PILL, weekStats } from '../../lib/companion';
+import { STATE_PILL, sentTo, weekStats } from '../../lib/companion';
 import { ago, capitalize, duration } from '../../lib/format';
 import { useHashTab } from '../../lib/useHashTab';
 import { useNow } from '../../lib/useNow';
@@ -105,6 +105,8 @@ const styles = stylex.create({
     outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
     outlineOffset: -2,
   },
+  // phones lay the cards out two by two; an odd last one takes the whole row
+  lastAlone: { gridColumn: { default: 'auto', [media.phone]: '1 / -1' } },
   metricValue: {
     display: 'flex',
     alignItems: 'center',
@@ -183,13 +185,16 @@ function CompanionView({ d }: { d: Data }) {
     label: 'Tasks',
     icon: 'log',
     count: d.tasks.length,
-    content: (
-      <>
-        <TaskTable tasks={d.tasks} now={now} />
-        {d.delivered && <Delivered events={d.delivered} />}
-      </>
-    ),
+    content: <TaskTable tasks={d.tasks} now={now} />,
   });
+  if (d.delivered)
+    tabs.push({
+      value: 'sent',
+      label: 'Sent',
+      icon: 'send',
+      count: d.delivered.length,
+      content: <Delivered events={d.delivered} />,
+    });
   if (d.polls?.length)
     tabs.push({
       value: 'polls',
@@ -284,15 +289,17 @@ function Metric({
   tone,
   live,
   onClick,
+  alone,
 }: {
   value: number;
   label: string;
   tone?: stylex.StyleXStyles;
   live?: boolean;
   onClick: () => void;
+  alone?: boolean;
 }) {
   return (
-    <Pressable look={styles.metric} onClick={onClick}>
+    <Pressable look={[styles.metric, alone && styles.lastAlone]} onClick={onClick}>
       <span {...stylex.props(styles.metricValue, tone ?? styles.quiet)}>
         <Num value={value} />
         {live && <Blink />}
@@ -312,6 +319,7 @@ function Header({ d, now, go }: { d: Data; now: number; go: (tab: string) => voi
     (p) => p.review && ['queued', 'working', 'waiting', 'paused'].includes(p.review.status),
   ).length;
   const openPolls = d.polls?.filter((p) => p.open).length ?? 0;
+  const people = d.sentThisWeek.filter((e) => sentTo(e) === 'person').length;
   return (
     <header {...stylex.props(hueTheme(d.profile), styles.hero)}>
       <div {...stylex.props(styles.top)}>
@@ -386,8 +394,20 @@ function Header({ d, now, go }: { d: Data; now: number; go: (tab: string) => voi
             }}
           />
         )}
+        {d.delivered && (
+          <Metric
+            alone={!d.polls?.length && !d.pulls}
+            value={d.sentThisWeek.length}
+            label={people ? `Sent this week · ${people} to people` : 'Sent this week'}
+            tone={d.sentThisWeek.length ? styles.plain : undefined}
+            onClick={() => {
+              go('sent');
+            }}
+          />
+        )}
         {!!d.polls?.length && (
           <Metric
+            alone={(2 + Number(!!d.pulls) + Number(!!d.delivered)) % 2 === 0}
             value={openPolls}
             label="Open polls"
             tone={openPolls ? styles.plain : undefined}

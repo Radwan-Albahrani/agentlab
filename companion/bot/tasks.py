@@ -458,7 +458,7 @@ def _post_milestones(task, s):
 
 
 REVIEW_NUDGE = (
-    'Your T3 child threads have finished. Collect what they found, run the verification step, write qa.md (when QA'
+    'Every helper you started has reported back. Collect what they found, run the verification step, write qa.md (when QA'
     ' ran) and review.json exactly as your brief says, then end with the one-line summary.'
 )
 

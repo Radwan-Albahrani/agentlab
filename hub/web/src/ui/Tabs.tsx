@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { Tabs as Root, TabsIndicator, TabsList, TabsPanel, TabsTab, TabsTabIcon } from '@ui-sdk/react/tabs';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
@@ -32,6 +32,13 @@ const styles = stylex.create({
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: colors.line,
+    // more tabs past an edge: that edge fades out, so a phone shows there is more to scroll to
+    maskImage: {
+      default: 'none',
+      ':is([data-fade="end"])': 'linear-gradient(to right, #000 calc(100% - 48px), transparent)',
+      ':is([data-fade="start"])': 'linear-gradient(to left, #000 calc(100% - 48px), transparent)',
+      ':is([data-fade="both"])': 'linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent)',
+    },
   },
   // a fill step behind the selected tab, measured by UI SDK into --active-tab-*
   indicator: {
@@ -120,6 +127,32 @@ export function Tabs({
   onChange: (value: string) => void;
   label: string;
 }) {
+  const bar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = bar.current?.querySelector<HTMLElement>('[role="tablist"]');
+    if (!list) return;
+    const mark = () => {
+      const start = list.scrollLeft > 2;
+      const end = list.scrollLeft + list.clientWidth < list.scrollWidth - 2;
+      list.dataset.fade = start && end ? 'both' : start ? 'start' : end ? 'end' : '';
+    };
+    // bring the chosen tab into the strip (sideways only, so the page never moves)
+    const on = list.querySelector<HTMLElement>('[data-selected]');
+    if (on) {
+      const left = on.offsetLeft - 48;
+      const right = on.offsetLeft + on.offsetWidth + 48 - list.clientWidth;
+      if (left < list.scrollLeft) list.scrollLeft = left;
+      else if (right > list.scrollLeft) list.scrollLeft = right;
+    }
+    mark();
+    list.addEventListener('scroll', mark, { passive: true });
+    const seen = new ResizeObserver(mark);
+    seen.observe(list);
+    return () => {
+      list.removeEventListener('scroll', mark);
+      seen.disconnect();
+    };
+  }, [value, items.length]);
   return (
     <Root
       value={value}
@@ -128,7 +161,7 @@ export function Tabs({
       }}
       {...stylex.props(styles.root)}
     >
-      <div {...stylex.props(styles.bar)}>
+      <div ref={bar} {...stylex.props(styles.bar)}>
         <TabsList {...stylex.props(styles.list)} aria-label={label}>
           <TabsIndicator {...stylex.props(styles.indicator)} />
           {items.map((t) => (
