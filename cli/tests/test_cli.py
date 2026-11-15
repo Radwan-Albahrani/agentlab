@@ -21,7 +21,6 @@ from agentlab import (
     deploy,
     disks,
     doctor,
-    gateway,
     hostsfile,
     init,
     install,
@@ -1647,28 +1646,27 @@ class PrivateNetwork(unittest.TestCase):
     def ours(self):
         return {r['name']: r for r in self.fake.gateway if r['name'].startswith('agentlab-test')}
 
-    def test_gateway_rules_go_ahead_of_the_accounts_own_and_isolate_newcomers(self):
+    def test_the_gateway_rule_goes_ahead_of_the_accounts_own_and_blocks_nothing(self):
         theirs = self.netzero_like()
+        self.fake.gateway.append(
+            {
+                'id': 'old',
+                'name': 'agentlab-test only agentlab',
+                'action': 'block',
+                'filters': ['l4'],
+                'precedence': 999,
+            }
+        )  # left by an earlier version
         self.run_setup()
         ours = self.ours()
         self.assertEqual(
-            [
-                (n, r['action'], r['filters'], r['precedence'])
-                for n, r in sorted(ours.items(), key=lambda i: i[1]['precedence'])
-            ],
-            [
-                ('agentlab-test allow', 'allow', ['l4'], 998),
-                ('agentlab-test only agentlab', 'block', ['l4'], 999),
-            ],
+            [(n, r['action'], r['filters'], r['precedence']) for n, r in ours.items()],
+            [('agentlab-test allow', 'allow', ['l4'], 999)],
         )
         allow = ours['agentlab-test allow']
         self.assertEqual(allow['traffic'], 'net.dst.ip == 10.207.0.2 and net.dst.port in {80 443}')
         for email in ('boss@example.com', 'sara@example.com', 'omar@example.com'):
             self.assertIn(email, allow['identity'])
-        block = ours['agentlab-test only agentlab']
-        self.assertIn('sara@example.com', block['identity'])
-        self.assertNotIn('boss@example.com', block['identity'])  # already on the DB team's list
-        self.assertTrue(block['traffic'].startswith('net.dst.ip in {10.0.0.0/8 '))
         self.assertEqual(next(r for r in self.fake.gateway if r['id'] == 'theirs'), theirs)  # untouched
         before = len(self.fake.writes)
         self.run_setup()
@@ -1679,28 +1677,12 @@ class PrivateNetwork(unittest.TestCase):
         self.run_setup()
         self.write(self.text.replace('owner = "omar@example.com"', 'owner = "dev@other.com"'))
         self.run_setup()
-        ours = self.ours()
-        self.assertIn('dev@other.com', ours['agentlab-test allow']['identity'])
-        self.assertNotIn('dev@other.com', ours['agentlab-test only agentlab']['identity'])
-        self.assertNotIn('omar@example.com', ours['agentlab-test allow']['identity'])
+        allow = self.ours()['agentlab-test allow']
+        self.assertIn('dev@other.com', allow['identity'])
+        self.assertNotIn('omar@example.com', allow['identity'])
         self.fake.gateway[0]['precedence'] = 500  # the admin moved their rule up
         self.run_setup()
-        self.assertEqual(sorted(r['precedence'] for r in self.ours().values()), [498, 499])
-
-    def test_unreadable_enrollment_rules_keep_everyone_isolated(self):
-        self.fake.policies.append(
-            {
-                'id': 'db',
-                'name': 'Okta',
-                'decision': 'allow',
-                'include': [{'okta': {'name': 'eng', 'identity_provider_id': 'x'}}],
-            }
-        )
-        with mock.patch.object(gateway, 'warn') as warned:
-            self.run_setup()
-        self.assertIn('Okta', warned.call_args.args[0])
-        block = self.ours()['agentlab-test only agentlab']
-        self.assertIn('boss@example.com', block['identity'])
+        self.assertEqual([r['precedence'] for r in self.ours().values()], [499])
 
     def test_http_rules_have_their_own_order(self):
         self.netzero_like()
@@ -1715,7 +1697,7 @@ class PrivateNetwork(unittest.TestCase):
         self.fake.gateway.append(dict(dni))
         self.run_setup()
         ours = sorted(r['precedence'] for r in self.ours().values())
-        self.assertEqual(ours, [998, 999])  # just ahead of the account's network rule at 1000
+        self.assertEqual(ours, [999])  # just ahead of the account's network rule at 1000
         self.assertEqual(next(r for r in self.fake.gateway if r['id'] == 'h'), dni)
 
     def test_the_accounts_first_rules_move_down_just_enough(self):
@@ -1734,11 +1716,8 @@ class PrivateNetwork(unittest.TestCase):
         self.run_setup()
         by_name = {r['name']: r for r in self.fake.gateway}
         self.assertEqual(
-            [
-                (n, by_name[n]['precedence'])
-                for n in ('agentlab-test allow', 'agentlab-test only agentlab', 'first', 'next', 'far')
-            ],
-            [('agentlab-test allow', 2), ('agentlab-test only agentlab', 3), ('first', 4), ('next', 5), ('far', 6)],
+            [(n, by_name[n]['precedence']) for n in ('agentlab-test allow', 'first', 'next', 'far')],
+            [('agentlab-test allow', 2), ('first', 3), ('next', 4), ('far', 5)],
         )
         self.assertEqual(
             {k: v for k, v in by_name['first'].items() if k != 'precedence'},

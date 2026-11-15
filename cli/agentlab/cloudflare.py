@@ -846,14 +846,7 @@ def setup(cfg, plan, config_path, opener=None):
         if private:
             s.enrollment(s.people_policy())
             seen = gateway.ensure(s)
-            say(
-                f"  Gateway: agentlab's rules sit ahead of the account's {seen['rules']} own"
-                + (
-                    f'; {len(seen["newcomers"])} people new to the account reach only agentlab'
-                    if seen['newcomers']
-                    else ''
-                )
-            )
+            say(f"  Gateway: agentlab's rule sits ahead of the account's {seen['rules']} own")
         else:
             gateway.drop(s)
         found[('auth.cloudflare', 'team')] = auth['team']
