@@ -48,6 +48,7 @@ const q = (params: Record<string, string>) => new URLSearchParams(params).toStri
 export const api = {
   nav: () => get<T.Nav>('/api/nav'),
   overview: () => get<T.Overview>('/api/overview'),
+  now: () => get<T.NowBoard>('/api/now'),
   agents: () => get<T.Agents>('/api/agents'),
   agent: (name: string) => get<T.AgentPage>(`/api/agents/${name}`),
   accounts: (name: string) => get<T.AccountsPage>(`/api/agents/${name}/accounts`),

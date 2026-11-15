@@ -20,7 +20,40 @@ import { Text } from '../../ui/text';
 
 const PAGE = 10;
 
+const sweep = stylex.keyframes({ from: { backgroundPosition: '200% 0' }, to: { backgroundPosition: '-200% 0' } });
+
 const styles = stylex.create({
+  batch: {
+    display: 'grid',
+    gap: space.md,
+    marginBottom: space.lg,
+    paddingBlock: space.xl,
+    paddingInline: space.xxl,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: `color-mix(in srgb, ${colors.accent} 30%, ${colors.line})`,
+    backgroundImage: `linear-gradient(110deg, color-mix(in srgb, ${colors.accent} 12%, transparent), transparent 60%)`,
+    boxShadow: colors.shadow,
+  },
+  batchDone: {
+    borderColor: `color-mix(in srgb, ${colors.ok} 35%, ${colors.line})`,
+    backgroundImage: `linear-gradient(110deg, color-mix(in srgb, ${colors.ok} 12%, transparent), transparent 60%)`,
+  },
+  batchHead: { display: 'flex', alignItems: 'center', gap: space.md, fontWeight: 650, flexWrap: 'wrap' },
+  batchCount: { marginInlineStart: 'auto', fontSize: text.sm, color: colors.muted, fontVariantNumeric: 'tabular-nums' },
+  segments: { display: 'flex', gap: 4 },
+  segment: { flex: '1', height: 6, borderRadius: radius.pill, backgroundColor: colors.sunk },
+  segDone: { backgroundColor: colors.ok },
+  segBusy: {
+    backgroundImage: `linear-gradient(90deg, ${colors.accent}, color-mix(in srgb, ${colors.accent} 35%, transparent), ${colors.accent})`,
+    backgroundSize: '200% 100%',
+    animationName: sweep,
+    animationDuration: '1.6s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
+  },
+  place: { fontSize: text.xs, color: colors.faint, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
   toolbar: { display: 'flex', gap: space.sm, alignItems: 'center', flexWrap: 'wrap', marginBottom: space.lg },
   search: { flexGrow: '1', flexShrink: '1', flexBasis: '260px', minWidth: 0 },
   group: {
@@ -131,6 +164,7 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
       }
       right={<Button label="Refresh" icon="refresh" small iconOnly busy={refreshing} onClick={refresh} />}
     >
+      <Batch items={pulls.items} />
       <div {...stylex.props(styles.toolbar)}>
         <div {...stylex.props(styles.search)}>
           <SearchInput label="Search pull requests, or label:bug" value={query} onChange={setQuery} />
@@ -153,6 +187,38 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
         )}
       </Card>
     </Section>
+  );
+}
+
+/** The reviews asked for together, one segment each, until the last one is done. */
+function Batch({ items }: { items: Pull[] }) {
+  const run = items.flatMap((p) => (p.review?.run ? [{ ...p.review.run, status: p.review.status }] : []));
+  if (run.length < 2) return null;
+  run.sort((a, b) => a.n - b.n);
+  const done = run.filter((r) => r.done).length;
+  const all = done === run.length;
+  return (
+    <section {...stylex.props(styles.batch, all && styles.batchDone)} aria-label="Review batch">
+      <div {...stylex.props(styles.batchHead)}>
+        <Icon name={all ? 'check' : 'pr'} size={18} />
+        {all ? `All ${run.length} reviews done` : `Reviewing ${plural(run.length, 'pull request')}`}
+        <span {...stylex.props(styles.batchCount)}>
+          {done} of {run.length} done
+        </span>
+      </div>
+      <div {...stylex.props(styles.segments)}>
+        {run.map((r) => (
+          <i
+            key={r.n}
+            {...stylex.props(
+              styles.segment,
+              r.done && styles.segDone,
+              !r.done && (r.status === 'working' || r.status === 'waiting') && styles.segBusy,
+            )}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -254,13 +320,21 @@ function ReviewCell({ p, name }: { p: Pull; name: string }) {
     );
   const again = (label: string) => <Button label={label} icon="refresh" small iconOnly variant="quiet" onClick={start} />;
   if (!r) return <Button label="Review" icon="eye" small variant="primary" onClick={start} />;
-  if (r.status === 'queued') return <Pill tone="idle">Queued</Pill>;
+  const place = r.run && !r.run.done && <span {...stylex.props(styles.place)}>{`${r.run.n} of ${r.run.of}`}</span>;
+  if (r.status === 'queued')
+    return (
+      <Inline gap="xs" nowrap>
+        <Pill tone="idle">Queued</Pill>
+        {place}
+      </Inline>
+    );
   if (r.status === 'working' || r.status === 'waiting')
     return (
       <Inline gap="xs" nowrap>
         <Pill tone={r.status === 'waiting' ? 'warn' : 'info'} dot>
           {r.status === 'waiting' ? 'Waiting on you' : 'Reviewing'}
         </Pill>
+        {place}
         {r.t3 && <LinkButton label="Open the review chat" icon="ext" small iconOnly variant="quiet" to={r.t3} />}
       </Inline>
     );

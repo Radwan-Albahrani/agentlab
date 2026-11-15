@@ -14,6 +14,7 @@ def items():
     out = [
         ('Overview', 'overview.tiles', 'Key numbers', 'show'),
         ('Overview', 'overview.needs', 'Needs you', 'show'),
+        ('Overview', 'overview.now', 'What the agents are doing now (chat titles)', 'show'),
         ('Overview', 'overview.activity', 'Recent activity', 'show'),
         ('Overview', 'overview.stacks', 'Stacks', INFRA),
         ('Agents', 'page.agents', 'All agents page', 'show'),

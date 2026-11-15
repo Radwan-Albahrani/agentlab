@@ -102,4 +102,32 @@ export function ConfirmDialog({ text, onAnswer }: { text: string | null; onAnswe
   );
 }
 
+/** A bare modal layer (focus trap, Esc, outside click) for popups styled by their caller: the search, the phone menu. */
+export function Overlay({
+  open,
+  onOpenChange,
+  label,
+  backdrop,
+  popup,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  label: string;
+  backdrop: stylex.StyleXStyles;
+  popup: stylex.StyleXStyles;
+  children: ReactNode;
+}) {
+  return (
+    <Base.Root open={open} onOpenChange={onOpenChange}>
+      <Base.Portal>
+        <Base.Backdrop {...stylex.props(backdrop)} />
+        <Base.Popup {...stylex.props(popup)} aria-label={label}>
+          {children}
+        </Base.Popup>
+      </Base.Portal>
+    </Base.Root>
+  );
+}
+
 export const DialogActions = ({ children }: { children: ReactNode }) => <div {...stylex.props(styles.actions)}>{children}</div>;

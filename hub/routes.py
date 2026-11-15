@@ -90,6 +90,7 @@ def _logs(m, q, host):
 GET = [
     (r'/api/nav', None, lambda m, q, host: screens.nav()),
     (r'/api/overview', None, lambda m, q, host: screens.overview()),
+    (r'/api/now', None, lambda m, q, host: screens.now()),
     (r'/api/agents', 'page.agents', lambda m, q, host: screens.agents(host)),
     (r'/api/agents/([\w-]+)', 'profile.{0}', lambda m, q, host: screens.agent(host, m[0])),
     (r'/api/agents/([\w-]+)/accounts', 'profile.{0}', _agent_page),

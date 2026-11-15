@@ -59,10 +59,14 @@ export function usePullsRefresh(name: string, at: number): [boolean, () => void]
 }
 
 export const useNav = () => useQuery({ queryKey: ['nav'], queryFn: api.nav });
-export const useOverview = () => useQuery({ queryKey: ['overview'], queryFn: api.overview });
+export const useOverview = () => useQuery({ queryKey: ['overview'], queryFn: api.overview, refetchInterval: 6000 });
+/** What every agent is doing right now: cheap on the hub (local reads), so it's fresh within seconds. */
+export const useNowBoard = () => useQuery({ queryKey: ['now'], queryFn: api.now, refetchInterval: 3000 });
 export const useAgents = () => useQuery({ queryKey: ['agents'], queryFn: api.agents });
-export const useAgent = (name: string) => useQuery({ queryKey: ['agent', name], queryFn: () => api.agent(name) });
-export const useCompanion = (name: string) => useQuery({ queryKey: ['companion', name], queryFn: () => api.companion(name) });
+export const useAgent = (name: string) =>
+  useQuery({ queryKey: ['agent', name], queryFn: () => api.agent(name), refetchInterval: 6000 });
+export const useCompanion = (name: string) =>
+  useQuery({ queryKey: ['companion', name], queryFn: () => api.companion(name), refetchInterval: 5000 });
 export const useDevices = (name: string) => useQuery({ queryKey: ['devices', name], queryFn: () => api.devices(name) });
 export const useCompanionSecrets = (name: string) =>
   useQuery({ queryKey: ['companion-secrets', name], queryFn: () => api.companionSecrets(name) });

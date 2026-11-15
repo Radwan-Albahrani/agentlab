@@ -397,9 +397,27 @@ class Screens(unittest.TestCase):
             'secrets': screens.secrets,
             'notifications': screens.notifications,
             'display': screens.display_settings,
+            'now': screens.now,
         }.items():
             with self.subTest(name):
                 json.dumps(render(), default=str)
+
+    def test_now_shows_each_agents_chats_with_subagents_folded_in(self):
+        admin = {a['name']: a for a in screens.now()['agents']}['admin']
+        running = {r['title']: r for r in admin['running']}
+        self.assertEqual(list(running), ['Migrate billing to the new API', 'Review platform#6111: refactor(general)'])
+        self.assertEqual(running['Migrate billing to the new API']['helpers'], 2)
+        self.assertTrue(running['Review platform#6111: refactor(general)']['background'])
+        self.assertEqual(
+            [(w['title'], w['kind']) for w in admin['waiting']], [('Which region should staging use?', 'question')]
+        )
+        self.assertEqual(
+            [(r['title'], r['status']) for r in admin['recent']],
+            [
+                ('Fix the flaky login test', 'completed'),
+                ('Bump dependencies', 'failed'),
+            ],
+        )
 
     def test_agents_come_from_the_config(self):
         nav = screens.nav()
@@ -530,9 +548,11 @@ class Routes(unittest.TestCase):
     def test_manage_queues_checked_jobs_for_the_watcher(self):
         queue = f'{ROOT}/watch/jobs/queue'
         self.assertIn('Adding lina', actions.manage('add', {'id': 'lina', 'email': 'Lina@Example.com', 'memory': '8g'}))
-        jobs = [json.loads(Path(queue, n).read_text()) for n in sorted(os.listdir(queue))]
-        self.assertEqual(jobs[-1]['op'], 'agent.add')
-        self.assertEqual(jobs[-1]['args'], {'id': 'lina', 'email': 'lina@example.com', 'memory': '8g'})
+        jobs = [json.loads(Path(queue, n).read_text()) for n in os.listdir(queue)]
+        # ids sort by second, then at random: another test's job may share the second
+        [job] = [j for j in jobs if j['args'].get('id') == 'lina']
+        self.assertEqual(job['op'], 'agent.add')
+        self.assertEqual(job['args'], {'id': 'lina', 'email': 'lina@example.com', 'memory': '8g'})
         self.assertEqual(store.jobs.recent()[0]['state'], 'queued')
         for what, body in (
             ('add', {'id': 'sara', 'email': 'x@example.com'}),  # taken

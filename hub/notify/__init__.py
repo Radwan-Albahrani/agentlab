@@ -4,7 +4,7 @@ import os
 
 from .bark import BARK, recent, send, server_up
 from .settings import DEFAULTS, load, save, update
-from .t3 import T3, newest_chat_link, thread_link
+from .t3 import T3, live, newest_chat_link, thread_link
 from .watcher import Watcher
 
 watcher = None  # set by hub.py
@@ -20,6 +20,7 @@ __all__ = [
     'T3',
     'Watcher',
     'enabled',
+    'live',
     'load',
     'newest_chat_link',
     'recent',

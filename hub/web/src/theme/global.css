@@ -1,6 +1,8 @@
 /* What StyleX can't target: the document itself. Everything else is styled in its component. */
 :root {
   color-scheme: light dark;
+  --glow-a: light-dark(rgba(54, 84, 245, 0.07), rgba(110, 130, 255, 0.09));
+  --glow-b: light-dark(rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.05));
 }
 *,
 *::before,
@@ -9,13 +11,22 @@
 }
 html {
   -webkit-text-size-adjust: 100%;
+  scrollbar-color: light-dark(#cfcfc8, #2a2b33) transparent;
+  scrollbar-width: thin;
 }
 body {
   margin: 0;
-  background: light-dark(#f6f6f3, #0d0e10);
-  color: light-dark(#16171a, #ececef);
+  min-height: 100vh;
+  background-color: light-dark(#f4f4f1, #07080b);
+  /* two faint glows behind everything, fixed, so the page has depth without noise */
+  background-image:
+    radial-gradient(900px 520px at 78% -8%, var(--glow-a), transparent 70%),
+    radial-gradient(700px 480px at 12% 108%, var(--glow-b), transparent 70%);
+  background-attachment: fixed;
+  color: light-dark(#121316, #f1f1f4);
   font:
-    14.5px/1.5 Inter,
+    14.5px/1.5 Geist,
+    Inter,
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
@@ -23,7 +34,11 @@ body {
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'cv11', 'ss01';
+  font-feature-settings: 'ss01';
+  letter-spacing: -0.005em;
+}
+::selection {
+  background: light-dark(rgba(54, 84, 245, 0.18), rgba(142, 163, 255, 0.3));
 }
 a {
   color: inherit;
@@ -34,4 +49,14 @@ input,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
 }

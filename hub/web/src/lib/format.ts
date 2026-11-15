@@ -25,6 +25,14 @@ export function duration(sec: number): string {
   return `${Math.floor(s / 3600)} h ${pad(Math.floor((s % 3600) / 60))} m`;
 }
 
+/** A stopwatch: 4:07, or 1:04:07 past an hour. */
+export function elapsed(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
+
 export const gb = (bytes: number | null | undefined, digits = 1) => `${((bytes || 0) / 2 ** 30).toFixed(digits)} GB`;
 
 export const pct = (part: number, whole: number) => (whole ? (100 * part) / whole : 0);

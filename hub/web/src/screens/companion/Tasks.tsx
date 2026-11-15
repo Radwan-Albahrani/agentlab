@@ -67,6 +67,7 @@ export function WorkingTasks({ tasks, now }: { tasks: Task[]; now: number }) {
                 detail={t.poll ? t.outcome : `${t.requester ? `${taskWho(t)} · ` : ''}running ${taskAge(t, now)}`}
                 meta={<When t={t.startedAt} />}
                 actions={<TaskLinks t={t} />}
+                live
               />
             ))}
           </List>

@@ -363,18 +363,18 @@ test('phone layout never scrolls sideways @phone', async ({ page }, info) => {
 // A broken token silently turns pills and hovers colourless.
 const PALETTE = {
   dark: {
-    bg: 'rgb(13, 14, 16)',
-    hover: 'rgb(30, 31, 37)',
-    ok: 'rgb(74, 222, 128)',
-    okSoft: 'rgb(16, 37, 26)',
-    accentSoft: 'rgb(27, 35, 64)',
+    bg: 'rgb(7, 8, 11)',
+    hover: 'rgb(27, 28, 35)',
+    ok: 'rgb(70, 224, 138)',
+    okSoft: 'rgb(13, 36, 24)',
+    panel: 'rgb(16, 17, 22)',
   },
   light: {
-    bg: 'rgb(246, 246, 243)',
+    bg: 'rgb(244, 244, 241)',
     hover: 'rgb(236, 236, 231)',
-    ok: 'rgb(21, 128, 61)',
-    okSoft: 'rgb(228, 244, 232)',
-    accentSoft: 'rgb(233, 239, 254)',
+    ok: 'rgb(19, 128, 60)',
+    okSoft: 'rgb(226, 245, 232)',
+    panel: 'rgb(255, 255, 255)',
   },
 };
 const schemeOf = (info: TestInfo) => (info.project.name.includes('dark') ? 'dark' : 'light');
@@ -382,17 +382,63 @@ const css = (l: Locator, prop: 'backgroundColor' | 'color') => l.evaluate((e, p)
 
 test('colour tokens resolve: pills, the active menu item and hovers are coloured', async ({ page }, info) => {
   await guard(page);
-  await page.goto('/');
+  await page.goto('/agents');
   await settled(page);
   const p = PALETTE[schemeOf(info)];
-  const pill = page.getByText('Healthy', { exact: true }).first();
+  const pill = page.getByText('Signed in', { exact: true }).first();
   expect(await css(pill, 'backgroundColor')).toBe(p.okSoft);
   expect(await css(pill, 'color')).toBe(p.ok);
   const menu = page.getByRole('navigation', { name: 'Main' });
-  expect(await css(menu.getByRole('link', { name: 'Overview' }), 'backgroundColor')).toBe(p.accentSoft);
+  expect(await css(menu.getByRole('link', { name: 'All agents' }), 'backgroundColor')).toBe(p.panel);
   const services = menu.getByRole('link', { name: 'Services' });
   await services.hover();
-  expect(await css(services, 'backgroundColor')).toBe(p.hover);
+  await expect.poll(() => css(services, 'backgroundColor')).toBe(p.hover); // it eases in
+});
+
+test('right now: each agent shows its running chats with live timers, helpers folded in', async ({ page }) => {
+  await guard(page);
+  await page.goto('/');
+  await settled(page);
+  const board = page.locator('section', { has: page.getByRole('heading', { name: 'Right now' }) });
+  const billing = board.getByRole('link', { name: /Migrate billing to the new API/ });
+  await expect(billing).toContainText('2 helpers');
+  const timer = async () => (await billing.textContent())?.match(/\d+:\d\d(:\d\d)?/)?.[0];
+  const first = await timer();
+  expect(first).toBeTruthy();
+  await expect.poll(timer, { timeout: 4000 }).not.toBe(first); // it ticks
+  await expect(board.getByRole('link', { name: /Which region should staging use\?/ })).toContainText('Asks you a question');
+  await expect(board.getByText('Trace the webhook retries')).toHaveCount(0); // a subagent, not a chat of its own
+});
+
+test('search: Ctrl+K finds a page by a few letters and Enter goes there', async ({ page }, info) => {
+  await guard(page);
+  await page.goto('/');
+  await settled(page);
+  await page.keyboard.press('Control+KeyK');
+  const search = page.getByRole('dialog', { name: 'Search' });
+  await expect(search).toBeVisible();
+  await search.getByRole('textbox', { name: 'Search' }).fill('helpr');
+  await expect(search.getByRole('button').first()).toContainText('Helper');
+  await expect(search.getByRole('button', { name: /quarterly report/ })).toHaveCount(0); // scattered letters don't count
+  if (shots) await page.screenshot({ path: `${shots}/${info.project.name}_search.png` });
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/agents\/sara\/helper$/);
+  await expect(search).toHaveCount(0);
+  await page.keyboard.press('/');
+  await expect(search).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(search).toHaveCount(0);
+});
+
+test('pull requests: a batch of reviews shows how far along it is', async ({ page }) => {
+  await guard(page);
+  await page.goto('/agents/admin/scout#pulls');
+  await settled(page);
+  const batch = page.getByRole('region', { name: 'Review batch' });
+  await expect(batch).toContainText('Reviewing 3 pull requests');
+  await expect(batch).toContainText('1 of 3 done');
+  await expect(page.getByTestId('pull').filter({ hasText: 'Bump the API client' })).toContainText('3 of 3');
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
 test('the theme toggle switches to the other look and is remembered', async ({ page }, info) => {

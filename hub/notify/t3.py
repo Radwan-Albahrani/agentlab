@@ -4,7 +4,7 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from .text import last_question, plain, short
@@ -129,3 +129,89 @@ def describe_approval(item):
             what = json.dumps(v)[:400]
             break
     return '', plain(what) or 'The agent wants permission to continue.'
+
+
+ACTIVE = ('queued', 'preparing', 'starting', 'running', 'waiting')
+RECENT_S = 6 * 3600
+SUBAGENT = "coalesce(json_extract(t.payload_json, '$.lineage.relationshipToParent'), '') = 'subagent'"
+CHAT = f'select t.thread_id, t.title, pr.title, {IS_WORKER}'
+FROM = """from orchestration_v2_projection_runs r
+          join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
+          left join projection_projects pr on pr.project_id = t.project_id"""
+
+
+def live(profile, now=None):
+    """The agent's chats right now: running (the owner's and background ones, e.g. a companion's), waiting on
+    an answer, and finished in the last hours. Subagents count towards their chat, not as chats of their own."""
+    now = now or datetime.now(UTC).timestamp()
+    out = {'running': [], 'waiting': [], 'recent': []}
+    marks = ','.join('?' * len(ACTIVE))
+    cutoff = datetime.fromtimestamp(now - RECENT_S, UTC).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    try:
+        con = connect(profile)
+    except sqlite3.Error:
+        return out
+    try:
+        q = con.execute
+        helpers = dict(
+            q(
+                f"""select json_extract(t.payload_json, '$.lineage.parentThreadId'), count(*) {FROM}
+                    where r.completed_at is null and r.status in ({marks}) and {SUBAGENT} group by 1""",
+                ACTIVE,
+            ).fetchall()
+        )
+        for tid, title, proj, bg, started in q(
+            f"""{CHAT}, min(r.requested_at) {FROM}
+                where r.completed_at is null and r.status in ({marks}) and t.deleted_at is null and not {SUBAGENT}
+                group by t.thread_id order by 5""",
+            ACTIVE,
+        ):
+            out['running'].append(
+                {
+                    'id': tid,
+                    'title': title,
+                    'project': proj or '',
+                    'background': bool(bg),
+                    'since': ts(started),
+                    'helpers': helpers.get(tid, 0),
+                }
+            )
+        for tid, title, proj, bg, kind, created in q(
+            f"""{CHAT}, rq.kind, rq.created_at from orchestration_v2_projection_runtime_requests rq
+                join orchestration_v2_projection_threads t on t.thread_id = rq.thread_id
+                left join projection_projects pr on pr.project_id = t.project_id
+                where rq.status = 'pending' and t.deleted_at is null order by rq.created_at"""
+        ):
+            out['waiting'].append(
+                {
+                    'id': tid,
+                    'title': title,
+                    'project': proj or '',
+                    'background': bool(bg),
+                    'kind': 'question' if kind == 'user_input' else 'approval',
+                    'since': ts(created),
+                }
+            )
+        busy = {r['id'] for r in out['running'] + out['waiting']}
+        for tid, title, proj, bg, status, done in q(
+            f"""{CHAT}, r.status, max(r.completed_at) {FROM}
+                where r.completed_at > ? and r.status != 'cancelled' and t.deleted_at is null and not {SUBAGENT}
+                group by t.thread_id order by 6 desc limit 12""",
+            (cutoff,),
+        ):
+            if tid not in busy:
+                out['recent'].append(
+                    {
+                        'id': tid,
+                        'title': title,
+                        'project': proj or '',
+                        'background': bool(bg),
+                        'status': status,
+                        'at': ts(done),
+                    }
+                )
+    except sqlite3.Error:
+        pass
+    finally:
+        con.close()
+    return out

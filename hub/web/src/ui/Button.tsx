@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { Link } from 'react-router';
-import { colors, radius, space, text } from '../theme/tokens.stylex';
+import { colors, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
 export type Variant = 'default' | 'primary' | 'quiet' | 'danger';
@@ -24,7 +24,11 @@ const styles = stylex.create({
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     lineHeight: 1.3,
-    transition: 'background-color .12s, border-color .12s',
+    transitionProperty: 'background-color, border-color, transform, box-shadow, filter',
+    transitionDuration: '180ms',
+    transitionTimingFunction: motion.settle,
+    transform: { default: null, ':active': 'scale(.96)' },
+    boxShadow: { default: colors.liftShadow, ':hover': colors.liftShadow },
     outline: { default: 'none', ':focus-visible': `2px solid color-mix(in srgb, ${colors.accent} 55%, transparent)` },
     outlineOffset: 2,
   },
@@ -32,14 +36,21 @@ const styles = stylex.create({
     backgroundColor: { default: colors.accent, ':hover': colors.accent },
     borderColor: colors.accent,
     color: colors.accentFg,
-    filter: { default: null, ':hover': 'brightness(1.08)' },
+    filter: { default: null, ':hover': 'brightness(1.1)' },
+    backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,.14), transparent)',
+    boxShadow: {
+      default: `0 1px 2px rgba(0,0,0,.15), 0 4px 14px -4px color-mix(in srgb, ${colors.accent} 60%, transparent)`,
+      ':hover': `0 1px 2px rgba(0,0,0,.15), 0 8px 22px -6px color-mix(in srgb, ${colors.accent} 75%, transparent)`,
+    },
   },
   quiet: {
+    boxShadow: 'none',
     borderColor: 'transparent',
     backgroundColor: { default: 'transparent', ':hover': colors.hover },
     color: { default: colors.muted, ':hover': colors.fg },
   },
   danger: {
+    boxShadow: 'none',
     color: colors.bad,
     backgroundColor: { default: 'transparent', ':hover': colors.badSoft },
     borderColor: 'transparent',
@@ -48,7 +59,7 @@ const styles = stylex.create({
   sm: { paddingBlock: space.xs, paddingInline: space.md, fontSize: text.sm, borderRadius: radius.sm },
   iconOnly: { paddingBlock: space.xs, paddingInline: space.xs },
   busy: { opacity: 0.55, pointerEvents: 'none' },
-  disabled: { opacity: 0.45, cursor: 'not-allowed' },
+  disabled: { opacity: 0.45, cursor: 'not-allowed', transform: 'none' },
 });
 
 export interface ButtonLook {

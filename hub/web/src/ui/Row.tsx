@@ -1,19 +1,24 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, media, radius, space, text } from '../theme/tokens.stylex';
+import { agent, colors, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 import type { Tone } from './status';
+
+const sweep = stylex.keyframes({ from: { transform: 'translateX(-100%)' }, to: { transform: 'translateX(250%)' } });
 
 const styles = stylex.create({
   list: { display: 'grid' },
   row: {
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     gap: space.lg,
     paddingBlock: space.lg,
     paddingInline: space.xxl,
     minWidth: 0,
+    transitionProperty: 'background-color',
+    transitionDuration: '160ms',
     borderTopWidth: { default: 1, ':first-child': 0 },
     borderTopStyle: 'solid',
     borderTopColor: colors.line,
@@ -30,6 +35,26 @@ const styles = stylex.create({
     borderLeftStyle: 'solid',
     borderLeftColor: `color-mix(in srgb, ${agent.hue} 60%, transparent)`,
   },
+  // a light sweeping along the bottom edge: work in progress
+  liveBar: {
+    position: 'absolute',
+    insetInline: space.xxl,
+    bottom: 0,
+    height: 2,
+    overflow: 'hidden',
+    borderRadius: 99,
+    backgroundColor: `color-mix(in srgb, ${colors.accent} 12%, transparent)`,
+  },
+  liveLight: {
+    display: 'block',
+    width: '40%',
+    height: '100%',
+    backgroundImage: `linear-gradient(90deg, transparent, ${colors.accent}, transparent)`,
+    animationName: sweep,
+    animationDuration: '1.8s',
+    animationTimingFunction: motion.settle,
+    animationIterationCount: 'infinite',
+  },
   grow: { flex: '1', minWidth: 0 },
   title: { fontWeight: 600, overflowWrap: 'anywhere' },
   detail: { color: colors.muted, fontSize: text.md, overflowWrap: 'anywhere' },
@@ -44,9 +69,9 @@ const styles = stylex.create({
     paddingInlineStart: { default: 0, [media.phone]: 46 },
   },
   box: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.md,
+    width: 36,
+    height: 36,
+    borderRadius: radius.lg,
     display: 'grid',
     placeItems: 'center',
     flexShrink: 0,
@@ -79,9 +104,10 @@ interface RowProps {
   nestedUnder?: string | null; // a companion's row, indented under its agent and wearing its colour
   flat?: boolean;
   wrap?: boolean;
+  live?: boolean; // work in progress: a light sweeps under it
 }
 
-export function Row({ icon, tone, lead, title, detail, meta, actions, accent, nestedUnder, flat, wrap }: RowProps) {
+export function Row({ icon, tone, lead, title, detail, meta, actions, accent, nestedUnder, flat, wrap, live }: RowProps) {
   return (
     <div
       {...stylex.props(
@@ -100,6 +126,11 @@ export function Row({ icon, tone, lead, title, detail, meta, actions, accent, ne
       </div>
       {meta && <div {...stylex.props(styles.meta)}>{meta}</div>}
       {actions && <div {...stylex.props(styles.actions)}>{actions}</div>}
+      {live && (
+        <span {...stylex.props(styles.liveBar)}>
+          <i {...stylex.props(styles.liveLight)} />
+        </span>
+      )}
     </div>
   );
 }

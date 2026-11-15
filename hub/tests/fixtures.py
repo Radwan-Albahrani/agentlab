@@ -229,11 +229,23 @@ create table pulls (id text primary key, repo text, number integer, updated text
             'head': 'abc1234',
             'at': iso(NOW - 4000),
             'counts': {'findings': 2, 'blocking': 0, 'open': 0, 'qa': 'pass'},
+            'run': {'n': 1, 'of': 3, 'done': True},
         },
     }
-    con.execute(
-        'insert into pulls values (?,?,?,?,?)', ('example/app#12', 'example/app', 12, pull['updated'], json.dumps(pull))
-    )
+    # #12 is done; #13 and #14 were asked for with it and are still going (a review batch)
+    reviewing = {'status': 'working', 'outcome': '', 'task': 't5', 'head': '', 'at': iso(NOW - 600)}
+    queued = {'status': 'queued', 'outcome': 'Waiting for a free slot', 'task': '', 'head': '', 'at': ''}
+    for number, title, hours, review in (
+        (12, pull['title'], 1, pull['review']),
+        (13, 'Fix the date picker on Safari', 2, dict(reviewing, run={'n': 2, 'of': 3, 'done': False})),
+        (14, 'Bump the API client', 3, dict(queued, run={'n': 3, 'of': 3, 'done': False})),
+    ):
+        p = dict(pull, title=title, url=f'https://github.com/example/app/pull/{number}', review=review)
+        p['updated'] = iso(NOW - hours * 3600)
+        con.execute(
+            'insert into pulls values (?,?,?,?,?)',
+            (f'example/app#{number}', 'example/app', number, p['updated'], json.dumps(p)),
+        )
     con.commit()
     con.close()
 
@@ -297,9 +309,66 @@ def companion(root):
     dump(f'{folder}/settings.json', {})
 
 
+T3_SCHEMA = """
+create table projection_projects (project_id text primary key, title text, deleted_at text);
+create table orchestration_v2_projection_threads (thread_id text primary key, project_id text, title text,
+  updated_at text, deleted_at text, payload_json text);
+create table orchestration_v2_projection_runs (run_id text primary key, thread_id text, status text,
+  requested_at text, completed_at text);
+create table orchestration_v2_projection_runtime_requests (runtime_request_id text primary key, thread_id text,
+  kind text, status text, created_at text, payload_json text);
+"""
+# agent -> [(thread, title, project, source, parent, [(status, started s ago, done s ago or None)], pending request)]
+CHATS = {
+    'admin': [
+        ('t1', 'Migrate billing to the new API', 'platform', 'user', '', [('running', 1260, None)], ''),
+        ('t1a', 'Trace the webhook retries', 'platform', 'mcp', 't1', [('running', 600, None)], ''),
+        ('t1b', 'Write the migration tests', 'platform', 'mcp', 't1', [('running', 420, None)], ''),
+        ('t2', 'Review platform#6111: refactor(general)', 'platform', 'mcp', '', [('running', 300, None)], ''),
+        ('t3', 'Which region should staging use?', 'infra', 'user', '', [('completed', 900, 840)], 'user_input'),
+        ('t4', 'Fix the flaky login test', 'web', 'user', '', [('completed', 4000, 3100)], ''),
+        ('t5', 'Bump dependencies', 'web', 'user', '', [('failed', 8000, 7600)], ''),
+    ],
+    'sara': [
+        ('s1', 'Draft the quarterly report', 'reports', 'user', '', [('running', 3000, None)], ''),
+        ('s2', 'Summarise the incident thread', 'ops', 'mcp', '', [('completed', 2500, 1900)], ''),
+    ],
+}
+
+
+def _iso(seconds_ago):
+    stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(NOW - seconds_ago))
+    return f'{stamp}.000Z'
+
+
 def t3(root):
     for a in AGENTS:
-        os.makedirs(f'{root}/agents/{a}/home/.t3/userdata', exist_ok=True)
+        folder = f'{root}/agents/{a}/home/.t3/userdata'
+        os.makedirs(folder, exist_ok=True)
+        if a not in CHATS:
+            continue
+        con = sqlite3.connect(f'{folder}/statev2.sqlite')
+        con.executescript(T3_SCHEMA)
+        for tid, title, proj, source, parent, runs, request in CHATS[a]:
+            lineage = {'relationshipToParent': 'subagent', 'parentThreadId': parent} if parent else {}
+            payload = {'creationSource': source, 'createdBy': source, 'lineage': lineage}
+            con.execute('insert or ignore into projection_projects values (?, ?, null)', (proj, proj))
+            con.execute(
+                'insert into orchestration_v2_projection_threads values (?, ?, ?, ?, null, ?)',
+                (tid, proj, title, _iso(0), json.dumps(payload)),
+            )
+            for n, (status, start, done) in enumerate(runs):
+                con.execute(
+                    'insert into orchestration_v2_projection_runs values (?, ?, ?, ?, ?)',
+                    (f'{tid}-{n}', tid, status, _iso(start), _iso(done) if done is not None else None),
+                )
+            if request:
+                con.execute(
+                    "insert into orchestration_v2_projection_runtime_requests values (?, ?, ?, 'pending', ?, '{}')",
+                    (f'{tid}-q', tid, request, _iso(780)),
+                )
+        con.commit()
+        con.close()
 
 
 def main(root):

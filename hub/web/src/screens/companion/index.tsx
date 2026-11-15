@@ -33,7 +33,7 @@ export function Companion() {
 }
 
 function CompanionView({ d }: { d: Data }) {
-  const now = useNow();
+  const now = useNow(5000);
   const waiting = d.tasks.filter((t) => t.status === 'waiting').length;
   const tabs: TabItem[] = [
     {

@@ -14,8 +14,8 @@ applyScheme();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: 15_000,
-      staleTime: 5_000,
+      refetchInterval: 10_000,
+      staleTime: 3_000,
       retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 2,
     },
   },

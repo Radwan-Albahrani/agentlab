@@ -277,6 +277,8 @@ The hub at `hub_domain` serves everyone with an agent, scoped to them:
   from `X-Agentlab-User` / `X-Agentlab-Agent` (pass 2 headers), never from the client.
 - **Admins** additionally see every agent and companion, and the cluster screens (Services, Configs, Storage,
   Secrets of the cluster, Notifications).
+- The Overview leads with what needs you and a live board of every chat each agent is running, waiting on an answer,
+  or just finished (read from each agent's T3 database every few seconds; subagents count towards their chat).
 - The gate allows any verified user with an agent onto `hub_domain` (admins always); `coolify_domain` stays admins only.
 
 ## Config: `cluster.toml`

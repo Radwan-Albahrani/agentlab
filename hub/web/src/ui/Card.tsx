@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, radius, space } from '../theme/tokens.stylex';
+import { agent, colors, motion, radius, space } from '../theme/tokens.stylex';
 
 const styles = stylex.create({
   card: {
@@ -26,9 +26,13 @@ const styles = stylex.create({
     gap: space.lg,
     paddingBlock: space.xl,
     paddingInline: space.xxl,
-    borderLeftWidth: 3,
-    borderLeftColor: agent.hue,
-    borderColor: { default: colors.line, ':hover': agent.hue },
+    backgroundImage: `linear-gradient(100deg, color-mix(in srgb, ${agent.hue} 12%, transparent), transparent 45%)`,
+    borderColor: { default: `color-mix(in srgb, ${agent.hue} 25%, ${colors.line})`, ':hover': agent.hue },
+    transform: { default: null, ':hover': 'translateY(-2px)', ':active': 'scale(.99)' },
+    boxShadow: { default: colors.shadow, ':hover': colors.hoverShadow },
+    transitionProperty: 'transform, box-shadow, border-color',
+    transitionDuration: '260ms',
+    transitionTimingFunction: motion.settle,
   },
   body: { padding: space.xxl, display: 'grid', gap: space.md },
   bodyRoomy: { gap: space.xl },

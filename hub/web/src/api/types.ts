@@ -77,6 +77,27 @@ export interface Overview {
   stacks?: { at?: number; rows: Stack[] };
 }
 
+interface Chat {
+  id: string;
+  title: string;
+  project: string;
+  background: boolean; // started through T3's API (a companion's task, an orchestrator's worker), not by the owner
+  phone: string; // t3code:// link for the T3 app, or ''
+}
+
+export interface NowAgent {
+  name: string;
+  chat: string;
+  running: (Chat & { since: number; helpers: number })[];
+  waiting: (Chat & { kind: 'question' | 'approval'; since: number })[];
+  recent: (Chat & { status: string; at: number })[];
+}
+
+export interface NowBoard {
+  agents: NowAgent[];
+  at?: number;
+}
+
 export interface Account {
   key: string;
   label: string;
@@ -280,6 +301,7 @@ export interface PullReview {
   slack?: string;
   // open = earlier findings that still stand
   counts?: { findings: number; blocking: number; open: number; qa: string } | null;
+  run?: { n: number; of: number; done: boolean }; // its place in the batch being reviewed now
 }
 
 export interface CompanionSecrets {

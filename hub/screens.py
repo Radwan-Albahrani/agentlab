@@ -117,6 +117,21 @@ def overview():
     return out
 
 
+def now():
+    """Each shown agent's chats right now, read from its T3 database (cheap: the page polls it every few seconds)."""
+    if not see('overview.now'):
+        return {'agents': []}
+    out = []
+    for p in shown_profiles():
+        chat = cluster.links(p)['chat']
+        state = notify.live(p)
+        for rows in state.values():
+            for r in rows:
+                r['phone'] = notify.thread_link(p, r['id'])
+        out.append({'name': p, 'chat': chat, **state})
+    return {'agents': out, 'at': time.time()}
+
+
 def agent_card(n, s):
     if s is None:
         return {'name': n, 'online': False}
