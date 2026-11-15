@@ -82,6 +82,9 @@ class FakeGitHub:
             }
         return {'html_url': 'https://github.com/review/1'}
 
+    def assignees(self, repo, limit=300):
+        return [{'login': 'ali-example', 'avatar': 'https://img/ali.png'}, {'login': 'sam-albahrani', 'avatar': ''}]
+
     def graphql(self, query, installation, **v):
         if 'search(' in query:
             return {'search': {'nodes': [_node(5922, 'SUCCESS'), _node(5923, 'FAILURE'), {}]}}
@@ -135,6 +138,8 @@ def gh(monkeypatch):
     fake = FakeGitHub()
     monkeypatch.setattr(reviews, 'app', lambda: fake)
     monkeypatch.setattr(projects, 'for_repo', lambda repo: '/workspace/platform')
+    monkeypatch.setattr(t3, 'run_error', lambda tid: '')
+    state.state.pop('github_people', None)
     state.state.pop('pulls', None)
     state.state.pop('review_queue', None)
     state.state.pop('review_run', None)
@@ -541,13 +546,13 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     [card] = fresh_bot.messages
     ts = state.state['review_batch']['card']
     assert (card['channel'], card['thread_ts'], ts) == ('D_OWNER', None, '1.0')
-    assert card_now(fresh_bot, ts).startswith(':mag: **Reviewing 3 pull requests** · 0 done\n')
-    assert f'<https://github.com/{REPO}/pull/5924|app#5924> PR 5924 · queued (2 ahead)' in card_now(fresh_bot, ts)
+    assert card_now(fresh_bot, ts).startswith(':mag: **Reviewing 3 pull requests** · 3 queued\n')
+    assert f'<https://github.com/{REPO}/pull/5924|#5924> PR 5924 · queued' in card_now(fresh_bot, ts)
 
     reviews.tick()
     assert len(fresh_bot.messages) == 1
     lines = card_now(fresh_bot, ts).split('\n')
-    assert 'reviewing…' in lines[1] and 'reviewing…' in lines[2] and lines[3].endswith('queued (next up)')
+    assert lines[1].endswith('· reviewing') and lines[2].endswith('· reviewing') and lines[3].endswith('· queued')
     first, second = review(5922), review(5923)
     assert first['thread_ts'] == second['thread_ts'] == ts and first['status_ts'] is None
     assert len({state.key_of(first), state.key_of(second)}) == 2
@@ -556,7 +561,7 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     [done] = fresh_bot.messages[1:]
     assert (done['thread_ts'], done['text']) == (ts, f'{REPO}#5922: changes requested')
     assert done['blocks'][1]['elements'][0]['text'] == '1 of 3 reviews done'
-    assert 'changes requested · 2 findings (1 blocking)' in card_now(fresh_bot, ts).split('\n')[1]
+    assert card_now(fresh_bot, ts).split('\n')[3].endswith('· changes requested · 1 blocking')
     assert card_now(fresh_bot, ts).startswith(':mag: **Reviewing 3 pull requests** · 1 done')
     runs = [p['review']['run'] for p in reviews.rows(lambda k, t: {'status': 'done', 'outcome': ''})]
     assert runs == [{'n': 1, 'of': 3, 'done': True}, {'n': 2, 'of': 3, 'done': False}, {'n': 3, 'of': 3, 'done': False}]
@@ -573,11 +578,11 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     replies = [m['text'] for m in fresh_bot.messages if m['thread_ts'] == ts]
     assert replies == [f'{REPO}#5922: changes requested', f'{REPO}#5923: approved', f'{REPO}#5924: failed']
     top = [m for m in fresh_bot.messages if m['thread_ts'] is None]
-    assert [m['text'] for m in top] == ['Reviewing 1 pull request · 0 done', 'All 3 reviews done']
+    assert [m['text'] for m in top] == ['Reviewing 1 pull request · 1 queued', 'All 3 reviews done']
     lines = top[1]['blocks'][0]['text'].split('\n')[1:]
     assert [line.split(' · ')[1] for line in lines] == ['changes requested', 'approved', 'failed']
     assert 'The build broke on install.' in lines[2]
-    assert card_now(fresh_bot, ts).startswith(':checkered_flag: **Reviewed 3 pull requests**\n')
+    assert card_now(fresh_bot, ts).startswith(':checkered_flag: **Reviewed 3 pull requests** · 2 done · 1 failed\n')
     assert 'review_batch' not in state.state
 
 
@@ -668,8 +673,8 @@ def test_a_question_goes_to_the_batch_thread_and_the_answer_to_its_own_review(gh
     assert question['thread_ts'] == ts and not question.get('reply_broadcast')
     assert question['blocks'][0]['text'].startswith(f':mag: **<https://github.com/{REPO}/pull/5922|{REPO}#5922>**\n')
     assert 'Which base branch?' in question['blocks'][0]['text']
-    assert 'waiting for your answer' in card_now(fresh_bot, ts).split('\n')[1]
-    assert 'reviewing…' in card_now(fresh_bot, ts).split('\n')[2]
+    assert card_now(fresh_bot, ts).split('\n')[1].endswith('· waiting for you')
+    assert card_now(fresh_bot, ts).split('\n')[2].endswith('· reviewing')
 
     def reply(at, text):
         dm = {'channel': 'D_OWNER', 'channel_type': 'im', 'thread_ts': ts, 'ts': at, 'user': OWNER, 'text': text}
@@ -715,7 +720,7 @@ def test_a_run_saved_by_the_per_card_version_continues_on_one_batch_card(gh, tol
     assert {u['ts'] for u in fresh_bot.updates if 'Followed on' in json.dumps(u['blocks'])} == {'7.0', '8.0'}
     new = review(5923)
     assert new['thread_ts'] == '1.0'
-    assert [line.split(' · ')[-1] for line in card_now(fresh_bot, '1.0').split('\n')[1:]] == ['reviewing…'] * 2
+    assert [line.split(' · ')[-1] for line in card_now(fresh_bot, '1.0').split('\n')[1:]] == ['reviewing'] * 2
 
     old.update(active=False, outcome='stopped')
     new.update(active=False, outcome='failed', latest='No Android build.')
@@ -795,3 +800,125 @@ def test_a_linked_author_hears_the_result_once(gh, told, fresh_bot, linked, mode
             f':mag: Companion reviewed your pull request <https://github.com/{REPO}/pull/5922|app#5922>: '
             'changes requested · 2 findings (1 blocking) — <https://github.com/review/1|see the review>'
         )
+
+
+LIMITED = "You've hit your 5-hour limit · resets 1:50am (Asia/Riyadh)"
+
+
+def ended_on_a_limit(tid, since):
+    return {
+        'running': False,
+        'last_status': 'failed',
+        'last_done': '2026-11-16T20:00:00.000Z',
+        'messages': [],
+        'requests': [],
+        'workers': [],
+        'prs': [],
+    }
+
+
+def test_reviews_stopped_by_the_usage_limit_pause_on_a_short_calm_card(gh, told, fresh_bot, monkeypatch):
+    set_settings({'review_slots': '3'})
+    monkeypatch.setattr(t3, 'snapshot', ended_on_a_limit)
+    pulls_listed(5922, 5923, 5924)
+    for n in (5922, 5923, 5924):
+        reviews.request(REPO, n)
+    reviews.tick()
+    ts = state.state['review_batch']['card']
+    a, b, c = review(5922), review(5923), review(5924)
+    a.update(active=False, outcome='failed', ended=state.now_iso(), latest=LIMITED, limit_checked=True)
+    reviews.tick()  # as the version before limits were told apart left it: failed
+    assert '· failed' in card_now(fresh_bot, ts)
+
+    a.pop('limit_checked')
+    b['latest'] = LIMITED
+    tasks.tick(b)  # hits the limit now
+    finish(c, CLEAN)
+    c['active'] = False
+    reviews.tick()
+    reviews.tick()
+
+    assert a['active'] and a['paused'] and b['paused'] and 'review_batch' in state.state
+    md = card_now(fresh_bot, ts)
+    head, *lines = md.split('\n')
+    resumes = reviews.hour(a['paused']['resumes_at'])
+    assert head == f':mag: **Reviewing 3 pull requests** · 1 done · 2 paused until {resumes}'
+    assert [line.split(' · ', 1)[1] for line in lines] == ['paused', 'paused', 'approved']
+    assert lines[0].startswith(':double_vertical_bar: <') and 'resets' not in md
+    told_once = [m for m in fresh_bot.messages if m['text'] == 'Paused for the usage limit']
+    assert len(told_once) == 1 and told_once[0]['thread_ts'] == ts
+    assert f'reviews resume at {resumes}' in told_once[0]['blocks'][0]['text']
+    assert not any(m['text'].startswith('All ') for m in fresh_bot.messages)
+    shown = {p['number']: p['review'] for p in reviews.rows(publish.card)}
+    assert shown[5922]['status'] == 'paused' and shown[5922]['resumes_at'] == a['paused']['resumes_at']
+
+
+def test_finished_lines_say_their_counts_and_wait_for_the_running_ones():
+    e = {'id': f'{REPO}#6129', 'url': 'https://x/6129', 'title': 'A title that goes on for well over forty characters'}
+    assert (
+        reviews._line(dict(e, task='k'))
+        == ':arrows_counterclockwise: <https://x/6129|#6129> A title that goes on for well over… · reviewing'
+    )
+    approved = dict(e, verdict='approved', counts={'findings': 2, 'blocking': 0})
+    assert reviews._line(approved).endswith('· approved · 2 findings')
+    changes = dict(e, verdict='changes', counts={'findings': 3, 'blocking': 1}, detail='QA found problems')
+    assert reviews._line(changes).endswith('· changes requested · 1 blocking')
+    assert reviews._card({'prs': [approved, dict(e, task='k', paused=0)]})[0] == (
+        'Reviewing 2 pull requests · 1 done · 1 paused for the usage limit'
+    )
+
+
+def test_the_people_who_can_work_on_the_repos_are_merged_once_and_capped(gh):
+    reviews.refresh()
+    people = reviews.heartbeat()['people']
+    assert [p['login'] for p in people] == ['ali-example', 'Sam-Albahrani']
+    assert people[1]['avatar'] == 'https://img/a.png'  # the author's own entry comes first
+
+    class Denied:
+        def assignees(self, repo, limit):
+            if repo.endswith('/a'):
+                raise GitHubError(403, 'Resource not accessible by integration')
+            return [{'login': f'user{n:03d}', 'avatar': ''} for n in range(limit)]
+
+    listed = [
+        {'repo': 'o/a', 'author': 'Zed'},
+        {'repo': 'o/b', 'author': 'dependabot[bot]'},
+        {'repo': 'o/b', 'author': 'ZED'},
+    ]
+    found = reviews.pulls.people(Denied(), listed, cap=5)
+    assert [p['login'] for p in found] == ['user000', 'user001', 'user002', 'user003', 'user004']
+    assert [p['login'] for p in reviews.pulls.people(Denied(), listed[:1])] == ['Zed']
+
+
+def test_limit_failures_of_a_batch_that_already_ended_come_back_on_a_new_card(gh, told, fresh_bot, monkeypatch):
+    monkeypatch.setattr(t3, 'snapshot', ended_on_a_limit)
+    pulls_listed(5922, 5923)
+    for n in (5922, 5923):
+        reviews.request(REPO, n)
+    reviews.tick()
+    for n in (5922, 5923):
+        review(n).update(active=False, outcome='failed', ended=state.now_iso(), latest=LIMITED, limit_checked=True)
+    reviews.tick()
+    assert 'review_batch' not in state.state and fresh_bot.messages[-1]['text'] == 'All 2 reviews done'
+    for n in (5922, 5923):
+        review(n).pop('limit_checked')
+
+    reviews.tick()
+    b = state.state['review_batch']
+    resumes = reviews.hour(review(5922)['paused']['resumes_at'])
+    head, *lines = card_now(fresh_bot, b['card']).split('\n')
+    assert head == f':mag: **Reviewing 2 pull requests** · 2 paused until {resumes}'
+    assert all(line.endswith('· paused') for line in lines) and len(lines) == 2
+    assert [m['text'] for m in fresh_bot.messages].count('Paused for the usage limit') == 1
+    assert review(5922)['active'] and not fresh_bot.archived
+
+
+def test_a_finished_review_archives_its_chat_but_not_one_that_asks(gh, told, fresh_bot):
+    task = started(gh, told)
+    finish(task, CLEAN)
+    turn = {'last_status': 'completed', 'last_done': None, 'messages': [], 'requests': [], 'workers': [], 'prs': []}
+    tasks._finish_turn(task, turn)
+    assert fresh_bot.archived == ['T_REV']
+    asking_task = dict(task, active=True, latest='Which branch?')
+    tasks._finish_turn(asking_task, dict(turn, asked=[{'questions': [{'question': 'Which branch?'}]}]))
+    assert fresh_bot.archived == ['T_REV']

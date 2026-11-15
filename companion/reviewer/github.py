@@ -96,6 +96,11 @@ class App:
             page += 1
         return out[:limit]
 
+    def assignees(self, repo, limit=300):
+        """[{login, avatar}] of who can be assigned in owner/repo: its collaborators, in practice."""
+        found = self.pages(f'/repos/{repo}/assignees', self.installation_for(repo), limit)
+        return [{'login': u['login'], 'avatar': u.get('avatar_url', '')} for u in found]
+
     def graphql(self, query, installation, **variables):
         r = self.call('POST', '/graphql', {'query': query, 'variables': variables}, installation=installation)
         if r.get('errors'):

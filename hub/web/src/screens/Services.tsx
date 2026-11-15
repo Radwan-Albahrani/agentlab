@@ -19,6 +19,7 @@ import { plural } from '../lib/format';
 import { hueTheme } from '../theme/hues';
 import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
 import { LinkButton } from '../ui/Button';
+import { Fold, FoldPanel, FoldTrigger } from '../ui/controls';
 import { Icon } from '../ui/Icon';
 import { Appear } from '../ui/motion';
 import { PageHead, Stat } from '../ui/page';
@@ -457,7 +458,7 @@ function Tile({ stack: s }: { stack: Stack }) {
           <ConfigLink stack={s} iconOnly />
         </div>
       ) : (
-        <>
+        <Fold open={open} onOpenChange={setOpen}>
           <div {...stylex.props(styles.tileFoot)}>
             {!open && (
               <span {...stylex.props(styles.chips)}>
@@ -471,26 +472,17 @@ function Tile({ stack: s }: { stack: Stack }) {
             )}
             <span {...stylex.props(styles.spacer)} />
             <ConfigLink stack={s} iconOnly />
-            <button
-              type="button"
-              {...stylex.props(styles.toggle)}
-              aria-expanded={open}
-              onClick={() => {
-                setOpen(!open);
-              }}
-            >
+            <FoldTrigger look={styles.toggle}>
               {open ? 'Fold' : 'Containers'}
               <span {...stylex.props(styles.caret, open && styles.caretOpen)}>
                 <Icon name="chevron" size={15} />
               </span>
-            </button>
+            </FoldTrigger>
           </div>
-          {open && (
-            <div {...stylex.props(styles.detail)}>
-              <ContainerRows stack={s} />
-            </div>
-          )}
-        </>
+          <FoldPanel look={styles.detail}>
+            <ContainerRows stack={s} />
+          </FoldPanel>
+        </Fold>
       )}
     </div>
   );

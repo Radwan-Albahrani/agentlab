@@ -47,8 +47,10 @@ def test_bridge_key(tmp_path, monkeypatch):
 def test_bridge_routes_dispatch_to_t3_tools(monkeypatch):
     monkeypatch.setattr(bridge.t3tools, 'answer', lambda thread, message: (True, {'answered': [thread, message]}))
     monkeypatch.setattr(bridge.t3tools, 'interrupt', lambda thread: (False, 'no run'))
+    monkeypatch.setattr(bridge.t3tools, 'archive', lambda thread: (True, {'archived': thread}))
     assert bridge.handle('/api/t3/respond', {'thread': 't1', 'message': 'yes'}) == (
         200,
         {'ok': True, 'result': {'answered': ['t1', 'yes']}},
     )
     assert bridge.handle('/api/t3/stop', {'thread': 't1'}) == (500, {'ok': False, 'result': 'no run'})
+    assert bridge.handle('/api/t3/archive', {'thread': 't1'}) == (200, {'ok': True, 'result': {'archived': 't1'}})

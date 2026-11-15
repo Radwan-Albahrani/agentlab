@@ -5,7 +5,7 @@ export type PullSort = 'updated' | 'created' | 'smallest' | 'largest';
 export type Outcome = 'blocking' | 'findings' | 'clean' | 'reviewing' | 'failed' | 'unreviewed' | 'draft';
 export type PullFilter = 'all' | Outcome;
 
-const BUSY = new Set(['queued', 'working', 'waiting']);
+const BUSY = new Set(['queued', 'working', 'waiting', 'paused']); // paused: T3 resumes it after the usage limit
 
 export function outcomeOf(p: Pull): Outcome {
   const r = p.review;

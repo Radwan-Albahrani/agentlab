@@ -1,7 +1,16 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import type { Task } from '../../api/types';
-import { filterTasks, TASK_FILTERS, TASK_PILL, taskAge, taskWho, WAITING, type TaskFilter } from '../../lib/companion';
+import {
+  filterTasks,
+  resumesLabel,
+  TASK_FILTERS,
+  TASK_PILL,
+  taskAge,
+  taskWho,
+  WAITING,
+  type TaskFilter,
+} from '../../lib/companion';
 import { ago, capitalize, elapsed, plural } from '../../lib/format';
 import { usePages } from '../../lib/usePages';
 import { useNow } from '../../lib/useNow';
@@ -84,6 +93,15 @@ const styles = stylex.create({
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
   },
+  // paused by a usage limit: a calm amber note instead of the ticking timer
+  paused: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontSize: text.sm,
+    color: colors.warn,
+    whiteSpace: 'nowrap',
+  },
   links: { display: 'flex', gap: space.xxs },
   title: { fontWeight: 500, overflowWrap: 'anywhere' },
   detail: {
@@ -154,37 +172,46 @@ export function WaitingTasks({ tasks }: { tasks: Task[] }) {
   );
 }
 
-/** What runs this second, each with a ticking stopwatch and a dashed line running under it. */
+/** What runs this second, each with a ticking stopwatch and a dashed line running under it; paused ones say when
+ * they resume. */
 export function WorkingTasks({ tasks, name }: { tasks: Task[]; name: string }) {
   const now = useNow(1000);
-  const working = tasks.filter((t) => t.status === 'working');
+  const working = tasks.filter((t) => t.status === 'working' || t.status === 'paused');
+  const paused = working.filter((t) => t.status === 'paused').length;
+  const running = working.length - paused;
+  const sub = [running && `${plural(running, 'task')} in progress, live`, paused && `${paused} paused for the usage limit`]
+    .filter(Boolean)
+    .join(' · ');
   return (
-    <Section
-      title="Working now"
-      icon="bot"
-      sub={working.length ? `${plural(working.length, 'task')} in progress, live` : undefined}
-    >
+    <Section title="Working now" icon="bot" sub={sub || undefined}>
       <Card>
         {working.length ? (
           <List>
             {working.map((t, i) => (
               <Appear key={t.id} i={i}>
                 <div {...stylex.props(styles.live)}>
-                  <IconBox icon={t.poll ? 'poll' : (KIND_ICON[t.kind] ?? 'bot')} tone="info" />
+                  <IconBox icon={t.poll ? 'poll' : (KIND_ICON[t.kind] ?? 'bot')} tone={t.status === 'paused' ? 'warn' : 'info'} />
                   <div>
                     <div {...stylex.props(styles.liveTitle)} title={t.title}>
                       {t.title}
                     </div>
                     <div {...stylex.props(styles.liveMeta)}>{t.poll ? t.outcome : `${capitalize(t.kind)} · ${taskWho(t)}`}</div>
                   </div>
-                  <span {...stylex.props(styles.timer)} title="Running for">
-                    {t.startedAt ? elapsed(now - t.startedAt) : ''}
-                    <Blink />
-                  </span>
+                  {t.status === 'paused' ? (
+                    <span {...stylex.props(styles.paused)} title="Stopped by the usage limit; T3 picks it up again on its own">
+                      <Icon name="clock" size={14} />
+                      Paused · {resumesLabel(t.resumesAt, now)}
+                    </span>
+                  ) : (
+                    <span {...stylex.props(styles.timer)} title="Running for">
+                      {t.startedAt ? elapsed(now - t.startedAt) : ''}
+                      <Blink />
+                    </span>
+                  )}
                   <span {...stylex.props(styles.links)}>
                     <TaskLinks t={t} compact />
                   </span>
-                  <LiveLine />
+                  {t.status === 'working' && <LiveLine />}
                 </div>
               </Appear>
             ))}
@@ -269,6 +296,7 @@ function TaskRow({ t, now }: { t: Task; now: number }) {
           <span>
             {capitalize(t.kind)} · {taskWho(t)}
             {t.outcome ? ` · ${t.outcome}` : ''}
+            {t.status === 'paused' ? ` · ${resumesLabel(t.resumesAt, now)}` : ''}
           </span>
         </div>
         {t.status === 'working' && <LiveLine inline />}

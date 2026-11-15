@@ -12,7 +12,7 @@ from reviewer.github import App, GitHubError
 from . import projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, NAME, OWNER, evidence_repo, log, mode, optional_secret, review_slots, slack_for_github
 from .state import key, key_of, lock, new_task, review_of, save, state
-from .text import clock, first_sentence, no_emoji
+from .text import clock, first_sentence, hour, no_emoji
 
 APP_ID, APP_KEY = 'github-app-id.txt', 'github-app-key.pem'
 IMAGES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
@@ -22,6 +22,7 @@ PR_REF = re.compile(r'github\.com/[\w.-]+/[\w.-]+/pull/(\d+)|#(\d+)\b')
 LEADING_REF = re.compile(r'^\s*(?:<?https?://\S*github\.com/\S+/pull/\d+\S*|[\w./-]*#\d+\b)\s*[:,.-]?\s*')
 
 status = {'ready': False, 'bot': '', 'accounts': [], 'at': 0.0, 'error': ''}
+PEOPLE_EVERY = 3600
 _app = {'with': None, 'app': None}
 
 
@@ -51,7 +52,21 @@ def refresh():
     except Exception as e:  # keep the last list
         log('pull requests unavailable:', e)
         status.update(error=str(e)[:200], at=time.time())
+    _refresh_people(a)
     save()
+
+
+def _refresh_people(a):
+    """Hourly: who can work on the repos with open PRs (the hub's GitHub username picker); failures keep the last."""
+    known = state.get('github_people') or {}
+    if time.time() - known.get('at', 0) < PEOPLE_EVERY:
+        return
+    try:
+        found = pulls.people(a, state.get('pulls') or [])
+    except Exception as e:
+        log('GitHub people unavailable:', e)
+        found = known.get('list') or []
+    state['github_people'] = {'at': time.time(), 'list': found}
 
 
 def latest(pr_id):
@@ -88,7 +103,9 @@ def rows(card):
                 'url': r.get('url', ''),
                 'counts': r.get('counts') or report.counts_of(r.get('summary', '')),
             }
-            if r.get('detail') and c['status'] not in ('working', 'waiting'):
+            if c['status'] == 'paused':
+                review['resumes_at'] = t['paused'].get('resumes_at')
+            if r.get('detail') and c['status'] not in ('working', 'waiting', 'paused'):
                 review['detail'] = r['detail']
         if review and p['id'] in run:
             review['run'] = run[p['id']]
@@ -240,6 +257,7 @@ def prune_tick():
 def tick():
     queue = state.get('review_queue') or []
     _tidy()
+    _recover()
     running = sum(1 for t in state['tasks'].values() if review_of(t) and t.get('active'))
     while queue and running < review_slots():
         item = queue.pop(0)
@@ -253,6 +271,37 @@ def tick():
             _finish(e, 'failed', f"Couldn't start: {str(ex)[:200]}")
             COMP.event('failed', f'Could not review {item["id"]}', detail=str(ex)[:300], ok=False)
     _settle(queue)
+
+
+def _recover():
+    """Reviews that ended as failed on a usage limit, the newest of their PR and not asked for again: paused instead."""
+    queued = {q['id'] for q in state.get('review_queue') or []}
+    now = time.time()
+    for t in list(state['tasks'].values()):
+        r = review_of(t)
+        if not r or t.get('active') or t.get('outcome') != 'failed' or t.get('limit_checked'):
+            continue
+        if r['id'] in queued or latest(r['id'])[1] is not t:
+            t['limit_checked'] = True
+        elif tasks.recover_limited(t, now):
+            log('review paused for the usage limit after it failed', r['id'])
+            _rejoin(t)
+            save()
+
+
+def _rejoin(t):
+    """Put a recovered review back on a batch card: its own entry if the batch is still going, else a new batch."""
+    k = key_of(t)
+    if any(e.get('task') == k for e in _run()):
+        return  # _settle reopens it
+    r = review_of(t)
+    b = _batch()
+    if not b:
+        thread = None if t['channel'].startswith('D') else t['thread_ts']  # a channel's batch stays in its thread
+        b = state['review_batch'] = {'channel': t['channel'], 'thread': thread, 'card': None, 'prs': []}
+    paused = t['paused'].get('resumes_at') or 0
+    b['prs'].append({'id': r['id'], 'url': r['url'], 'title': r.get('title', ''), 'task': k, 'paused': paused})
+    _show()
 
 
 # A batch: every review asked for while others are queued or running; it ends when the queue is empty and all
@@ -330,35 +379,76 @@ def _clip(text, limit):
     return text if len(text) <= limit else text[: limit - 1].rsplit(' ', 1)[0] + '…'
 
 
-def _line(e):
-    """One PR's line on the card."""
-    pr = f'<{e.get("link") or e["url"]}|{_short(e["id"])}>' + (f' {_clip(e["title"], 50)}' if e.get('title') else '')
+# A PR's state on the batch card: (emoji, label), in the order the card lists them.
+LOOK = {
+    'waiting': (':raised_hand:', 'waiting for you'),
+    'reviewing': (':arrows_counterclockwise:', 'reviewing'),
+    'paused': (':double_vertical_bar:', 'paused'),
+    'queued': (':hourglass_flowing_sand:', 'queued'),
+    'changes': (':octagonal_sign:', 'changes requested'),
+    'failed': (':x:', 'failed'),
+    'stopped': (':black_square_for_stop:', 'stopped'),
+    'approved': (':white_check_mark:', 'approved'),
+}
+
+
+def _state(e):
+    if e.get('waiting') or e.get('verdict') == 'asked':
+        return 'waiting'
     if e.get('verdict'):
-        icon, label = VERDICTS[e['verdict']]
-        now = label.lower() + (f' · {_clip(no_emoji(e["detail"]), 90)}' if e.get('detail') else '')
-    elif e.get('waiting'):
-        icon, now = ':raised_hand:', 'waiting for your answer'
-    elif e.get('task'):
-        icon, now = ':arrows_counterclockwise:', 'reviewing…'
-        now += f' again after `{e["rereview"][:7]}`' if e.get('rereview') else ''
-    else:
-        ahead = next((i for i, q in enumerate(state.get('review_queue') or []) if q['id'] == e['id']), -1)
-        icon, now = ':hourglass_flowing_sand:', 'queued' + {-1: '', 0: ' (next up)'}.get(ahead, f' ({ahead} ahead)')
-    return f'{icon} {pr} · {now}'
+        return e['verdict']
+    if 'paused' in e:
+        return 'paused'
+    return 'reviewing' if e.get('task') else 'queued'
+
+
+def _plural(n, word):
+    return f'{n} {word}{"s" if n != 1 else ""}'
+
+
+def _line(e):
+    """One PR's short line on the card; the details are in its reply in the thread."""
+    st = _state(e)
+    icon, label = LOOK[st]
+    c = e.get('counts') or {}
+    if st == 'changes' and c.get('blocking'):
+        label += f' · {c["blocking"]} blocking'
+    elif st == 'approved' and c.get('findings'):
+        label += f' · {_plural(c["findings"], "finding")}'
+    pr = f'<{e.get("link") or e["url"]}|#{e["id"].rsplit("#", 1)[-1]}>'
+    return f'{icon} {pr}' + (f' {_clip(e["title"], 40)}' if e.get('title') else '') + f' · {label}'
+
+
+def _reset(prs):
+    """When the paused reviews can go on: the latest reset time any of them gave, or None."""
+    return max((e['paused'] for e in prs if e.get('paused')), default=None)
 
 
 def _card(b):
     """(text, md, note) of the batch card."""
     prs = b['prs']
     finished = all(e.get('verdict') for e in prs)
-    head = f'{"Reviewed" if finished else "Reviewing"} {len(prs)} pull request{"s" if len(prs) > 1 else ""}'
-    done = sum(1 for e in prs if e.get('verdict') not in (None, 'asked'))
-    waiting = sum(1 for e in prs if e.get('waiting') or e.get('verdict') == 'asked')
-    bits = ([] if finished else [f'{done} done']) + ([f'{waiting} waiting for you'] if waiting else [])
+    head = f'{"Reviewed" if finished else "Reviewing"} {_plural(len(prs), "pull request")}'
+    n = {}
+    for e in prs:
+        n[_state(e)] = n.get(_state(e), 0) + 1
+    reset = _reset(prs)
+    parts = [
+        ('done', n.get('approved', 0) + n.get('changes', 0)),
+        ('waiting for you', n.get('waiting', 0)),
+        (f'paused until {hour(reset)}' if reset else 'paused for the usage limit', n.get('paused', 0)),
+        ('reviewing', n.get('reviewing', 0)),
+        ('queued', n.get('queued', 0)),
+        ('failed', n.get('failed', 0)),
+        ('stopped', n.get('stopped', 0)),
+    ]
+    bits = [f'{count} {label}' for label, count in parts if count]
     md = f'{":checkered_flag:" if finished else ":mag:"} **{head}**' + ''.join(f' · {x}' for x in bits)
-    md += '\n' + '\n'.join(_line(e) for e in prs)
+    md += '\n' + '\n'.join(_line(e) for e in sorted(prs, key=lambda e: list(LOOK).index(_state(e))))
     if finished:
         note = f'Finished {clock(time.time())}'
+    elif n.get('paused'):
+        note = 'Paused for the usage limit · T3 picks the reviews up again when it resets'
     else:
         note = f'Up to {review_slots()} run at a time · questions and results follow in the thread'
     return ' · '.join([head, *bits]), md, note
@@ -401,6 +491,7 @@ def _finish(e, verdict, detail='', link='', thread=None):
     """Close a review's entry: edit the card, and reply in the batch thread unless the batch's done message will say
     it (a batch of one); thread: (channel, ts) of a review whose batch already ended."""
     e.update(verdict=verdict, detail=detail, link=link or e['url'], waiting=False)
+    e.pop('paused', None)
     asked = e.pop('asked', None)
     if asked:
         slack.react(asked['channel'], asked['ts'], 'eyes', remove=True)
@@ -440,8 +531,9 @@ def _settle(queue):
     changed = False
     for e in b['prs']:
         t = state['tasks'].get(e.get('task') or '')
-        if e.get('verdict') == 'asked' and t and t.get('active'):  # answered: it runs again
-            e.pop('verdict')
+        if e.get('verdict') in ('asked', 'failed') and t and t.get('active'):  # answered, or paused after all
+            for k in ('verdict', 'detail', 'link'):
+                e.pop(k, None)
             changed = True
         if e.get('verdict') or not e.get('task'):
             continue
@@ -449,10 +541,28 @@ def _settle(queue):
             if bool(t.get('question')) != bool(e.get('waiting')):
                 e['waiting'] = bool(t.get('question'))
                 changed = True
+            paused = t.get('paused')
+            if paused and e.get('paused') != (paused.get('resumes_at') or 0):
+                e['paused'] = paused.get('resumes_at') or 0
+                changed = True
+            elif not paused and 'paused' in e:
+                e.pop('paused')
+                changed = True
             continue
         _finish(e, *_ended(t))
     if changed:
         _show()
+    if any('paused' in e for e in b['prs']) and not b.get('limit_told'):
+        b['limit_told'] = True
+        reset = _reset(b['prs'])
+        when = f'at {hour(reset)}' if reset else 'when the limit resets'
+        slack.post(
+            b['channel'],
+            _thread(b),
+            'Paused for the usage limit',
+            md=f':double_vertical_bar: Paused for the usage limit; reviews resume {when}.',
+        )
+        save()
     if b['prs'] and not queue and all(e.get('verdict') for e in b['prs']):
         _wrap_up(b)
         state.pop('review_batch')
@@ -609,6 +719,7 @@ def publish(task, box, data):
     k = key_of(task)
     e = next((x for x in reversed(_run()) if x.get('task') == k), None)
     if e:
+        e['counts'] = counts
         _finish(e, verdict, said, link)
     else:  # a re-run from the thread after its batch ended
         _finish({'id': r['id'], 'url': r['url'], 'title': r.get('title', '')}, verdict, said, link, (ch, tts))
@@ -725,4 +836,4 @@ def _post_qa(a, f, box, text, problems):
 
 def heartbeat():
     app()
-    return dict(status)
+    return dict(status, people=(state.get('github_people') or {}).get('list') or [])

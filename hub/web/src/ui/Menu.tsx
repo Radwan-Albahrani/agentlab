@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { Menu, MenuContent, MenuItem, MenuItemIndicator, MenuRadioGroup, MenuRadioItem, MenuTrigger } from '@ui-sdk/react/menu';
 import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
-import { look } from './Button';
+import { Hint, look } from './Button';
 import { Icon } from './Icon';
 
 const fading = ':is([data-starting-style], [data-ending-style])';
@@ -85,10 +85,10 @@ export function PickMenu<V extends string>({
   const current = options.find((o) => o.value === value);
   return (
     <Menu>
-      <MenuTrigger {...look({ label })} title={current ? `${label}: ${current.label}` : label}>
+      <Hint tip={current ? `${label}: ${current.label}` : label} names={false} render={<MenuTrigger {...look({ label })} />}>
         <Icon name={icon} size={17} />
         <span>{label}</span>
-      </MenuTrigger>
+      </Hint>
       <MenuContent sideOffset={6} align="end" {...stylex.props(styles.popup)}>
         <MenuRadioGroup value={value} onValueChange={onChange}>
           {options.map((o) => (
@@ -110,9 +110,13 @@ export function PickMenu<V extends string>({
 export function MoreMenu({ label, entries }: { label: string; entries: MenuEntry[] }) {
   return (
     <Menu>
-      <MenuTrigger {...look({ label, variant: 'quiet', small: true, iconOnly: true })} aria-label={label} title={label}>
+      <Hint
+        tip={label}
+        names
+        render={<MenuTrigger {...look({ label, variant: 'quiet', small: true, iconOnly: true })} aria-label={label} />}
+      >
         <Icon name="more" size={16} />
-      </MenuTrigger>
+      </Hint>
       <MenuContent sideOffset={6} align="end" {...stylex.props(styles.popup)}>
         {entries.map((e) => (
           <MenuItem

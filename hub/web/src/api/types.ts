@@ -208,7 +208,8 @@ export interface AccountsPage {
 }
 
 export type CompanionState = 'live' | 'disconnected' | 'offline' | 'unconfigured';
-export type TaskStatus = 'working' | 'waiting' | 'done' | 'failed' | 'stopped';
+// paused: stopped by a usage limit; T3 resumes it when the limit resets
+export type TaskStatus = 'working' | 'waiting' | 'paused' | 'done' | 'failed' | 'stopped';
 
 export interface Task {
   id: string;
@@ -220,6 +221,7 @@ export interface Task {
   outcome: string;
   startedAt: number;
   endedAt: number | null;
+  resumesAt?: number | null; // epoch, while paused
   slack: string;
   t3: string;
   poll: string | null;
@@ -270,7 +272,8 @@ export interface Companion {
 }
 
 export interface Pulls {
-  github: { ready: boolean; bot: string; accounts: string[]; at: number; error: string };
+  // people: who can work on the repos the App sees (Leafy refreshes it hourly)
+  github: { ready: boolean; bot: string; accounts: string[]; at: number; error: string; people?: GithubPerson[] };
   me: string; // the owner's GitHub username
   items: Pull[];
 }
@@ -308,6 +311,7 @@ export interface PullReview {
   // open = earlier findings that still stand
   counts?: { findings: number; blocking: number; open: number; qa: string } | null;
   run?: { n: number; of: number; done: boolean }; // its place in the batch being reviewed now
+  resumes_at?: number | null; // epoch, while paused
   detail?: ReviewDetail; // only once the review is done
 }
 
@@ -479,4 +483,9 @@ export interface Manage {
     published: boolean; // agents on their own host ports (a one-person setup)
     fixedOwner: string; // set when every agent here is this person's
   };
+}
+
+export interface GithubPerson {
+  login: string;
+  avatar: string;
 }

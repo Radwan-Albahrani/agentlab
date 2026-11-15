@@ -51,6 +51,23 @@ def open_pulls(app):
     return out
 
 
+def people(app, pulls, repos=20, cap=300):
+    """[{login, avatar}] sorted: who can work on the repos with open PRs, and the PRs' authors; once per login."""
+    found = {}
+    for p in pulls:
+        if p['author'] == 'ghost' or p['author'].endswith('[bot]'):
+            continue
+        found.setdefault(p['author'].casefold(), {'login': p['author'], 'avatar': p.get('avatar', '')})
+    for repo in list(dict.fromkeys(p['repo'] for p in pulls))[:repos]:
+        try:
+            users = app.assignees(repo, cap)
+        except GitHubError:  # e.g. the App may not read members here
+            continue
+        for u in users:
+            found.setdefault(u['login'].casefold(), u)
+    return sorted(found.values(), key=lambda u: u['login'].casefold())[:cap]
+
+
 def facts(app, repo, number):
     """What a review starts from: the PR, its changed files with patches, and its review threads."""
     inst = app.installation_for(repo)

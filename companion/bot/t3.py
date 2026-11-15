@@ -83,6 +83,14 @@ def stop(thread):
     return bridge('/api/t3/stop', {'thread': thread})
 
 
+def archive(thread):
+    """Archive a finished chat in T3 (logged, never raised: it only tidies the owner's thread list)."""
+    res = bridge('/api/t3/archive', {'thread': thread})
+    if not res.get('ok'):
+        log('archive failed:', thread, error_text(res))
+    return res
+
+
 def triage(prompt):
     """One quick model call on the agent's own provider."""
     return bridge('/api/t3/triage', {'message': prompt})

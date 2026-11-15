@@ -419,6 +419,11 @@ class Screens(unittest.TestCase):
         finally:
             scope.use(scope.ADMIN)
 
+    def test_a_review_paused_by_a_usage_limit_counts_as_in_review(self):
+        paused = {'review': {'status': 'paused', 'resumes_at': 1794783000.0, 'counts': None}}
+        self.assertEqual(screens.outcome(paused), 'reviewing')
+        self.assertEqual(screens.outcome({'review': {'status': 'failed'}}), 'failed')
+
     def test_overview_sums_up_each_companions_reviews(self):
         [r] = screens.overview()['reviews']
         self.assertEqual(r['name'], 'scout')

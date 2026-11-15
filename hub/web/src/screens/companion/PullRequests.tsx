@@ -1,8 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useCompanionPoll, usePullsRefresh } from '../../api/queries';
 import type { Ci, Pull, PullReview, Pulls } from '../../api/types';
+import { resumesLabel } from '../../lib/companion';
 import { ago, plural } from '../../lib/format';
 import { arrange, FILTERS, grouped, outdated, type PullFilter, type PullSort, SORTS } from '../../lib/pulls';
 import { usePages } from '../../lib/usePages';
@@ -202,17 +203,19 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<PullSort>('updated');
   // the filter and the open review live in the URL, so the Overview can link to "Blocking" and Back closes a review
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const asked = params.get('filter');
   const filter: PullFilter = FILTERS.some((f) => f.value === asked) ? (asked as PullFilter) : 'all';
+  // navigate, not setParams: setParams drops the #pulls hash, and the page would fall back to the first tab
+  const navigate = useNavigate();
+  const { hash } = useLocation();
   const setParam = (key: string, value: string | null) => {
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (value) next.set(key, value);
-        else next.delete(key);
-        return next;
-      },
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    const search = next.toString();
+    void navigate(
+      { search: search ? `?${search}` : '', hash: hash || '#pulls' },
       { replace: key === 'filter' || !value, preventScrollReset: true },
     );
   };
@@ -288,18 +291,26 @@ export function PullRequests({ name, pulls }: { name: string; pulls: Pulls }) {
 /** The reviews asked for together: one line and a thin bar until the last one is done. */
 function Batch({ items }: { items: Pull[] }) {
   const run = items.flatMap((p) =>
-    p.review?.run ? [{ ...p.review.run, status: p.review.status, number: p.number, title: p.title }] : [],
+    p.review?.run
+      ? [{ ...p.review.run, status: p.review.status, resumes: p.review.resumes_at, number: p.number, title: p.title }]
+      : [],
   );
   if (run.length < 2) return null;
   run.sort((a, b) => a.n - b.n);
   const done = run.filter((r) => r.done).length;
   const all = done === run.length;
   const current = run.find((r) => !r.done && (r.status === 'working' || r.status === 'waiting'));
+  const paused = run.filter((r) => !r.done && r.status === 'paused');
+  const resumes = Math.max(0, ...paused.map((r) => r.resumes ?? 0));
   return (
     <section {...stylex.props(styles.batch)} aria-label="Review batch">
       {all ? (
         <span {...stylex.props(styles.glyph, styles.ok)}>
           <Icon name="check" size={14} />
+        </span>
+      ) : !current && paused.length ? (
+        <span {...stylex.props(styles.glyph, styles.warn)}>
+          <Icon name="clock" size={14} />
         </span>
       ) : (
         <Blink />
@@ -314,8 +325,18 @@ function Batch({ items }: { items: Pull[] }) {
         <>
           <span>{`${done} of ${run.length} done`}</span>
           <Sep />
+          {paused.length > 0 && (
+            <>
+              <span {...stylex.props(styles.warn)}>{`${paused.length} paused · ${resumesLabel(resumes)}`}</span>
+              <Sep />
+            </>
+          )}
           <span {...stylex.props(styles.batchNow)} title={current?.title}>
-            {current ? `now #${current.number} ${current.title}` : 'waiting for a free slot'}
+            {current
+              ? `now #${current.number} ${current.title}`
+              : paused.length
+                ? 'waiting for the usage limit to reset'
+                : 'waiting for a free slot'}
           </span>
         </>
       )}
@@ -453,6 +474,20 @@ function ReviewCell({ p, name }: { p: Pull; name: string }) {
           Queued
         </span>
         {place}
+      </>
+    );
+  if (r.status === 'paused')
+    return (
+      <>
+        <span
+          {...stylex.props(styles.status, styles.warn)}
+          title="Stopped by the usage limit; T3 picks the review up again on its own"
+        >
+          <Icon name="clock" size={14} />
+          {`Paused · ${resumesLabel(r.resumes_at)}`}
+        </span>
+        {place}
+        {r.t3 && <LinkButton label="Open the review chat" icon="ext" small iconOnly variant="quiet" to={r.t3} />}
       </>
     );
   if (r.status === 'working' || r.status === 'waiting')

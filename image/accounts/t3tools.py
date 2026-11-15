@@ -1,4 +1,4 @@
-"""Calls T3's own MCP tools with a short-lived token for what `t3 thread` can't do (answer, interrupt)."""
+"""Calls T3's own MCP tools with a short-lived token for what `t3 thread` can't do (answer, interrupt, archive)."""
 
 import json
 import subprocess
@@ -124,3 +124,10 @@ def answer(thread, message):
 
 def interrupt(thread):
     return with_tools('companion stop', lambda t3: (True, t3.call('t3_thread_interrupt', {'threadId': thread})))
+
+
+def archive(thread):
+    """Archive a finished chat, out of the way in T3's thread list."""
+    return with_tools(
+        'companion archive', lambda t3: (True, t3.call('t3_thread_organize', {'threadId': thread, 'action': 'archive'}))
+    )

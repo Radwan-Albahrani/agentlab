@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
@@ -19,8 +19,12 @@ export function Screen<T>({
   useEffect(() => {
     document.title = `${title} · Agents`;
   }, [title]);
+  // only an opened link scrolls to its #section: switching tabs changes the hash too, and must not move the page
+  const jumped = useRef(false);
   useEffect(() => {
-    if (loaded && hash) document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+    if (!loaded || jumped.current) return;
+    jumped.current = true;
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
   }, [loaded, hash]);
 
   if (loaded) return <>{children(query.data as T)}</>;

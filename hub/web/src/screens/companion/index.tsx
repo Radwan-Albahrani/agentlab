@@ -206,7 +206,13 @@ function CompanionView({ d }: { d: Data }) {
       content: (
         <Section title="Settings" icon="sliders" sub="Changes apply within seconds; no restart." id="settings">
           <Card>
-            <CompanionSettings name={d.name} display={d.display} fields={d.settings} />
+            <CompanionSettings
+              name={d.name}
+              display={d.display}
+              fields={d.settings}
+              authors={authorsOf(d)}
+              github={d.pulls?.github.people ?? []}
+            />
           </Card>
         </Section>
       ),
@@ -300,7 +306,9 @@ function Header({ d, now, go }: { d: Data; now: number; go: (tab: string) => voi
   const nice = d.display;
   const waiting = d.tasks.filter((t) => t.status === 'waiting').length;
   const working = d.tasks.filter((t) => t.status === 'working').length;
-  const reviewing = d.pulls?.items.filter((p) => p.review && ['queued', 'working', 'waiting'].includes(p.review.status)).length;
+  const reviewing = d.pulls?.items.filter(
+    (p) => p.review && ['queued', 'working', 'waiting', 'paused'].includes(p.review.status),
+  ).length;
   const openPolls = d.polls?.filter((p) => p.open).length ?? 0;
   return (
     <header {...stylex.props(hueTheme(d.profile), styles.hero)}>
@@ -412,4 +420,15 @@ function WeekStats({ d, now }: { d: Data; now: number }) {
       </StatGrid>
     </Section>
   );
+}
+
+/** Who opened the pull requests the companion sees, most pull requests first. */
+function authorsOf(d: Data) {
+  const by = new Map<string, { login: string; avatar: string; prs: number }>();
+  for (const p of d.pulls?.items ?? []) {
+    const a = by.get(p.author) ?? { login: p.author, avatar: p.avatar, prs: 0 };
+    a.prs += 1;
+    by.set(p.author, a);
+  }
+  return [...by.values()].filter((a) => a.login !== d.pulls?.me).sort((a, b) => b.prs - a.prs);
 }

@@ -3,10 +3,10 @@
 import re
 import time
 
-from . import errands, polls, projects, prompts, slack, t3
+from . import errands, jobs, limits, polls, projects, prompts, slack, t3
 from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
-from .text import first_sentence, mins, no_emoji
+from .text import first_sentence, hour, mins, no_emoji
 
 THINKING = ':seedling: thinking…'
 
@@ -249,6 +249,98 @@ def retry_transient(task, s, now):
     return True
 
 
+LIMIT_GRACE = 15 * 60  # after the reset, T3's own resume gets this long before Leafy says "continue"
+LIMIT_UNKNOWN = 5 * 3600  # no reset time given: the 5-hour window at most
+LIMIT_NOTICE = 200  # longer answers are real work that mentions limits, not the notice itself
+
+
+def _notice(task, now=None):
+    """The chat's last answer, when all it says is the limit notice ("You've hit your 5-hour limit · resets …")."""
+    latest = task.get('latest') or ''
+    return limits.parse(latest, now) if len(latest) <= LIMIT_NOTICE else (False, None)
+
+
+def limit_hit(task, s):
+    """(True, reset epoch or None) when the chat's last run stopped on a usage limit."""
+    if s['last_status'] == 'failed':
+        hit, at = limits.from_error(t3.run_error(task['thread']))
+        return (hit, at) if hit else _notice(task)
+    return _notice(task) if s['last_status'] == 'completed' else (False, None)
+
+
+def paused_line(resumes_at):
+    when = f'at {hour(resumes_at)}' if resumes_at else 'when it resets'
+    return f':double_vertical_bar: Paused for the usage limit · T3 picks it up again {when}'
+
+
+def pause(task, resumes_at, run, now):
+    """Wait for T3 to resume the chat at the reset: no retries, no failure."""
+    first = not task.get('paused')
+    task['paused'] = {'at': now, 'resumes_at': resumes_at, 'run': run, 'nudged': 0}
+    task.update(retry_at=None, retries=0)
+    line = paused_line(resumes_at)
+    if task.get('status_ts') and not quiet(task):
+        slack.update(task['channel'], task['status_ts'], 'Paused for the usage limit', note=line)
+    elif not quiet(task):
+        task['status_ts'] = slack.note_only(task['channel'], task['thread_ts'], line)
+    if first:
+        log('paused for the usage limit', task['thread'], resumes_at)
+        COMP.event(
+            'paused',
+            f'Paused for the usage limit: {task.get("title", "")[:80]}',
+            task=key_of(task),
+            detail=f'resumes at {hour(resumes_at)}' if resumes_at else 'resumes when the limit resets',
+        )
+
+
+def unpause(task):
+    if task.pop('paused', None):
+        task.update(last_status='', last_status_at=0)
+        log('resumed after the usage limit', task['thread'])
+
+
+def hold_for_limit(task, s, now):
+    """True while a usage-limited chat waits for T3 to resume it (or once that wait has been closed)."""
+    p = task.get('paused')
+    if p and p['run'] == s['last_done']:  # nothing ran since the pause
+        due = (p['resumes_at'] or p['at'] + LIMIT_UNKNOWN) + LIMIT_GRACE
+        if now < due:
+            return True
+        if not p['nudged'] and t3.send(task['thread'], 'continue').get('ok'):
+            p['nudged'] = now
+            COMP.event('retry', 'The usage limit reset but T3 did not resume: said "continue"', task=key_of(task))
+            return True
+        if p['nudged'] and now - p['nudged'] < LIMIT_GRACE:
+            return True
+        task.pop('paused')
+        _finish_turn(task, s)
+        return True
+    hit, resumes_at = limit_hit(task, s)
+    if not hit:
+        unpause(task)
+        return False
+    pause(task, resumes_at, s['last_done'], now)
+    return True
+
+
+def recover_limited(task, now):
+    """A review that ended as failed on a usage limit (before limits were told apart): paused again instead."""
+    if task.get('active') or task.get('outcome') != 'failed' or task.get('limit_checked'):
+        return False
+    task['limit_checked'] = True
+    if now - parse_iso(task.get('ended')) > 86400:
+        return False
+    hit, resumes_at = _notice(task, now)
+    if not hit:
+        hit, resumes_at = limits.from_error(t3.run_error(task['thread']), now)
+    if not hit:
+        return False
+    s = t3.snapshot(task['thread'], '9999')  # skip messages
+    task.update(active=True, outcome='', ended='', closed='', quiet_since=0)
+    pause(task, resumes_at, s['last_done'], now)
+    return True
+
+
 def resume_if_running(task):
     """Reactivate a finished task (under 3 days old) whose chat is running again."""
     if time.time() - parse_iso(task.get('start')) > 3 * 86400 or not t3.has_open_run(task['thread']):
@@ -285,6 +377,7 @@ def tick(task):
         return
     if s['running'] or any(r for _, _, r in s['workers']):
         task['quiet_since'] = 0
+        unpause(task)
         if quiet(task):
             return
         if not task.get('status_ts'):
@@ -300,7 +393,7 @@ def tick(task):
         return
     if s['last_status'] == 'interrupted' and now - task['quiet_since'] < 30:  # a new turn usually follows
         return
-    if retry_transient(task, s, now):
+    if hold_for_limit(task, s, now) or retry_transient(task, s, now):
         return
     _finish_turn(task, s)
 
@@ -424,6 +517,8 @@ def _finish_turn(task, s):
     if task.get('reply_pending') and status == 'completed':
         errands.reply_requester(task, task.pop('reply_pending'), approved=True)
     slack.react(ch, task['trigger_ts'], 'eyes', remove=True)
+    if review_of(task) and outcome != 'asked you':  # its result is posted; the chat only clutters T3 now
+        jobs.run_later(t3.archive, task['thread'])
     COMP.event(
         'failed' if outcome == 'failed' else 'finished',
         f'{task.get("title", "")[:80]}: {outcome}',

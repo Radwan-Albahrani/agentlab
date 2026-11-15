@@ -1,37 +1,45 @@
-import { Button } from './Button';
-import { Inline } from './layout';
+import * as stylex from '@stylexjs/stylex';
+import { Pagination, PaginationItem, PaginationList, PaginationNext, PaginationPrevious } from '@ui-sdk/react/pagination';
+import { space } from '../theme/tokens.stylex';
+import { Hint, look } from './Button';
+import { Icon } from './Icon';
 import { Text } from './text';
 
-/** Renders nothing when everything fits on one page. */
+const styles = stylex.create({
+  list: { display: 'flex', alignItems: 'center', gap: space.xs, margin: 0, padding: 0, listStyle: 'none', minWidth: 0 },
+});
+
+const step = (label: string) => look({ label, variant: 'quiet', small: true, iconOnly: true });
+
+/** Renders nothing when everything fits on one page. `page` counts from 0. */
 export function Pager({ page, pages, setPage }: { page: number; pages: number; setPage: (p: number) => void }) {
   if (pages < 2) return null;
   return (
-    <Inline gap="xs" nowrap>
-      <Button
-        label="Newer"
-        icon="back"
-        variant="quiet"
-        small
-        iconOnly
-        disabled={page === 0}
-        onClick={() => {
-          setPage(page - 1);
-        }}
-      />
-      <Text tone="muted" size="md">
-        {page + 1} / {pages}
-      </Text>
-      <Button
-        label="Older"
-        icon="arrow"
-        variant="quiet"
-        small
-        iconOnly
-        disabled={page === pages - 1}
-        onClick={() => {
-          setPage(page + 1);
-        }}
-      />
-    </Inline>
+    <Pagination
+      aria-label="Pages"
+      pageCount={pages}
+      page={page + 1}
+      onPageChange={(p) => {
+        setPage(p - 1);
+      }}
+    >
+      <PaginationList {...stylex.props(styles.list)}>
+        <PaginationItem>
+          <Hint tip="Newer" names render={<PaginationPrevious {...step('Newer')} aria-label="Newer" />}>
+            <Icon name="back" size={16} />
+          </Hint>
+        </PaginationItem>
+        <PaginationItem>
+          <Text tone="muted" size="md">
+            {page + 1} / {pages}
+          </Text>
+        </PaginationItem>
+        <PaginationItem>
+          <Hint tip="Older" names render={<PaginationNext {...step('Older')} aria-label="Older" />}>
+            <Icon name="arrow" size={16} />
+          </Hint>
+        </PaginationItem>
+      </PaginationList>
+    </Pagination>
   );
 }

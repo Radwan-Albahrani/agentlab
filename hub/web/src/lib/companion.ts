@@ -19,7 +19,7 @@ export function filterTasks(tasks: Task[], f: TaskFilter): Task[] {
 
 /** Until now while still going (an earlier turn's end doesn't count); '' for old tasks without an end time. */
 export function taskAge(t: Task, now = Date.now() / 1000): string {
-  const going = t.status === 'working' || t.status === 'waiting';
+  const going = t.status === 'working' || t.status === 'waiting' || t.status === 'paused';
   if (!t.startedAt || (!t.endedAt && !going)) return '';
   return duration((going ? now : (t.endedAt ?? now)) - t.startedAt);
 }
@@ -36,6 +36,7 @@ export function weekStats(tasks: Task[], sent: Event[], now = Date.now() / 1000)
   return {
     waiting: tasks.filter((t) => t.status === 'waiting').length,
     working: tasks.filter((t) => t.status === 'working').length,
+    paused: tasks.filter((t) => t.status === 'paused').length,
     taken: week.length,
     errands: week.filter((t) => t.kind === 'errand').length,
     plainTasks: week.filter((t) => t.kind === 'task').length,
@@ -57,10 +58,18 @@ export const WAITING: Record<string, { label: string; icon: string }> = {
 export const TASK_PILL: Record<string, [string, 'info' | 'warn' | 'ok' | 'bad' | 'idle']> = {
   working: ['Working', 'info'],
   waiting: ['Needs you', 'warn'],
+  paused: ['Paused', 'warn'],
   done: ['Done', 'ok'],
   failed: ['Failed', 'bad'],
   stopped: ['Stopped', 'idle'],
 };
+
+/** "resumes 1:50 AM" (with the day when it's further off) for work paused by a usage limit. */
+export function resumesLabel(at: number | null | undefined, now = Date.now() / 1000): string {
+  if (!at) return 'resumes when the limit resets';
+  const time = new Date(at * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `resumes ${Math.abs(at - now) > 86400 ? clock(at) : time}`;
+}
 
 export const STATE_PILL: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
   live: ['Live', 'ok'],

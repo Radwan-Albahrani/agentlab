@@ -1,10 +1,12 @@
 import * as stylex from '@stylexjs/stylex';
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
+import { Radio, RadioGroup, RadioIndicator } from '@ui-sdk/react/radio';
 import { Switch as SwitchRoot, SwitchThumb } from '@ui-sdk/react/switch';
 import { Toggle, ToggleGroup } from '@ui-sdk/react/toggle';
 import type { ReactNode } from 'react';
 import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
+import { Hint } from './Button';
 import { Icon } from './Icon';
 
 const cls = (...s: stylex.StyleXStyles[]) => stylex.props(...s).className ?? '';
@@ -191,7 +193,56 @@ const styles = stylex.create({
   caret: { transition: 'transform .14s', display: 'inline-block', fontSize: text.xxs },
   caretOpen: { transform: 'rotate(90deg)' },
   panel: { marginTop: space.sm },
+  choices: { display: 'grid', gap: space.sm },
+  choice: {
+    display: 'grid',
+    gridTemplateColumns: '18px minmax(0, 1fr)',
+    gap: space.md,
+    alignItems: 'start',
+    paddingBlock: space.lg,
+    paddingInline: space.xl,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: { default: colors.line2, ':hover': colors.faint },
+    backgroundColor: colors.panel,
+    cursor: 'pointer',
+    transitionProperty: 'border-color, background-color',
+    transitionDuration: '140ms',
+  },
+  choiceOn: {
+    borderColor: { default: colors.accent, ':hover': colors.accent },
+    backgroundColor: colors.accentSoft,
+  },
+  choiceOnDanger: {
+    borderColor: { default: colors.bad, ':hover': colors.bad },
+    backgroundColor: colors.badSoft,
+  },
+  radio: {
+    width: 16,
+    height: 16,
+    marginBlockStart: 3,
+    padding: 0,
+    display: 'grid',
+    placeItems: 'center',
+    borderRadius: '50%',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: { default: colors.faint, [checked]: colors.accent },
+    backgroundColor: colors.panel,
+    cursor: 'pointer',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
+  },
+  radioDanger: { borderColor: { default: colors.faint, [checked]: colors.bad } },
+  dot: { width: 8, height: 8, borderRadius: '50%', backgroundColor: colors.accent },
+  dotDanger: { backgroundColor: colors.bad },
+  choiceTitle: { fontWeight: 600 },
+  choiceHelp: { display: 'block', fontSize: text.md, color: colors.muted, marginBlockStart: space.xxxs },
+  contents: { display: 'contents' },
 });
+
+const segmentLook = (s: { pressed: boolean }) => cls(styles.segment, s.pressed && styles.segmentOn);
 
 /** An option with an icon shows just the icon; its label becomes the tooltip. */
 export function Segments<V extends string>({
@@ -215,18 +266,25 @@ export function Segments<V extends string>({
       aria-label={label}
       {...stylex.props(styles.segments)}
     >
-      {options.map((o) => (
-        <Toggle
-          key={o.value}
-          value={o.value}
-          aria-label={o.icon ? o.label : undefined}
-          title={o.icon ? o.label : undefined}
-          className={(s) => cls(styles.segment, s.pressed && styles.segmentOn)}
-        >
-          {o.icon ? <Icon name={o.icon} size={17} /> : o.label}
-          {o.count !== undefined && <span {...stylex.props(styles.count)}>{o.count}</span>}
-        </Toggle>
-      ))}
+      {options.map((o) => {
+        const count = o.count !== undefined && <span {...stylex.props(styles.count)}>{o.count}</span>;
+        return o.icon ? (
+          <Hint
+            key={o.value}
+            tip={o.label}
+            names
+            render={<Toggle value={o.value} aria-label={o.label} className={segmentLook} />}
+          >
+            <Icon name={o.icon} size={17} />
+            {count}
+          </Hint>
+        ) : (
+          <Toggle key={o.value} value={o.value} className={segmentLook}>
+            {o.label}
+            {count}
+          </Toggle>
+        );
+      })}
     </ToggleGroup>
   );
 }
@@ -333,4 +391,74 @@ export function Disclosure({ label, children }: { label: string; children: React
       <CollapsiblePanel {...stylex.props(styles.panel)}>{children}</CollapsiblePanel>
     </Collapsible>
   );
+}
+
+/** Radios as selectable cards; the whole card picks. */
+export function RadioCards<V extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: V;
+  options: { value: V; title: string; help?: ReactNode; danger?: boolean }[];
+  onChange: (v: V) => unknown;
+  label: string;
+}) {
+  return (
+    <RadioGroup
+      value={value}
+      onValueChange={(v) => {
+        if (v !== null) void onChange(v);
+      }}
+      aria-label={label}
+      {...stylex.props(styles.choices)}
+    >
+      {options.map((o) => (
+        <label
+          key={o.value}
+          {...stylex.props(styles.choice, o.value === value && (o.danger ? styles.choiceOnDanger : styles.choiceOn))}
+        >
+          <Radio value={o.value} {...stylex.props(styles.radio, o.danger && styles.radioDanger)}>
+            <RadioIndicator {...stylex.props(styles.dot, o.danger && styles.dotDanger)} />
+          </Radio>
+          <span>
+            <span {...stylex.props(styles.choiceTitle)}>{o.title}</span>
+            {o.help && <span {...stylex.props(styles.choiceHelp)}>{o.help}</span>}
+          </span>
+        </label>
+      ))}
+    </RadioGroup>
+  );
+}
+
+/** A controlled disclosure whose trigger and panel sit apart; it adds no box of its own. */
+export function Fold({
+  open,
+  onOpenChange,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+      }}
+      {...stylex.props(styles.contents)}
+    >
+      {children}
+    </Collapsible>
+  );
+}
+
+export function FoldTrigger({ look, children }: { look: stylex.StyleXStyles; children: ReactNode }) {
+  return <CollapsibleTrigger {...stylex.props(look)}>{children}</CollapsibleTrigger>;
+}
+
+export function FoldPanel({ look, children }: { look: stylex.StyleXStyles; children: ReactNode }) {
+  return <CollapsiblePanel {...stylex.props(look)}>{children}</CollapsiblePanel>;
 }

@@ -32,8 +32,12 @@ def card(k, t):
     closed = re.sub(r':[a-z_]+:\s*', '', t.get('closed') or '')
     outcome = t.get('outcome') or ''
     poll = state['polls'].get(t.get('poll') or '')
+    paused = t.get('paused') if t.get('active') else None
     if waiting:
         status = 'waiting'
+    elif paused:
+        status = 'paused'
+        outcome = 'Paused for the usage limit'
     elif t.get('active') or (poll and poll['open']):
         status = 'working'
     elif outcome == 'stopped' or closed.startswith(('Stopped', 'Rejected')):
@@ -57,6 +61,7 @@ def card(k, t):
         'thread': t.get('thread') or '',
         'slack': slack.link(t.get('channel'), t.get('thread_ts')),
         'source': t.get('source') or '',
+        'resumes_at': (paused or {}).get('resumes_at') or '',
     }
 
 

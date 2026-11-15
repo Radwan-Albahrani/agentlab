@@ -1,5 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
-import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { Field as FieldRoot, FieldLabel } from '@ui-sdk/react/field';
+import { Input, InputGroup } from '@ui-sdk/react/input';
+import { useShortcut } from '@ui-sdk/react/shortcuts';
+import { Textarea } from '@ui-sdk/react/textarea';
+import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { Button } from './Button';
 import { Icon } from './Icon';
@@ -62,57 +66,47 @@ interface InputProps {
   list?: string; // a <datalist> of suggestions
 }
 
-const typing = (el: Element | null) => !!el && (el.matches('input, textarea, select') || (el as HTMLElement).isContentEditable);
-
 /** "/" focuses it from anywhere; Escape clears it. */
 export function SearchInput({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === '/' && !typing(document.activeElement)) {
-        e.preventDefault();
-        ref.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-    };
-  }, []);
+  useShortcut(
+    '/',
+    () => {
+      ref.current?.focus();
+    },
+    { description: label },
+  );
   return (
-    <label {...stylex.props(styles.search)}>
+    <InputGroup {...stylex.props(styles.search)}>
       <span {...stylex.props(styles.searchIcon)}>
         <Icon name="search" size={16} />
       </span>
-      <input
+      <Input
         ref={ref}
         {...stylex.props(styles.input, styles.searchInput)}
         type="search"
         value={value}
+        onValueChange={onChange}
         placeholder={`${label}  ( / )`}
         aria-label={label}
-        onChange={(e) => {
-          onChange(e.target.value);
-        }}
+        aria-keyshortcuts="/"
         onKeyDown={(e) => {
           if (e.key === 'Escape') onChange('');
         }}
         autoComplete="off"
         spellCheck={false}
       />
-    </label>
+    </InputGroup>
   );
 }
 
 export function TextInput({ value, onChange, type = 'text', width = 'grow', mono, onEnter, ...rest }: InputProps) {
   return (
-    <input
+    <Input
       {...stylex.props(styles.input, styles[width], mono && styles.mono)}
       type={type}
       value={value}
-      onChange={(e) => {
-        onChange(e.target.value);
-      }}
+      onValueChange={onChange}
       onKeyDown={(e) => {
         if (onEnter && e.key === 'Enter') {
           e.preventDefault();
@@ -146,12 +140,12 @@ export function TextArea({
   areaRef?: React.Ref<HTMLTextAreaElement>;
 }) {
   return (
-    <textarea
+    <Textarea
       ref={areaRef}
       {...stylex.props(styles.input, styles.area, editor && styles.editor, prose && styles.prose)}
       value={value}
       readOnly={readOnly}
-      onChange={(e) => onChange?.(e.target.value)}
+      onValueChange={(v) => onChange?.(v)}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       spellCheck={!!prose}
@@ -160,11 +154,12 @@ export function TextArea({
   );
 }
 
+/** Labels the text field inside it. */
 export const Field = ({ label, children }: { label: string; children: ReactNode }) => (
-  <label {...stylex.props(styles.field)}>
-    {label}
+  <FieldRoot {...stylex.props(styles.field)}>
+    <FieldLabel>{label}</FieldLabel>
     {children}
-  </label>
+  </FieldRoot>
 );
 
 export function InlineForm({ onSubmit, children }: { onSubmit: () => unknown; children: ReactNode }) {
@@ -198,14 +193,21 @@ export function SubmitField({
   primary?: boolean;
 }) {
   const [v, setV] = useState(initial);
+  const [busy, setBusy] = useState(false);
   const submit = async () => {
-    await onSubmit(v);
-    if (!keep) setV('');
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onSubmit(v);
+      if (!keep) setV('');
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <InlineForm onSubmit={submit}>
       <TextInput value={v} onChange={setV} placeholder={placeholder} type={type} width={type === 'number' ? 'number' : 'grow'} />
-      <Button type="submit" label={button} variant={primary ? 'primary' : 'default'} />
+      <Button type="submit" label={button} variant={primary ? 'primary' : 'default'} busy={busy} />
     </InlineForm>
   );
 }

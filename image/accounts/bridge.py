@@ -9,7 +9,7 @@ import t3tools
 from util import HOME
 
 KEY_FILE = os.path.join(HOME, '.config', 'agent', 'bridge-key')
-ROUTES = ('/api/t3/start', '/api/t3/send', '/api/t3/respond', '/api/t3/stop', '/api/t3/triage')
+ROUTES = ('/api/t3/start', '/api/t3/send', '/api/t3/respond', '/api/t3/stop', '/api/t3/archive', '/api/t3/triage')
 T3_SETTINGS = os.path.join(HOME, '.t3', 'userdata', 'settings.json')
 
 
@@ -29,6 +29,8 @@ def handle(path, body):
         return _result(*t3tools.answer(str(body.get('thread', '')), str(body.get('message', ''))))
     if path == '/api/t3/stop':
         return _result(*t3tools.interrupt(str(body.get('thread', ''))))
+    if path == '/api/t3/archive':
+        return _result(*t3tools.archive(str(body.get('thread', ''))))
     if path == '/api/t3/start':
         title = ['--title', str(body['title'])[:120]] if body.get('title') else []
         return _thread_cli(['start', '--json', *title, str(body.get('project') or '/workspace'), '-'], body)

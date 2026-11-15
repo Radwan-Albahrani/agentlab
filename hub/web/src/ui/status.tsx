@@ -1,4 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
+import { Meter as MeterRoot, MeterIndicator, MeterTrack } from '@ui-sdk/react/meter';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
@@ -66,12 +67,7 @@ const styles = stylex.create({
     borderColor: colors.line,
   },
   meterBig: { height: 12 },
-  fill: (pct: number) => ({
-    display: 'block',
-    height: '100%',
-    width: `${pct}%`,
-    transition: 'width .4s',
-  }),
+  fill: { height: '100%', transition: 'width .4s' },
   fillOk: { backgroundColor: colors.ok },
   fillWarn: { backgroundColor: colors.warn },
   fillBad: { backgroundColor: colors.bad },
@@ -170,17 +166,15 @@ export const Count = ({ n }: { n: number }) => <span {...stylex.props(styles.cou
 export const Dot = ({ ok }: { ok: boolean }) => <i {...stylex.props(styles.dot, ok ? styles.dotOk : styles.dotBad)} />;
 
 /** `share`: a part of a whole (e.g. votes), so it never turns warn / bad when full. */
-export function Meter({ pct, big, share }: { pct: number; big?: boolean; share?: boolean }) {
-  const p = Math.max(0, Math.min(100, pct));
+/** `label` names it for screen readers; the text beside it usually says the same. */
+export function Meter({ pct, big, share, label = 'Used' }: { pct: number; big?: boolean; share?: boolean; label?: string }) {
+  const tone = share ? styles.fillOk : pct >= 90 ? styles.fillBad : pct >= 75 ? styles.fillWarn : styles.fillOk;
   return (
-    <div {...stylex.props(styles.meter, big && styles.meterBig)}>
-      <span
-        {...stylex.props(
-          styles.fill(Number(p.toFixed(1))),
-          share ? styles.fillOk : p >= 90 ? styles.fillBad : p >= 75 ? styles.fillWarn : styles.fillOk,
-        )}
-      />
-    </div>
+    <MeterRoot value={Number(pct.toFixed(1))} aria-label={label}>
+      <MeterTrack {...stylex.props(styles.meter, big && styles.meterBig)}>
+        <MeterIndicator {...stylex.props(styles.fill, tone)} />
+      </MeterTrack>
+    </MeterRoot>
   );
 }
 

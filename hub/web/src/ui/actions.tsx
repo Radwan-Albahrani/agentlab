@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { Action } from '../api/types';
 import { Button, LinkButton, type ButtonLook, type Variant } from './Button';
 import { useAct, useFeedback } from './feedback';
@@ -10,13 +9,7 @@ export function ActButton({
   ...look
 }: ButtonLook & { url: string; body?: Record<string, unknown>; confirm?: string | null }) {
   const act = useAct();
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    setBusy(true);
-    await act(url, body, { confirm });
-    setBusy(false);
-  };
-  return <Button {...look} busy={busy} onClick={run} />;
+  return <Button {...look} onClick={() => act(url, body, { confirm })} />;
 }
 
 export function Actions({ actions }: { actions: Action[] }) {

@@ -2,9 +2,10 @@
 
 companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
   events(id, at, kind, title, task, "to", detail, ok)   append-only
-  tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated)
-    upserted, never deleted. kind: task | errand.
-    status: working | waiting ("waiting" says for what) | done | failed | stopped
+  tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated,
+        resumes_at) upserted, never deleted. kind: task | errand | review.
+    status: working | waiting ("waiting" says for what) | paused (usage limit; resumes_at: epoch or '') | done |
+      failed | stopped
   polls(id, task, open, closes, data, updated)   upserted; data JSON: question, channel,
     link, multiple, closed, options [{label, votes, voters [{name, avatar}]}]
   pulls(id, repo, number, updated, data)   replaced on each re-read;
@@ -13,7 +14,7 @@ companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
 heartbeat.json        {"name", "agent", "at", "since", "connected", "mode", "workspace", "channels", "people", "github"};
                       channels: [{"id", "name", "member"}] (member: bot can post);
                       people: [{"id", "name", "avatar"}] the options of "people" settings;
-                      github: {"ready", "bot", "accounts", "at", "error"}
+                      github: {"ready", "bot", "accounts", "at", "error", "people": [{"login", "avatar"}]}
 settings-schema.json  [{"key", "label", "help", "type": "choice"|"bool"|"text"|"people"|"links",
                         "options": [{"value", "label", "help"}], "default", "when"?: {"<other key>": [values it shows for]}}];
                       people: a list of user ids; links: [{"github": login, "slack": user id}]
@@ -43,6 +44,7 @@ CARD = (
     'thread',
     'slack',
     'source',
+    'resumes_at',
 )
 SCHEMA_SQL = f"""
 create table if not exists events (id integer primary key, at real not null, kind text, title text, task text, "to" text,
@@ -70,6 +72,8 @@ class Companion:
         self.db = sqlite3.connect(os.path.join(folder, 'companion.db'), check_same_thread=False, isolation_level=None)
         self.db.execute('pragma journal_mode=wal')
         self.db.executescript(SCHEMA_SQL)
+        if 'resumes_at' not in {r[1] for r in self.db.execute('pragma table_info(tasks)')}:  # a database from before it
+            self.db.execute('alter table tasks add column resumes_at text')
         self._write('settings-schema.json', self.schema)
 
     def _write(self, fname, data):

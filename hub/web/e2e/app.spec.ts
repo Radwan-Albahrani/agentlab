@@ -31,7 +31,8 @@ async function guard(page: Page) {
 }
 
 async function settled(page: Page) {
-  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 20_000 });
+  // the page's loading skeleton, not a button busy with its own action (UI SDK marks those aria-busy too)
+  await expect(page.locator('[aria-busy="true"][aria-label="Loading"]')).toHaveCount(0, { timeout: 20_000 });
   await expect(page.getByText('Could not load this')).toHaveCount(0);
 }
 
@@ -230,6 +231,18 @@ test('pull requests: without a GitHub App the page says how to connect one', asy
   await settled(page);
   await expect(page.locator('#pulls').getByText('Connect a GitHub App')).toBeVisible();
   await expect(page.locator('#pulls').getByText('companions/scout/github-app-id.txt', { exact: false })).toBeVisible();
+});
+
+test('companion tabs: switching tabs leaves the page where it is', async ({ page }) => {
+  await guard(page);
+  await page.goto('/agents/admin/scout');
+  await settled(page);
+  const before = await page.evaluate(() => window.scrollY);
+  for (const name of [/Tasks/, /Pull requests/, /Logs/]) {
+    await page.getByRole('tab', { name }).click();
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => window.scrollY)).toBe(before);
+  }
 });
 
 test('companion tabs: each view has its own URL and Back returns', async ({ page }) => {

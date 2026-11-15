@@ -1,5 +1,5 @@
 import type { Event, Poll, Task } from '../api/types';
-import { filterTasks, pollSummary, taskAge, taskWho, weekStats } from './companion';
+import { filterTasks, pollSummary, resumesLabel, taskAge, taskWho, weekStats } from './companion';
 
 const now = 1_800_000_000;
 const task = (over: Partial<Task>): Task => ({
@@ -47,6 +47,12 @@ describe('companion tasks', () => {
     expect(taskAge(tasks[2]!, now)).toBe('1 h 00 m');
     expect(taskAge(task({ endedAt: null, status: 'done' }), now)).toBe('');
     expect(taskAge(task({ status: 'working', startedAt: now - 660, endedAt: now - 480 }), now)).toBe('11 min');
+    expect(taskAge(task({ status: 'paused', startedAt: now - 660, endedAt: null }), now)).toBe('11 min');
+  });
+
+  it('says when a task paused by a usage limit resumes', () => {
+    expect(resumesLabel(null, now)).toBe('resumes when the limit resets');
+    expect(resumesLabel(now + 3600, now)).toMatch(/^resumes \d{1,2}:\d\d [AP]M$/);
   });
 });
 

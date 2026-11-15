@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { Pull, ReviewDetail } from '../../api/types';
+import { resumesLabel } from '../../lib/companion';
 import { ago, plural } from '../../lib/format';
 import { outcomeOf, outdated } from '../../lib/pulls';
 import { colors, font, radius, space, text } from '../../theme/tokens.stylex';
@@ -86,11 +87,13 @@ function Verdict({ p }: { p: Pull }) {
         ? ['eye', styles.warn, plural((c?.findings ?? 0) || (c?.open ?? 0), 'finding')]
         : o === 'clean'
           ? ['check', styles.ok, 'Approved · no findings']
-          : o === 'reviewing'
-            ? ['clock', styles.info, r?.status === 'queued' ? 'Queued for review' : 'Being reviewed now']
-            : o === 'failed'
-              ? ['alert', styles.bad, 'The review failed']
-              : ['eye', styles.faint, p.draft ? 'Draft · not reviewed yet' : 'Not reviewed yet'];
+          : o === 'reviewing' && r?.status === 'paused'
+            ? ['clock', styles.warn, `Paused for the usage limit · ${resumesLabel(r.resumes_at)}`]
+            : o === 'reviewing'
+              ? ['clock', styles.info, r?.status === 'queued' ? 'Queued for review' : 'Being reviewed now']
+              : o === 'failed'
+                ? ['alert', styles.bad, 'The review failed']
+                : ['eye', styles.faint, p.draft ? 'Draft · not reviewed yet' : 'Not reviewed yet'];
   const reviewed = r?.at ? Date.parse(r.at) / 1000 : 0;
   return (
     <div {...stylex.props(styles.verdict)}>

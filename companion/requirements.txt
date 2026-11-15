@@ -1,3 +1,4 @@
 slack_bolt==1.30.0
 PyJWT==2.15.1
 cryptography==50.0.2
+tzdata==2025.2

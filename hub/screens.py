@@ -131,7 +131,7 @@ def now():
     }
 
 
-BUSY = ('queued', 'working', 'waiting')
+BUSY = ('queued', 'working', 'waiting', 'paused')  # paused: a usage limit T3 resumes from on its own
 
 
 def outcome(p):
@@ -265,13 +265,14 @@ def companion(name):
             t,
             startedAt=epoch(t.get('started')),
             endedAt=epoch(t.get('ended')) or None,
+            resumesAt=float(t['resumes_at']) if t.get('resumes_at') else None,
             t3=notify.thread_link(c['profile'], t['thread']) if t.get('thread') else '',
         )
         for t in c['tasks']
     ]
     poll_of = {p['task']: p['id'] for p in c['polls']}
     for t in tasks:
-        t.pop('started', None), t.pop('ended', None)
+        t.pop('started', None), t.pop('ended', None), t.pop('resumes_at', None)
         t['poll'] = poll_of.get(t['id'])
     hb = c['heartbeat']
     mode = next(
