@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import type { AgentCard as Data } from '../api/types';
 import { capitalize, pct } from '../lib/format';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { LinkButton } from '../ui/Button';
 import { Brand, Icon } from '../ui/Icon';
 import { Inline, Split, Stack } from '../ui/layout';
@@ -14,48 +14,62 @@ import { Eyebrow, Text } from '../ui/text';
 const styles = stylex.create({
   card: {
     overflow: 'hidden',
-    borderRadius: radius.xxl,
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, ${agent.hue} 22%, ${colors.line})`,
-    backgroundColor: colors.panel,
-    boxShadow: colors.shadow,
-    minWidth: 0,
-  },
-  off: { borderColor: colors.line, opacity: 0.75 },
-  head: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: space.lg,
-    paddingBlock: space.xxl,
-    paddingInline: space.xxxl,
-    backgroundImage: `linear-gradient(120deg, color-mix(in srgb, ${agent.hue} 20%, transparent), transparent 70%)`,
-  },
-  name: { fontSize: text.lg, fontWeight: 700, letterSpacing: '-.01em' },
-  note: { fontSize: text.sm, color: colors.muted },
-  open: { marginInlineStart: 'auto', color: colors.faint, display: 'flex' },
-  body: { display: 'grid', gap: space.xxl, paddingBlock: space.xxl, paddingInline: space.xxxl },
-  // the four ways into the agent, as equal tiles
-  launch: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: space.sm },
-  tile: {
-    display: 'grid',
-    justifyItems: 'center',
-    gap: space.xxs,
-    paddingBlock: space.md,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: colors.line,
-    backgroundColor: { default: colors.raised, ':hover': `color-mix(in srgb, ${agent.hue} 12%, ${colors.raised})` },
-    color: { default: colors.fg, ':hover': agent.hue },
-    fontSize: text.sm,
-    fontWeight: 600,
-    transitionProperty: 'background-color, color, transform, border-color',
-    transitionDuration: '200ms',
-    transitionTimingFunction: motion.settle,
-    transform: { default: null, ':hover': 'translateY(-2px)', ':active': 'scale(.96)' },
+    backgroundColor: colors.panel,
+    minWidth: 0,
   },
-  tileOff: { opacity: 0.45, cursor: 'not-allowed', transform: 'none', font: 'inherit', fontSize: text.sm, fontWeight: 600 },
+  off: { opacity: 0.7 },
+  head: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.md,
+    paddingBlock: space.md,
+    paddingInline: space.xxl,
+    backgroundColor: { default: colors.raised, ':hover': colors.hover },
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: colors.line,
+
+    transitionProperty: 'background-color',
+    transitionDuration: '120ms',
+  },
+  name: { fontFamily: font.display, fontSize: text.lg, fontWeight: 600 },
+  note: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint },
+  open: { marginInlineStart: 'auto', color: colors.faint, display: 'flex' },
+  body: { display: 'grid', gap: space.xl, paddingBlock: space.xl, paddingInline: space.xxl },
+  // the four ways into the agent, as one segmented strip
+  launch: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 1,
+    backgroundColor: colors.line,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  tile: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    minHeight: 34,
+    borderWidth: 0,
+    backgroundColor: { default: colors.raised, ':hover': colors.hover },
+    color: { default: colors.fg, ':hover': colors.accent },
+    fontFamily: 'inherit',
+    fontSize: text.sm,
+    fontWeight: 500,
+    transitionProperty: 'background-color, color',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: -2,
+  },
+  tileOff: { color: { default: colors.faint, ':hover': colors.faint }, cursor: 'not-allowed' },
 });
 
 function readiness(a: Data): string {
@@ -73,13 +87,13 @@ function Tile({ to, icon, label }: { to: string | null; icon: string; label: str
         {...stylex.props(styles.tile, styles.tileOff)}
         title="No browser open: the view starts when the agent opens one"
       >
-        <Icon name={icon} />
+        <Icon name={icon} size={15} />
         {label}
       </button>
     );
   return (
     <a href={to} target="_blank" rel="noopener" {...stylex.props(styles.tile)}>
-      <Icon name={icon} />
+      <Icon name={icon} size={15} />
       {label}
     </a>
   );

@@ -1,9 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
-import { Toast } from '@base-ui/react/toast';
+import { createToaster, Toast, ToastClose, ToastRegion, ToastTitle } from '@ui-sdk/react/toast';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { post } from '../api/client';
-import { colors, radius, space, text } from '../theme/tokens.stylex';
+import { colors, motion, radius, space, text } from '../theme/tokens.stylex';
 import { ConfirmDialog } from './Dialog';
 import { Icon } from './Icon';
 
@@ -14,46 +14,59 @@ interface Feedback {
 
 const Ctx = createContext<Feedback | null>(null);
 
+const fading = ':is([data-starting-style], [data-ending-style])';
+
 const styles = stylex.create({
-  viewport: {
+  // the region is a top-layer popover: clear the UA popover box, then pin it bottom-right
+  region: {
     position: 'fixed',
-    right: 'max(20px, env(safe-area-inset-right))',
+    top: 'auto',
+    left: 'auto',
+    insetInlineEnd: 'max(20px, env(safe-area-inset-right))',
     bottom: 'max(20px, env(safe-area-inset-bottom))',
-    zIndex: 50,
-    display: 'grid',
-    gap: space.sm,
     width: 'min(340px, calc(100vw - 32px))',
+    margin: 0,
+    padding: 0,
+    borderWidth: 0,
+    overflow: 'visible',
+    backgroundColor: 'transparent',
+    color: colors.fg,
     outline: 'none',
   },
   toast: {
     display: 'flex',
     alignItems: 'center',
     gap: space.sm,
-    paddingBlock: space.sm,
-    paddingInlineStart: space.sm,
-    paddingInlineEnd: space.xs,
-    borderRadius: radius.md,
+    marginBlockStart: space.sm,
+    paddingBlock: space.md,
+    paddingInlineStart: space.md,
+    paddingInlineEnd: space.sm,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: colors.line2,
-    backgroundColor: colors.panel,
+    backgroundColor: colors.raised,
     color: colors.fg,
     boxShadow: colors.popShadow,
-    transition: 'opacity .2s, transform .2s',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
+    transitionProperty: 'opacity, transform',
+    transitionDuration: '160ms',
+    transitionTimingFunction: motion.settle,
+    opacity: { default: 1, [fading]: 0 },
+    transform: { default: 'none', [fading]: 'translateY(8px) scale(.97)' },
   },
-  moving: { opacity: 0, transform: 'translateX(16px)' },
   mark: {
     flex: 'none',
     width: 20,
     height: 20,
-    borderRadius: radius.pill,
+    borderRadius: radius.xs,
     display: 'grid',
     placeItems: 'center',
     backgroundColor: colors.okSoft,
     color: colors.ok,
   },
   markBad: { backgroundColor: colors.badSoft, color: colors.bad },
-  // Base UI renders the title as a heading
   title: {
     flexGrow: 1,
     minWidth: 0,
@@ -73,47 +86,18 @@ const styles = stylex.create({
     cursor: 'pointer',
     backgroundColor: { default: 'transparent', ':hover': colors.hover },
     color: { default: colors.faint, ':hover': colors.fg },
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
   },
 });
 
-function Toasts() {
-  const { toasts } = Toast.useToastManager();
-  return (
-    <Toast.Portal>
-      <Toast.Viewport {...stylex.props(styles.viewport)}>
-        {toasts.map((t) => (
-          <Toast.Root
-            key={t.id}
-            toast={t}
-            // oxlint-disable-next-line jsx-a11y/no-redundant-roles -- required: overrides Base UI's role="dialog"
-            render={<output role="status" />}
-            className={(s) =>
-              stylex.props(styles.toast, (s.transitionStatus === 'starting' || s.transitionStatus === 'ending') && styles.moving)
-                .className ?? ''
-            }
-          >
-            <span {...stylex.props(styles.mark, t.type === 'error' && styles.markBad)}>
-              <Icon name={t.type === 'error' ? 'alert' : 'check'} size={12} />
-            </span>
-            <Toast.Title {...stylex.props(styles.title)} />
-            <Toast.Close {...stylex.props(styles.close)} aria-label="Dismiss">
-              <Icon name="x" size={14} />
-            </Toast.Close>
-          </Toast.Root>
-        ))}
-      </Toast.Viewport>
-    </Toast.Portal>
-  );
-}
-
-function Provider({ children }: { children: ReactNode }) {
-  const manager = Toast.useToastManager();
+export function FeedbackProvider({ children }: { children: ReactNode }) {
+  const [toaster] = useState(() => createToaster<string>());
   const [ask, setAsk] = useState<{ text: string; resolve: (ok: boolean) => void } | null>(null);
   const toast = useCallback(
     (msg: string, bad = false) => {
-      manager.add({ title: msg, type: bad ? 'error' : 'info', timeout: bad ? 6000 : 3200 });
+      toaster(msg, { type: bad ? 'error' : 'info', duration: bad ? 6000 : 3200 });
     },
-    [manager],
+    [toaster],
   );
   const confirm = useCallback(
     (text: string) =>
@@ -131,16 +115,20 @@ function Provider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       <ConfirmDialog text={ask?.text ?? null} onAnswer={answer} />
-      <Toasts />
+      <ToastRegion toaster={toaster} side="bottom" align="end" maxVisible={3} {...stylex.props(styles.region)}>
+        {(t) => (
+          <Toast {...stylex.props(styles.toast)}>
+            <span {...stylex.props(styles.mark, t.type === 'error' && styles.markBad)}>
+              <Icon name={t.type === 'error' ? 'alert' : 'check'} size={12} />
+            </span>
+            <ToastTitle {...stylex.props(styles.title)} />
+            <ToastClose {...stylex.props(styles.close)} aria-label="Dismiss">
+              <Icon name="x" size={14} />
+            </ToastClose>
+          </Toast>
+        )}
+      </ToastRegion>
     </Ctx.Provider>
-  );
-}
-
-export function FeedbackProvider({ children }: { children: ReactNode }) {
-  return (
-    <Toast.Provider limit={3}>
-      <Provider>{children}</Provider>
-    </Toast.Provider>
   );
 }
 

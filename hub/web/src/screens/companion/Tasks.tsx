@@ -1,78 +1,203 @@
+import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import type { Task } from '../../api/types';
 import { filterTasks, TASK_FILTERS, TASK_PILL, taskAge, taskWho, WAITING, type TaskFilter } from '../../lib/companion';
-import { capitalize } from '../../lib/format';
+import { ago, capitalize, elapsed, plural } from '../../lib/format';
+import { usePages } from '../../lib/usePages';
+import { useNow } from '../../lib/useNow';
+import { colors, font, media, radius, space, text } from '../../theme/tokens.stylex';
 import { LinkButton } from '../../ui/Button';
 import { Card } from '../../ui/Card';
 import { Segments } from '../../ui/controls';
+import { Icon } from '../../ui/Icon';
 import { HScroll, Inline } from '../../ui/layout';
+import { Appear } from '../../ui/motion';
 import { Empty, Section } from '../../ui/page';
-import { List, Row } from '../../ui/Row';
-import { Pill } from '../../ui/status';
-import { Table, Td, Th, Tr } from '../../ui/Table';
-import { Text } from '../../ui/text';
-import { When } from '../../ui/When';
-import { usePages } from '../../lib/usePages';
 import { Pager } from '../../ui/Pager';
+import { IconBox, List, Row } from '../../ui/Row';
+import { Count, Pill } from '../../ui/status';
+import { Table, Td, Th, Tr } from '../../ui/Table';
+import { When } from '../../ui/When';
+import { Blink, LiveLine, Mono } from './parts';
 
 const PAGE = 12;
 
-function TaskLinks({ t, primary = false }: { t: Task; primary?: boolean }) {
+const styles = stylex.create({
+  // the one amber-edged panel: what waits on you, each with the button that takes you there
+  attention: {
+    overflow: 'hidden',
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: `color-mix(in srgb, ${colors.warn} 55%, ${colors.line})`,
+    backgroundColor: colors.panel,
+  },
+  attentionHead: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.md,
+    flexWrap: 'wrap',
+    paddingBlock: space.md,
+    paddingInline: space.xxl,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    fontWeight: 600,
+    letterSpacing: '.1em',
+    textTransform: 'uppercase',
+    color: colors.warn,
+    backgroundColor: colors.warnSoft,
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: `color-mix(in srgb, ${colors.warn} 30%, ${colors.line})`,
+  },
+  hint: {
+    marginInlineStart: 'auto',
+    fontFamily: font.sans,
+    fontSize: text.sm,
+    fontWeight: 400,
+    letterSpacing: 0,
+    textTransform: 'none',
+    color: colors.muted,
+  },
+  live: {
+    position: 'relative',
+    display: 'grid',
+    gridTemplateColumns: '32px minmax(0, 1fr) auto auto',
+    gap: space.md,
+    alignItems: 'center',
+    paddingBlock: space.md,
+    paddingInline: { default: space.xxl, [media.phone]: space.lg },
+    borderTopWidth: 1,
+    borderTopStyle: 'solid',
+    borderTopColor: colors.line,
+    backgroundColor: { default: 'transparent', ':hover': colors.hover },
+    transitionProperty: 'background-color',
+    transitionDuration: '140ms',
+  },
+  liveTitle: { fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  liveMeta: { fontSize: text.sm, color: colors.faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  timer: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontFamily: font.mono,
+    fontSize: text.md,
+    fontWeight: 500,
+    color: colors.info,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+  },
+  links: { display: 'flex', gap: space.xxs },
+  title: { fontWeight: 500, overflowWrap: 'anywhere' },
+  detail: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.xs,
+    color: colors.muted,
+    fontSize: text.md,
+    overflowWrap: 'anywhere',
+  },
+  meta: {
+    fontFamily: font.mono,
+    fontSize: text.sm,
+    color: colors.faint,
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+  },
+});
+
+const KIND_ICON: Record<string, string> = { errand: 'send', task: 'chat', review: 'pr' };
+
+function TaskLinks({ t, primary = false, compact = false }: { t: Task; primary?: boolean; compact?: boolean }) {
   return (
     <>
-      {t.slack && <LinkButton label="Slack" icon="slack" variant={primary ? 'primary' : 'default'} small to={t.slack} />}
-      {t.t3 && <LinkButton label="T3" icon="chat" variant="quiet" small to={t.t3} />}
+      {t.slack && (
+        <LinkButton
+          label={compact ? 'Open in Slack' : 'Slack'}
+          icon="slack"
+          variant={primary ? 'primary' : compact ? 'quiet' : 'default'}
+          small
+          iconOnly={compact}
+          to={t.slack}
+        />
+      )}
+      {t.t3 && (
+        <LinkButton label={compact ? 'Open in T3' : 'T3'} icon="chat" variant="quiet" small iconOnly={compact} to={t.t3} />
+      )}
     </>
   );
 }
 
+/** Status first: each task that needs a decision, with the button that takes you there. */
 export function WaitingTasks({ tasks }: { tasks: Task[] }) {
+  const now = useNow(15_000);
   const waiting = tasks.filter((t) => t.status === 'waiting');
   if (!waiting.length) return null;
   return (
-    <Section title="Waiting on you" sub="Decide in Slack; this page updates by itself.">
-      <Card>
-        <List>
-          {waiting.map((t) => (
+    <section {...stylex.props(styles.attention)} aria-label="Waiting on you">
+      <div {...stylex.props(styles.attentionHead)}>
+        <Count n={waiting.length} />
+        {waiting.length === 1 ? 'One task waits on you' : `${waiting.length} tasks wait on you`}
+        <span {...stylex.props(styles.hint)}>Decide in Slack; this page updates by itself.</span>
+      </div>
+      <List>
+        {waiting.map((t, i) => (
+          <Appear key={t.id} i={i}>
             <Row
-              key={t.id}
-              accent="warn"
-              icon={WAITING[t.waiting]?.icon ?? 'alert'}
-              tone="warn"
+              lead={<IconBox icon={WAITING[t.waiting]?.icon ?? 'alert'} tone="warn" />}
               title={t.title}
               detail={`${WAITING[t.waiting]?.label ?? 'Needs you'}${t.requester ? ` · ${taskWho(t)}` : ''}`}
-              meta={<When t={t.startedAt} />}
+              meta={t.startedAt ? <Mono>started {ago(t.startedAt, now)}</Mono> : undefined}
               actions={<TaskLinks t={t} primary />}
             />
-          ))}
-        </List>
-      </Card>
-    </Section>
+          </Appear>
+        ))}
+      </List>
+    </section>
   );
 }
 
-export function WorkingTasks({ tasks, now }: { tasks: Task[]; now: number }) {
+/** What runs this second, each with a ticking stopwatch and a dashed line running under it. */
+export function WorkingTasks({ tasks, name }: { tasks: Task[]; name: string }) {
+  const now = useNow(1000);
   const working = tasks.filter((t) => t.status === 'working');
   return (
-    <Section title="Working now">
+    <Section
+      title="Working now"
+      icon="bot"
+      sub={working.length ? `${plural(working.length, 'task')} in progress, live` : undefined}
+    >
       <Card>
         {working.length ? (
           <List>
-            {working.map((t) => (
-              <Row
-                key={t.id}
-                icon={t.poll ? 'poll' : 'clock'}
-                tone="info"
-                title={t.title}
-                detail={t.poll ? t.outcome : `${t.requester ? `${taskWho(t)} · ` : ''}running ${taskAge(t, now)}`}
-                meta={<When t={t.startedAt} />}
-                actions={<TaskLinks t={t} />}
-                live
-              />
+            {working.map((t, i) => (
+              <Appear key={t.id} i={i}>
+                <div {...stylex.props(styles.live)}>
+                  <IconBox icon={t.poll ? 'poll' : (KIND_ICON[t.kind] ?? 'bot')} tone="info" />
+                  <div>
+                    <div {...stylex.props(styles.liveTitle)} title={t.title}>
+                      {t.title}
+                    </div>
+                    <div {...stylex.props(styles.liveMeta)}>{t.poll ? t.outcome : `${capitalize(t.kind)} · ${taskWho(t)}`}</div>
+                  </div>
+                  <span {...stylex.props(styles.timer)} title="Running for">
+                    {t.startedAt ? elapsed(now - t.startedAt) : ''}
+                    <Blink />
+                  </span>
+                  <span {...stylex.props(styles.links)}>
+                    <TaskLinks t={t} compact />
+                  </span>
+                  <LiveLine />
+                </div>
+              </Appear>
             ))}
           </List>
         ) : (
-          <Empty title="Idle" text="Nothing running right now." icon="clock" />
+          <Empty
+            icon="bot"
+            title="Nothing running right now"
+            text={`Tag @${name} in Slack to hand it a task; it shows up here live.`}
+          />
         )}
       </Card>
     </Section>
@@ -82,16 +207,18 @@ export function WorkingTasks({ tasks, now }: { tasks: Task[]; now: number }) {
 export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
   const [filter, setFilter] = useState<TaskFilter>('all');
   const pages = usePages(filterTasks(tasks, filter), PAGE);
-  const shown = pages.shown;
+  const options = TASK_FILTERS.map((f) => ({ ...f, count: filterTasks(tasks, f.value).length }));
   return (
     <Section
       title="Tasks"
+      icon="log"
+      sub="Everything it took on, with who asked and how it went."
       right={
         <Inline gap="md">
           <Segments
             label="Filter tasks"
             value={filter}
-            options={TASK_FILTERS}
+            options={options}
             onChange={(v) => {
               setFilter(v);
               pages.setPage(0);
@@ -104,6 +231,8 @@ export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
       <Card>
         {tasks.length === 0 ? (
           <Empty title="No tasks yet" text="Tag the companion in Slack to give it one." icon="bot" />
+        ) : pages.shown.length === 0 ? (
+          <Empty title="Nothing here" text="No task matches this filter." icon="filter" />
         ) : (
           <HScroll>
             <Table
@@ -119,16 +248,9 @@ export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
                 </>
               }
             >
-              {shown.map((t) => (
+              {pages.shown.map((t) => (
                 <TaskRow key={t.id} t={t} now={now} />
               ))}
-              {shown.length === 0 && (
-                <Tr>
-                  <Td muted colSpan={5}>
-                    Nothing here.
-                  </Td>
-                </Tr>
-              )}
             </Table>
           </HScroll>
         )}
@@ -139,29 +261,37 @@ export function TaskTable({ tasks, now }: { tasks: Task[]; now: number }) {
 
 function TaskRow({ t, now }: { t: Task; now: number }) {
   const [label, tone] = TASK_PILL[t.status] ?? [t.status, 'idle'];
+  const took = taskAge(t, now);
+  const going = t.status === 'working' || t.status === 'waiting';
   return (
     <Tr>
       <Td>
-        <Text weight="semibold" block>
-          {t.title}
-        </Text>
-        <Text tone="muted" size="md" block>
-          {capitalize(t.kind)} · {taskWho(t)}
-          {t.outcome ? ` · ${t.outcome}` : ''}
-        </Text>
+        <div {...stylex.props(styles.title)}>{t.title}</div>
+        <div {...stylex.props(styles.detail)}>
+          <Icon name={KIND_ICON[t.kind] ?? 'chat'} size={13} />
+          <span>
+            {capitalize(t.kind)} · {taskWho(t)}
+            {t.outcome ? ` · ${t.outcome}` : ''}
+          </span>
+        </div>
+        {t.status === 'working' && <LiveLine inline />}
       </Td>
-      <Td>
-        <Pill tone={tone}>{label}</Pill>
+      <Td fit>
+        <Pill tone={tone} dot={going}>
+          {label}
+        </Pill>
       </Td>
-      <Td wide muted>
-        <When t={t.startedAt} />
+      <Td wide fit>
+        <span {...stylex.props(styles.meta)}>
+          <When t={t.startedAt} />
+        </span>
       </Td>
-      <Td num wide muted>
-        {taskAge(t, now)}
+      <Td num wide>
+        {took && <span {...stylex.props(styles.meta)}>{took}</span>}
       </Td>
       <Td num>
-        <Inline gap="xs" end>
-          <TaskLinks t={t} />
+        <Inline gap="xs" end nowrap>
+          <TaskLinks t={t} compact />
         </Inline>
       </Td>
     </Tr>

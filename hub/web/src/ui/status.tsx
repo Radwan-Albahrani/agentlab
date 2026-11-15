@@ -2,56 +2,69 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, radius, space, text } from '../theme/tokens.stylex';
+import { agent, colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'info' | 'idle';
 
-const pulse = stylex.keyframes({
-  '0%': { boxShadow: '0 0 0 0 color-mix(in srgb, currentColor 45%, transparent)' },
-  '70%': { boxShadow: '0 0 0 6px transparent' },
-  '100%': { boxShadow: '0 0 0 0 transparent' },
-});
+const blink = stylex.keyframes({ '50%': { opacity: 0.3 } });
 
 const styles = stylex.create({
   count: {
     display: 'inline-grid',
     placeItems: 'center',
-    minWidth: 20,
-    height: 20,
-    paddingInline: space.xs,
-    borderRadius: radius.pill,
+    minWidth: 18,
+    height: 18,
+    paddingInline: space.xxs,
+    borderRadius: radius.xs,
+    fontFamily: font.mono,
     fontSize: text.xxs,
-    fontWeight: 700,
-    backgroundColor: colors.bad,
-    color: colors.onFill,
+    fontWeight: 600,
+    // amber: something here waits on you
+    backgroundColor: colors.accent,
+    color: colors.accentFg,
   },
+  // a squared status tag in mono capitals
   pill: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: space.xs,
-    fontSize: text.xs,
-    fontWeight: 600,
-    paddingBlock: space.xxxs,
-    paddingInline: space.md,
-    borderRadius: radius.pill,
+    fontFamily: font.mono,
+    fontSize: text.xxs,
+    fontWeight: 500,
+    letterSpacing: '.05em',
+    textTransform: 'uppercase',
+    paddingBlock: 1,
+    paddingInline: space.xs,
+    borderRadius: radius.xs,
     whiteSpace: 'nowrap',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line2,
     backgroundColor: colors.idleSoft,
     color: colors.muted,
   },
-  ok: { backgroundColor: colors.okSoft, color: colors.ok },
-  warn: { backgroundColor: colors.warnSoft, color: colors.warn },
-  bad: { backgroundColor: colors.badSoft, color: colors.bad },
-  info: { backgroundColor: colors.accentSoft, color: colors.accent },
+  ok: { backgroundColor: colors.okSoft, color: colors.ok, borderColor: `color-mix(in srgb, ${colors.ok} 30%, transparent)` },
+  warn: {
+    backgroundColor: colors.warnSoft,
+    color: colors.warn,
+    borderColor: `color-mix(in srgb, ${colors.warn} 35%, transparent)`,
+  },
+  bad: { backgroundColor: colors.badSoft, color: colors.bad, borderColor: `color-mix(in srgb, ${colors.bad} 35%, transparent)` },
+  info: {
+    backgroundColor: colors.infoSoft,
+    color: colors.info,
+    borderColor: `color-mix(in srgb, ${colors.info} 30%, transparent)`,
+  },
   idle: {},
-  pillDot: { width: 7, height: 7, borderRadius: '50%', backgroundColor: 'currentColor' },
-  pulsing: { animationName: pulse, animationDuration: '2s', animationIterationCount: 'infinite' },
-  dot: { width: 7, height: 7, borderRadius: '50%', flexShrink: 0, display: 'inline-block' },
+  pillDot: { width: 6, height: 6, backgroundColor: 'currentColor' },
+  pulsing: { animationName: blink, animationDuration: '1.6s', animationIterationCount: 'infinite' },
+  dot: { width: 7, height: 7, flexShrink: 0, display: 'inline-block' },
   dotOk: { backgroundColor: colors.ok },
   dotBad: { backgroundColor: colors.bad },
   meter: {
     height: 6,
-    borderRadius: radius.pill,
+    borderRadius: radius.xs,
     backgroundColor: colors.sunk,
     overflow: 'hidden',
     borderWidth: 1,
@@ -62,7 +75,6 @@ const styles = stylex.create({
   fill: (pct: number) => ({
     display: 'block',
     height: '100%',
-    borderRadius: radius.pill,
     width: `${pct}%`,
     transition: 'width .4s',
   }),
@@ -75,7 +87,8 @@ const styles = stylex.create({
     borderRadius: radius.md,
     display: 'inline-grid',
     placeItems: 'center',
-    fontWeight: 700,
+    fontFamily: font.mono,
+    fontWeight: 600,
     fontSize: text.lg,
     color: colors.onFill,
     backgroundColor: agent.hue,
@@ -104,16 +117,19 @@ const styles = stylex.create({
     placeItems: 'center',
     flexShrink: 0,
     color: agent.hue,
-    backgroundColor: `color-mix(in srgb, ${agent.hue} 16%, ${colors.panel})`,
+    backgroundColor: colors.panel,
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, ${agent.hue} 35%, transparent)`,
+    borderColor: `color-mix(in srgb, ${agent.hue} 55%, ${colors.line})`,
   },
   avatarSm: { width: 30, height: 30, borderRadius: radius.sm },
   avatarLg: { width: 56, height: 56, borderRadius: radius.xxl },
   tag: {
+    fontFamily: font.mono,
     fontSize: text.xxs,
-    fontWeight: 600,
+    fontWeight: 500,
+    textTransform: 'uppercase',
+    letterSpacing: '.05em',
     whiteSpace: 'nowrap',
     paddingBlock: space.xxxs,
     paddingInline: space.sm,
@@ -152,7 +168,7 @@ const styles = stylex.create({
 export function Pill({ tone = 'idle', dot, children }: { tone?: Tone; dot?: boolean; children: ReactNode }) {
   return (
     <span {...stylex.props(styles.pill, styles[tone])}>
-      {dot && <i {...stylex.props(styles.pillDot, tone === 'ok' && styles.pulsing)} />}
+      {dot && <i {...stylex.props(styles.pillDot, tone === 'info' && styles.pulsing)} />}
       {children}
     </span>
   );

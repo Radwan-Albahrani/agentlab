@@ -1,12 +1,71 @@
-import { useState } from 'react';
+import * as stylex from '@stylexjs/stylex';
+import { useState, type ReactNode } from 'react';
 import type { Manage, ManagedAgent } from '../../api/types';
 import { gb } from '../../lib/format';
+import { colors, radius, space, text } from '../../theme/tokens.stylex';
 import { Button } from '../../ui/Button';
 import { Dialog, DialogActions } from '../../ui/Dialog';
 import { useAct } from '../../ui/feedback';
 import { Field, TextInput } from '../../ui/inputs';
 import { Stack } from '../../ui/layout';
 import { Note, Text } from '../../ui/text';
+
+const styles = stylex.create({
+  choices: { display: 'grid', gap: space.sm },
+  choice: {
+    display: 'grid',
+    gridTemplateColumns: '18px minmax(0, 1fr)',
+    gap: space.md,
+    alignItems: 'start',
+    paddingBlock: space.lg,
+    paddingInline: space.xl,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: { default: colors.line2, ':hover': colors.faint },
+    backgroundColor: colors.panel,
+    cursor: 'pointer',
+    transitionProperty: 'border-color, background-color',
+    transitionDuration: '140ms',
+  },
+  on: {
+    borderColor: { default: colors.accent, ':hover': colors.accent },
+    backgroundColor: colors.accentSoft,
+  },
+  onDanger: {
+    borderColor: { default: colors.bad, ':hover': colors.bad },
+    backgroundColor: colors.badSoft,
+  },
+  radio: { margin: 0, marginBlockStart: 3, accentColor: colors.accent },
+  radioDanger: { accentColor: colors.bad },
+  title: { fontWeight: 600 },
+  help: { display: 'block', fontSize: text.md, color: colors.muted, marginBlockStart: space.xxxs },
+});
+
+/** A radio as a selectable card. */
+function Choice({
+  on,
+  danger,
+  title,
+  help,
+  onPick,
+}: {
+  on: boolean;
+  danger?: boolean;
+  title: string;
+  help?: ReactNode;
+  onPick: () => void;
+}) {
+  return (
+    <label {...stylex.props(styles.choice, on && (danger ? styles.onDanger : styles.on))}>
+      <input type="radio" checked={on} onChange={onPick} {...stylex.props(styles.radio, danger && styles.radioDanger)} />
+      <span>
+        <span {...stylex.props(styles.title)}>{title}</span>
+        {help && <span {...stylex.props(styles.help)}>{help}</span>}
+      </span>
+    </label>
+  );
+}
 
 /** POST, then close on success. */
 function useSubmit(url: string, onClose: () => void) {
@@ -206,31 +265,25 @@ function RemoveForm({ agent, onClose }: { agent: ManagedAgent; onClose: () => vo
       <Text>
         Its container stops and goes, and {agent.owner} can no longer open it. Choose what happens to its files{size}:
       </Text>
-      <Stack gap="sm">
-        <label>
-          <input
-            type="radio"
-            checked={!deleteData}
-            onChange={() => {
-              setDeleteData(false);
-            }}
-          />{' '}
-          <b>Keep its files</b>{' '}
-          <Text tone="muted">
-            — home, workspace and chats stay on the server; adding an agent with the same name brings them back.
-          </Text>
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={deleteData}
-            onChange={() => {
-              setDeleteData(true);
-            }}
-          />{' '}
-          <b>Delete everything</b> <Text tone="muted">— frees the space; it cannot be undone.</Text>
-        </label>
-      </Stack>
+      <div {...stylex.props(styles.choices)}>
+        <Choice
+          on={!deleteData}
+          title="Keep its files"
+          help="Home, workspace and chats stay on the server; adding an agent with the same name brings them back."
+          onPick={() => {
+            setDeleteData(false);
+          }}
+        />
+        <Choice
+          on={deleteData}
+          danger
+          title="Delete everything"
+          help="Frees the space; it cannot be undone."
+          onPick={() => {
+            setDeleteData(true);
+          }}
+        />
+      </div>
       {deleteData && (
         <Field label={`Type ${agent.id} to confirm`}>
           <TextInput value={confirm} onChange={setConfirm} mono />
@@ -281,31 +334,23 @@ function DisksForm({ d, onClose }: { d: Manage; onClose: () => void }) {
       }}
     >
       <Stack gap="lg">
-        <Stack gap="sm">
-          <label>
-            <input
-              type="radio"
-              checked={auto}
-              onChange={() => {
-                setAuto(true);
-              }}
-            />{' '}
-            <b>Automatic</b>{' '}
-            <Text tone="muted">
-              — the server's disk, minus a reserve, split evenly between everyone. Recalculated when people come and go.
-            </Text>
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={!auto}
-              onChange={() => {
-                setAuto(false);
-              }}
-            />{' '}
-            <b>The same fixed size for everyone</b>
-          </label>
-        </Stack>
+        <div {...stylex.props(styles.choices)}>
+          <Choice
+            on={auto}
+            title="Automatic"
+            help="The server's disk, minus a reserve, split evenly between everyone. Recalculated when people come and go."
+            onPick={() => {
+              setAuto(true);
+            }}
+          />
+          <Choice
+            on={!auto}
+            title="The same fixed size for everyone"
+            onPick={() => {
+              setAuto(false);
+            }}
+          />
+        </div>
         {auto ? (
           <Field label="Keep for the server (a share like 15% or a size like 64g)">
             <TextInput value={reserve} onChange={setReserve} width="short" />

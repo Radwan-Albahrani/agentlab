@@ -4,59 +4,60 @@ import { Link, useLocation } from 'react-router';
 import { useNav, useNowBoard } from '../api/queries';
 import { useNow } from '../lib/useNow';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, media, motion, radius, space, text } from '../theme/tokens.stylex';
+import { agent, colors, font, media, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from '../ui/Icon';
 import { Badge, Count, Dot } from '../ui/status';
 import { isActive, type Menu, type MenuItem } from './menu';
 import { openPalette } from './Palette';
 import { ThemeToggle } from './ThemeToggle';
 
-const bounce = stylex.keyframes({ '0%, 100%': { transform: 'scaleY(.35)' }, '50%': { transform: 'scaleY(1)' } });
-
-const breathe = stylex.keyframes({
-  '0%': { boxShadow: `0 0 0 0 color-mix(in srgb, ${colors.ok} 55%, transparent)` },
-  '70%': { boxShadow: '0 0 0 7px transparent' },
-  '100%': { boxShadow: '0 0 0 0 transparent' },
-});
+const blink = stylex.keyframes({ '50%': { opacity: 0.2 } });
 
 const styles = stylex.create({
   side: {
     position: 'sticky',
     top: 0,
     height: '100vh',
-    paddingBlock: space.xxxl,
-    paddingInline: space.xl,
-    backgroundColor: `color-mix(in srgb, ${colors.panel} 72%, transparent)`,
-    backdropFilter: 'saturate(160%) blur(18px)',
+    paddingBlock: space.xxl,
+    paddingInline: space.md,
+    backgroundColor: colors.panel,
     overflow: 'auto',
     borderRightWidth: 1,
     borderRightStyle: 'solid',
     borderRightColor: colors.line,
     display: { default: 'flex', [media.nav]: 'none' },
     flexDirection: 'column',
-    gap: space.xxl,
+    gap: space.lg,
   },
-  brand: { display: 'flex', alignItems: 'center', gap: space.md, paddingBlock: space.xxxs, paddingInline: space.sm },
+  brand: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingInline: space.sm,
+    paddingBlockEnd: space.xs,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    letterSpacing: '.14em',
+    textTransform: 'uppercase',
+    color: colors.faint,
+  },
   logo: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.md,
-    backgroundColor: colors.fg,
-    backgroundImage: `linear-gradient(140deg, ${colors.accent}, color-mix(in srgb, ${colors.accent} 40%, #a855f7))`,
-    boxShadow: `0 6px 18px -6px color-mix(in srgb, ${colors.accent} 70%, transparent), inset 0 1px 0 rgba(255,255,255,.25)`,
-    color: colors.onFill,
+    width: 22,
+    height: 22,
+    borderRadius: radius.sm,
+    backgroundColor: colors.accent,
+    color: colors.accentFg,
     display: 'grid',
     placeItems: 'center',
     userSelect: 'none',
     cursor: 'default',
   },
-  brandName: { display: 'block', fontSize: text.lg, fontWeight: 700, letterSpacing: '-.01em' },
-  brandSub: { display: 'block', color: colors.faint, fontSize: text.xs, lineHeight: 1.2 },
-  nav: { display: 'grid', gap: space.xxxs },
+  brandName: { color: colors.fg, fontWeight: 600 },
+  nav: { display: 'grid', gap: 1 },
   group: {
+    fontFamily: font.mono,
     fontSize: text.xxs,
-    fontWeight: 600,
-    letterSpacing: '.07em',
+    letterSpacing: '.14em',
     textTransform: 'uppercase',
     color: colors.faint,
     paddingBlockStart: space.xl,
@@ -68,64 +69,65 @@ const styles = stylex.create({
     display: 'flex',
     alignItems: 'center',
     gap: space.md,
-    paddingBlock: space.sm,
+    paddingBlock: space.xs,
     paddingInline: space.md,
-    borderRadius: radius.md,
-    fontWeight: 500,
+    minHeight: 32,
+    borderRadius: radius.sm,
+    fontSize: text.base,
     color: { default: colors.muted, ':hover': colors.fg },
     backgroundColor: { default: null, ':hover': colors.hover },
-    transitionProperty: 'background-color, color, transform, box-shadow',
-    transitionDuration: '200ms',
-    transitionTimingFunction: motion.settle,
-    transform: { default: null, ':active': 'scale(.97)' },
+    transitionProperty: 'background-color, color',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: -2,
   },
+  // the current page: one fill step and a heavier weight
   on: {
-    backgroundColor: { default: colors.panel, ':hover': colors.panel },
     color: { default: colors.fg, ':hover': colors.fg },
+    backgroundColor: { default: colors.raised, ':hover': colors.raised },
     fontWeight: 600,
-    boxShadow: colors.shadow,
   },
-  // the selected item's accent bar, in the agent's colour under an agent
-  onBar: {
-    position: 'absolute',
-    insetInlineStart: -7,
-    top: 9,
-    bottom: 9,
-    width: 3,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-  },
-  onBarHue: { backgroundColor: agent.hue },
-  nested: {
-    marginInlineStart: space.xxxl,
-    paddingInlineStart: space.lg,
-    borderStartStartRadius: 0,
-    borderEndStartRadius: 0,
-    borderLeftWidth: 2,
-    borderLeftStyle: 'solid',
-    borderLeftColor: `color-mix(in srgb, ${agent.hue} 70%, transparent)`,
-  },
+  nested: { paddingInlineStart: 36 },
   companionIcon: { color: agent.hue, display: 'flex' },
   end: { marginInlineStart: 'auto', display: 'flex', alignItems: 'center' },
-  note: { fontSize: text.sm, color: colors.faint },
-  bottom: { marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  foot: { fontSize: text.xs, color: colors.faint, paddingInline: space.sm, display: 'flex', alignItems: 'center', gap: space.sm },
+  note: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint },
+  bottom: {
+    marginTop: 'auto',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    paddingBlockStart: space.md,
+    borderTopWidth: 1,
+    borderTopStyle: 'solid',
+    borderTopColor: colors.line,
+  },
+  foot: {
+    fontFamily: font.mono,
+    fontSize: text.xxs,
+    letterSpacing: '.1em',
+    textTransform: 'uppercase',
+    color: colors.faint,
+    paddingInline: space.sm,
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.sm,
+  },
   liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
+    width: 7,
+    height: 7,
     backgroundColor: colors.ok,
-    animationName: breathe,
-    animationDuration: '2.4s',
+    animationName: blink,
+    animationDuration: '2s',
     animationIterationCount: 'infinite',
   },
   lostDot: { backgroundColor: colors.warn, animationName: 'none' },
   search: {
     display: 'flex',
     alignItems: 'center',
-    gap: space.md,
+    gap: space.sm,
     width: '100%',
-    paddingBlock: space.sm,
+    minHeight: 32,
     paddingInline: space.md,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -133,16 +135,17 @@ const styles = stylex.create({
     borderColor: { default: colors.line, ':hover': colors.line2 },
     backgroundColor: { default: colors.sunk, ':hover': colors.hover },
     color: colors.faint,
-    font: 'inherit',
+    fontFamily: 'inherit',
     fontSize: text.base,
     cursor: 'pointer',
     transitionProperty: 'background-color, border-color',
-    transitionDuration: '160ms',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
   },
   kbd: {
     marginInlineStart: 'auto',
+    fontFamily: font.mono,
     fontSize: text.xxs,
-    fontWeight: 600,
     paddingBlock: 1,
     paddingInline: space.xs,
     borderRadius: radius.xs,
@@ -151,38 +154,28 @@ const styles = stylex.create({
     borderColor: colors.line2,
     backgroundColor: colors.panel,
   },
-  // three bars bouncing out of step: this agent is working right now
-  bars: { display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: 12 },
-  bar: (delay: string) => ({
-    width: 2.5,
-    height: 12,
-    borderRadius: 2,
-    backgroundColor: agent.hue,
-    transformOrigin: 'bottom',
-    animationName: bounce,
+  // running: a steel count beside a blinking block; waiting on you: an amber count
+  busy: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    color: colors.info,
+  },
+  block: {
+    width: 6,
+    height: 10,
+    backgroundColor: colors.info,
+    animationName: blink,
     animationDuration: '1s',
-    animationDelay: delay,
     animationIterationCount: 'infinite',
-    animationTimingFunction: 'ease-in-out',
-  }),
-  busy: { display: 'inline-flex', alignItems: 'center', gap: space.xs, fontSize: text.xs, fontWeight: 650, color: agent.hue },
-  wait: {
-    display: 'inline-grid',
-    placeItems: 'center',
-    minWidth: 20,
-    height: 20,
-    paddingInline: space.xs,
-    borderRadius: radius.pill,
-    fontSize: text.xxs,
-    fontWeight: 700,
-    backgroundColor: colors.warn,
-    color: colors.onFill,
   },
 });
 
 type Activity = Partial<Record<string, { running: number; waiting: number }>>;
 
-/** Whether the page still hears from the hub: a breathing dot, or a warning once answers stop. */
+/** Whether the page still hears from the hub: a blinking block, or a warning once answers stop. */
 function Live() {
   const { isError, dataUpdatedAt } = useNav();
   const now = useNow(10_000);
@@ -201,28 +194,24 @@ function MarkIcon({ item }: { item: MenuItem }) {
   if ('companionOf' in m)
     return (
       <span {...stylex.props(styles.companionIcon)}>
-        <Icon name="bot" />
+        <Icon name="bot" size={16} />
       </span>
     );
-  return <Icon name={m.icon} />;
+  return <Icon name={m.icon} size={16} />;
 }
 
 function Trailing({ item, live }: { item: MenuItem; live?: { running: number; waiting: number } }) {
   if (live?.waiting)
     return (
       <span {...stylex.props(styles.end)} title={`${live.waiting} waiting on you`}>
-        <span {...stylex.props(styles.wait)}>{live.waiting}</span>
+        <Count n={live.waiting} />
       </span>
     );
   if (live?.running)
     return (
       <span {...stylex.props(styles.end)} title={`${live.running} running`}>
         <span {...stylex.props(styles.busy)}>
-          <span {...stylex.props(styles.bars)}>
-            {['0s', '.25s', '.5s'].map((d) => (
-              <i key={d} {...stylex.props(styles.bar(d))} />
-            ))}
-          </span>
+          <i {...stylex.props(styles.block)} />
           {live.running}
         </span>
       </span>
@@ -246,11 +235,16 @@ function Trailing({ item, live }: { item: MenuItem; live?: { running: number; wa
 function SideLink({ item, activity }: { item: MenuItem; activity: Activity }) {
   const { pathname } = useLocation();
   const owner = 'companionOf' in item.mark ? item.mark.companionOf : 'agent' in item.mark ? item.mark.agent : undefined;
-  const nested = 'companionOf' in item.mark;
-  const on = isActive(item, pathname);
   return (
-    <Link to={item.to} {...stylex.props(hueTheme(owner), styles.link, nested && styles.nested, on && styles.on)}>
-      {on && !nested && <i {...stylex.props(styles.onBar, !!owner && styles.onBarHue)} />}
+    <Link
+      to={item.to}
+      {...stylex.props(
+        hueTheme(owner),
+        styles.link,
+        'companionOf' in item.mark && styles.nested,
+        isActive(item, pathname) && styles.on,
+      )}
+    >
       <MarkIcon item={item} />
       <span>{item.label}</span>
       <Trailing item={item} live={'agent' in item.mark ? activity[item.mark.agent] : undefined} />
@@ -277,15 +271,14 @@ export function Sidebar({ menu, onLogo }: { menu: Menu; onLogo: (e: MouseEvent) 
       <div {...stylex.props(styles.brand)}>
         {/* Not a control on purpose: hidden presenting switch; Alt+Shift+P is its keyboard twin. */}
         <span {...stylex.props(styles.logo)} role="presentation" onClick={onLogo}>
-          <Icon name="agents" size={17} />
+          <Icon name="agents" size={14} />
         </span>
         <Link to="/">
-          <b {...stylex.props(styles.brandName)}>Agents</b>
-          <small {...stylex.props(styles.brandSub)}>Cluster control</small>
+          <span {...stylex.props(styles.brandName)}>Agents</span>
         </Link>
       </div>
       <button type="button" {...stylex.props(styles.search)} onClick={openPalette}>
-        <Icon name="search" size={16} />
+        <Icon name="search" size={15} />
         Search
         <kbd {...stylex.props(styles.kbd)}>Ctrl K</kbd>
       </button>

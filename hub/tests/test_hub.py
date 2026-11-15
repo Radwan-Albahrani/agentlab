@@ -419,6 +419,14 @@ class Screens(unittest.TestCase):
             ],
         )
 
+    def test_now_shows_only_the_viewers_own_agents_even_to_an_admin(self):
+        scope.use(scope.of('admin@example.com', admin=True))
+        try:
+            self.assertTrue(scope.current().sees_agent('sara'))
+            self.assertEqual([a['name'] for a in screens.now()['agents']], ['admin'])
+        finally:
+            scope.use(scope.ADMIN)
+
     def test_agents_come_from_the_config(self):
         nav = screens.nav()
         self.assertEqual([a['name'] for a in nav['agents']], ['admin', 'sara', 'lab'])

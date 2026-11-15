@@ -6,25 +6,82 @@ import { colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { useAct } from '../ui/feedback';
+import { Icon } from '../ui/Icon';
+import { Spacer } from '../ui/layout';
+import { When } from '../ui/When';
 
 const GIVE_UP_MS = 45_000;
 
+const run = stylex.keyframes({ to: { backgroundPosition: '20px 0' } });
+
 const styles = stylex.create({
+  console: {
+    position: 'relative',
+    display: 'grid',
+    minWidth: 0,
+    overflow: 'hidden',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    backgroundColor: colors.sunk,
+  },
+  bar: {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingBlock: space.sm,
+    paddingInline: space.lg,
+    fontFamily: font.mono,
+    fontSize: text.xxs,
+    letterSpacing: '.06em',
+    textTransform: 'uppercase',
+    fontVariantNumeric: 'tabular-nums',
+    color: colors.faint,
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: colors.line,
+    backgroundColor: colors.raised,
+  },
+  name: {
+    fontSize: text.xs,
+    textTransform: 'none',
+    letterSpacing: 0,
+    color: colors.muted,
+    fontWeight: 600,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  dot: { width: 7, height: 7, flexShrink: 0, backgroundColor: colors.faint },
+  dotOk: { backgroundColor: colors.ok },
+  dotBad: { backgroundColor: colors.bad },
   pre: {
     margin: 0,
-    maxHeight: '65vh',
+    maxHeight: '62vh',
     overflow: 'auto',
     whiteSpace: 'pre-wrap',
     overflowWrap: 'anywhere',
     fontFamily: font.mono,
     fontSize: text.xs,
-    padding: space.lg,
-    borderRadius: radius.md,
-    backgroundColor: colors.sunk,
+    lineHeight: 1.6,
+    paddingBlock: space.lg,
+    paddingInline: space.xl,
     color: colors.fg,
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: colors.line,
+  },
+  waiting: { color: colors.faint },
+  // the running dashed line under the bar while the watcher fetches
+  live: {
+    position: 'absolute',
+    insetInline: 0,
+    bottom: -1,
+    height: 1,
+    backgroundImage: `repeating-linear-gradient(90deg, ${colors.info} 0 6px, transparent 6px 10px)`,
+    backgroundSize: '20px 1px',
+    animationName: run,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
+    animationIterationCount: 'infinite',
   },
 });
 
@@ -52,6 +109,7 @@ export function LogsProvider({ children }: { children: ReactNode }) {
         }}
         wide
         title={request ? containerLabel(request.name) : ''}
+        text="The last 400 lines, newest at the bottom."
       >
         {request && <Tail key={request.since} request={request} />}
         <DialogActions>
@@ -97,10 +155,27 @@ function Tail({ request }: { request: Request }) {
     : gaveUp
       ? 'The watcher did not answer in time. Try Refresh.'
       : 'Fetching the last 400 lines…';
+  const lines = fresh?.text ? fresh.text.trimEnd().split('\n').length : 0;
   return (
-    <pre ref={pre} {...stylex.props(styles.pre)} data-logs>
-      {shown}
-    </pre>
+    <div {...stylex.props(styles.console)}>
+      <div {...stylex.props(styles.bar)}>
+        <i {...stylex.props(styles.dot, !!fresh && styles.dotOk, !fresh && gaveUp && styles.dotBad)} />
+        <Icon name="terminal" size={14} />
+        <span {...stylex.props(styles.name)}>{request.name}</span>
+        <Spacer />
+        {fresh ? (
+          <span>
+            {lines} lines · <When t={fresh.at} />
+          </span>
+        ) : (
+          <span>{gaveUp ? 'no answer' : 'fetching'}</span>
+        )}
+        {!fresh && !gaveUp && <span {...stylex.props(styles.live)} />}
+      </div>
+      <pre ref={pre} {...stylex.props(styles.pre, !fresh && styles.waiting)} data-logs>
+        {shown}
+      </pre>
+    </div>
   );
 }
 

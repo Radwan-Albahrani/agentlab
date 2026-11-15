@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, motion, radius, space } from '../theme/tokens.stylex';
+import { colors, radius, space } from '../theme/tokens.stylex';
 
 const styles = stylex.create({
   card: {
@@ -11,28 +11,25 @@ const styles = stylex.create({
     borderStyle: 'solid',
     borderColor: colors.line,
     borderRadius: radius.xl,
-    boxShadow: colors.shadow,
     minWidth: 0,
     overflow: 'hidden',
   },
   open: { overflow: 'visible' },
-  warn: { borderLeftWidth: 3, borderLeftColor: colors.warn },
-  bad: { borderLeftWidth: 3, borderLeftColor: colors.bad },
-  info: { borderLeftWidth: 3, borderLeftColor: colors.accent },
-  agentTop: { borderTopWidth: 3, borderTopColor: agent.hue },
+  // a whole border in the tone, not a stripe down one edge
+  warn: { borderColor: `color-mix(in srgb, ${colors.warn} 55%, ${colors.line})`, backgroundColor: colors.warnSoft },
+  bad: { borderColor: `color-mix(in srgb, ${colors.bad} 55%, ${colors.line})`, backgroundColor: colors.badSoft },
+  info: { borderColor: `color-mix(in srgb, ${colors.info} 45%, ${colors.line})` },
+  agentTop: {},
   agentLeft: {
     display: 'flex',
     alignItems: 'center',
     gap: space.lg,
-    paddingBlock: space.xl,
+    paddingBlock: space.lg,
     paddingInline: space.xxl,
-    backgroundImage: `linear-gradient(100deg, color-mix(in srgb, ${agent.hue} 12%, transparent), transparent 45%)`,
-    borderColor: { default: `color-mix(in srgb, ${agent.hue} 25%, ${colors.line})`, ':hover': agent.hue },
-    transform: { default: null, ':hover': 'translateY(-2px)', ':active': 'scale(.99)' },
-    boxShadow: { default: colors.shadow, ':hover': colors.hoverShadow },
-    transitionProperty: 'transform, box-shadow, border-color',
-    transitionDuration: '260ms',
-    transitionTimingFunction: motion.settle,
+    backgroundColor: { default: colors.panel, ':hover': colors.hover },
+    borderColor: { default: colors.line, ':hover': colors.line2 },
+    transitionProperty: 'background-color, border-color',
+    transitionDuration: '140ms',
   },
   body: { padding: space.xxl, display: 'grid', gap: space.md },
   bodyRoomy: { gap: space.xl },
@@ -40,15 +37,18 @@ const styles = stylex.create({
     display: 'flex',
     alignItems: 'center',
     gap: space.lg,
-    paddingBlock: space.xl,
+    paddingBlock: space.lg,
     paddingInline: space.xxl,
     flexWrap: 'wrap',
-    backgroundColor: `color-mix(in srgb, ${agent.hue} 9%, ${colors.panel})`,
+    backgroundColor: colors.raised,
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: colors.line,
   },
   divided: { borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: colors.line },
 });
 
-/** `accent` adds a coloured left edge; `overflow` lets popovers out. */
+/** A panel on a hairline. `accent` tints it for attention; `overflow` lets popovers out. */
 export function Card({
   accent,
   agentTop,

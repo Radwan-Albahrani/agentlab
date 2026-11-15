@@ -1,14 +1,15 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, media, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, media, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 import type { Tone } from './status';
 
-const sweep = stylex.keyframes({ from: { transform: 'translateX(-100%)' }, to: { transform: 'translateX(250%)' } });
+const run = stylex.keyframes({ to: { backgroundPosition: '20px 0' } });
 
 const styles = stylex.create({
-  list: { display: 'grid' },
+  // every row draws its own top hairline (wrappers like Appear break :first-child); the list hides the first one
+  list: { display: 'grid', marginBlockStart: -1 },
   row: {
     position: 'relative',
     display: 'flex',
@@ -18,45 +19,35 @@ const styles = stylex.create({
     paddingInline: space.xxl,
     minWidth: 0,
     transitionProperty: 'background-color',
-    transitionDuration: '160ms',
-    borderTopWidth: { default: 1, ':first-child': 0 },
+    transitionDuration: '140ms',
+    borderTopWidth: 1,
     borderTopStyle: 'solid',
     borderTopColor: colors.line,
     flexWrap: { default: 'nowrap', [media.phone]: 'wrap' },
   },
   flat: { paddingInline: 0, paddingBlock: space.md },
   wrap: { flexWrap: 'wrap' },
-  warn: { borderLeftWidth: 3, borderLeftStyle: 'solid', borderLeftColor: colors.warn },
-  bad: { borderLeftWidth: 3, borderLeftStyle: 'solid', borderLeftColor: colors.bad },
-  info: { borderLeftWidth: 3, borderLeftStyle: 'solid', borderLeftColor: colors.accent },
-  nested: {
-    marginInlineStart: space.huge,
-    borderLeftWidth: 2,
-    borderLeftStyle: 'solid',
-    borderLeftColor: `color-mix(in srgb, ${agent.hue} 60%, transparent)`,
-  },
-  // a light sweeping along the bottom edge: work in progress
+  // attention as a fill step, never a stripe down one edge
+  warn: { backgroundColor: `color-mix(in srgb, ${colors.warnSoft} 55%, transparent)` },
+  bad: { backgroundColor: `color-mix(in srgb, ${colors.badSoft} 60%, transparent)` },
+  info: {},
+  // a companion under its agent: indented on a neutral structural hairline
+  nested: { marginInlineStart: space.huge, borderLeftWidth: 1, borderLeftStyle: 'solid', borderLeftColor: colors.line },
+  // a dashed line running along the bottom edge: work in progress
   liveBar: {
     position: 'absolute',
-    insetInline: space.xxl,
-    bottom: 0,
-    height: 2,
-    overflow: 'hidden',
-    borderRadius: 99,
-    backgroundColor: `color-mix(in srgb, ${colors.accent} 12%, transparent)`,
-  },
-  liveLight: {
-    display: 'block',
-    width: '40%',
-    height: '100%',
-    backgroundImage: `linear-gradient(90deg, transparent, ${colors.accent}, transparent)`,
-    animationName: sweep,
-    animationDuration: '1.8s',
-    animationTimingFunction: motion.settle,
+    insetInline: 0,
+    bottom: -1,
+    height: 1,
+    backgroundImage: `repeating-linear-gradient(90deg, ${colors.info} 0 6px, transparent 6px 10px)`,
+    backgroundSize: '20px 1px',
+    animationName: run,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
   },
   grow: { flex: '1', minWidth: 0 },
-  title: { fontWeight: 600, overflowWrap: 'anywhere' },
+  title: { fontWeight: 500, overflowWrap: 'anywhere' },
   detail: { color: colors.muted, fontSize: text.md, overflowWrap: 'anywhere' },
   meta: { color: colors.faint, fontSize: text.sm, whiteSpace: 'nowrap', order: { default: null, [media.phone]: 3 } },
   actions: {
@@ -69,8 +60,8 @@ const styles = stylex.create({
     paddingInlineStart: { default: 0, [media.phone]: 46 },
   },
   box: {
-    width: 36,
-    height: 36,
+    width: 32,
+    height: 32,
     borderRadius: radius.lg,
     display: 'grid',
     placeItems: 'center',
@@ -81,7 +72,7 @@ const styles = stylex.create({
   ok: { backgroundColor: colors.okSoft, color: colors.ok },
   boxWarn: { backgroundColor: colors.warnSoft, color: colors.warn },
   boxBad: { backgroundColor: colors.badSoft, color: colors.bad },
-  boxInfo: { backgroundColor: colors.accentSoft, color: colors.accent },
+  boxInfo: { backgroundColor: colors.infoSoft, color: colors.info },
 });
 
 const BOX_TONE = { ok: styles.ok, warn: styles.boxWarn, bad: styles.boxBad, info: styles.boxInfo, idle: null };
@@ -126,11 +117,7 @@ export function Row({ icon, tone, lead, title, detail, meta, actions, accent, ne
       </div>
       {meta && <div {...stylex.props(styles.meta)}>{meta}</div>}
       {actions && <div {...stylex.props(styles.actions)}>{actions}</div>}
-      {live && (
-        <span {...stylex.props(styles.liveBar)}>
-          <i {...stylex.props(styles.liveLight)} />
-        </span>
-      )}
+      {live && <span {...stylex.props(styles.liveBar)} />}
     </div>
   );
 }

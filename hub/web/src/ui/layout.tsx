@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
-import { space } from '../theme/tokens.stylex';
+import { radius, space } from '../theme/tokens.stylex';
 
 type Gap = 'xxs' | 'xs' | 'sm' | 'md' | 'lg' | 'xxl';
 
@@ -22,7 +22,15 @@ const styles = stylex.create({
   split: { display: 'flex', justifyContent: 'space-between', gap: space.md, alignItems: 'center', flexWrap: 'wrap' },
   baseline: { alignItems: 'baseline' },
   grid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: space.xxl, alignItems: 'start' },
-  stats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: space.lg },
+  // one strip of cells on hairlines: each cell draws a 1px ring into the 1px gap, so a leftover slot stays clear
+  stats: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: 1,
+    padding: 1,
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+  },
   grow: { flex: '1', minWidth: 0 },
   scroll: { overflowX: 'auto' },
 });

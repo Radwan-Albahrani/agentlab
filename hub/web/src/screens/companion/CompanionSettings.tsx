@@ -8,44 +8,56 @@ import { SubmitField } from '../../ui/inputs';
 import { Empty } from '../../ui/page';
 import { Picker } from '../../ui/Picker';
 import { Setting, Settings } from '../../ui/Settings';
-import { Badge } from '../../ui/status';
 import { colors, radius, space, text } from '../../theme/tokens.stylex';
+import { Avatar } from './parts';
 
 const styles = stylex.create({
-  people: { display: 'grid', gap: space.sm, minWidth: 0 },
+  people: { display: 'grid', gap: space.md, minWidth: 0 },
   search: { display: 'flex', minWidth: 0 },
-  list: {
-    display: 'grid',
+  list: { display: 'flex', flexWrap: 'wrap', gap: space.sm },
+  person: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.sm,
+    maxWidth: '100%',
+    paddingBlock: space.xxs,
+    paddingInlineStart: space.xxs,
+    paddingInlineEnd: space.xxs,
+    borderRadius: radius.sm,
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: colors.line,
-    borderRadius: radius.md,
-    overflow: 'hidden',
+    borderColor: colors.line2,
+    backgroundColor: colors.raised,
   },
-  person: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: space.md,
-    paddingBlock: space.sm,
-    paddingInline: space.md,
-    minWidth: 0,
-    borderTopWidth: { default: 1, ':first-child': 0 },
-    borderTopStyle: 'solid',
-    borderTopColor: colors.line,
-  },
-  face: { width: 28, height: 28, borderRadius: radius.pill, objectFit: 'cover', flexShrink: 0 },
-  name: { flexGrow: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  name: { minWidth: 0, fontWeight: 500, fontSize: text.md, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   remove: {
     appearance: 'none',
     borderWidth: 0,
     padding: space.xxs,
-    borderRadius: radius.sm,
+    borderRadius: radius.xs,
     display: 'flex',
     cursor: 'pointer',
-    backgroundColor: { default: 'transparent', ':hover': colors.hover },
-    color: { default: colors.faint, ':hover': colors.fg },
+    backgroundColor: { default: 'transparent', ':hover': colors.badSoft },
+    color: { default: colors.faint, ':hover': colors.bad },
+    transitionProperty: 'background-color, color',
+    transitionDuration: '140ms',
+    opacity: { default: 1, ':active': 0.85 },
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
-  none: { fontSize: text.sm, color: colors.faint, paddingInline: space.xxs },
+  none: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingBlock: space.md,
+    paddingInline: space.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.line2,
+    fontSize: text.md,
+    color: colors.muted,
+  },
 });
 
 export function CompanionSettings({ name, display, fields }: { name: string; display: string; fields: SettingField[] }) {
@@ -100,18 +112,17 @@ function People({ field: f, onChange }: { field: SettingField; onChange: (v: unk
         />
       </div>
       {picked.length === 0 ? (
-        <span {...stylex.props(styles.none)}>Only you can tag it right now.</span>
+        <span {...stylex.props(styles.none)}>
+          <Icon name="key" size={15} />
+          Only you can tag it right now.
+        </span>
       ) : (
         <div {...stylex.props(styles.list)}>
           {picked.map((id) => {
             const label = byId[id]?.label ?? id;
             return (
-              <div key={id} {...stylex.props(styles.person)}>
-                {byId[id]?.avatar ? (
-                  <img src={byId[id].avatar} alt="" {...stylex.props(styles.face)} />
-                ) : (
-                  <Badge name={label} size="sm" />
-                )}
+              <span key={id} {...stylex.props(styles.person)}>
+                <Avatar name={label} src={byId[id]?.avatar} size={24} />
                 <span {...stylex.props(styles.name)}>{label}</span>
                 <button
                   type="button"
@@ -120,9 +131,9 @@ function People({ field: f, onChange }: { field: SettingField; onChange: (v: unk
                   onClick={() => onChange(picked.filter((p) => p !== id))}
                   {...stylex.props(styles.remove)}
                 >
-                  <Icon name="x" size={15} />
+                  <Icon name="x" size={14} />
                 </button>
-              </div>
+              </span>
             );
           })}
         </div>

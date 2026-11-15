@@ -25,6 +25,10 @@ class Viewer:
     def sees_agent(self, agent_id):
         return self.admin or agent_id in self.agents
 
+    def owns(self, agent_id):
+        """Their own agent (an admin sees others' agents, but not what those agents are working on)."""
+        return agent_id in self.agents or self is ADMIN
+
     def sees_companion(self, name):
         owner = cluster.companions().get(name)
         return owner is not None and self.sees_agent(owner)

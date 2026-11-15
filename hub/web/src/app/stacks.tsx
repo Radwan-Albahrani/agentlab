@@ -3,16 +3,18 @@ import type { ReactNode } from 'react';
 import type { Container, Stack } from '../api/types';
 import { capitalize, plural } from '../lib/format';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, space, text } from '../theme/tokens.stylex';
+import { colors, font, radius, space, text } from '../theme/tokens.stylex';
 import { ActButton } from '../ui/actions';
 import { Button, LinkButton } from '../ui/Button';
 import { Card, DomainHead } from '../ui/Card';
 import { EmptyCard } from '../ui/page';
 import { IconBox, List, Row } from '../ui/Row';
-import { Badge, CompanionAvatar, Dot, Tag } from '../ui/status';
+import { Badge, CompanionAvatar, Tag } from '../ui/status';
 import { Mono, Text } from '../ui/text';
 import { useLogs } from './logs';
 import { useCanSee } from './useCanSee';
+
+const blink = stylex.keyframes({ '50%': { opacity: 0.3 } });
 
 const styles = stylex.create({
   head: {
@@ -30,17 +32,79 @@ const styles = stylex.create({
   companion: {
     marginInlineStart: space.xxl,
     paddingInlineStart: space.xxl,
-    borderLeftWidth: 2,
+    borderLeftWidth: 1,
     borderLeftStyle: 'solid',
-    borderLeftColor: `color-mix(in srgb, ${agent.hue} 60%, transparent)`,
+    borderLeftColor: colors.line,
   },
   who: { display: 'flex', alignItems: 'center', gap: space.md, minWidth: 0 },
   grow: { flex: '1', minWidth: 0 },
   acts: { display: 'flex', gap: space.xs, flexWrap: 'wrap', alignItems: 'center' },
-  status: { display: 'inline-flex', alignItems: 'center', gap: space.xs, fontSize: text.sm, color: colors.faint },
+  status: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    fontVariantNumeric: 'tabular-nums',
+    color: colors.faint,
+  },
+  uptime: { fontFamily: font.mono, fontSize: text.xs, fontVariantNumeric: 'tabular-nums' },
+  // a square status light in a one-step well; a blinking coral block when down
+  well: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
+    display: 'grid',
+    placeItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    backgroundColor: colors.raised,
+  },
+  wellBad: { backgroundColor: colors.badSoft, borderColor: `color-mix(in srgb, ${colors.bad} 40%, ${colors.line})` },
+  light: { width: 8, height: 8, backgroundColor: colors.ok },
+  lightBad: {
+    backgroundColor: colors.bad,
+    animationName: blink,
+    animationDuration: '1.2s',
+    animationTimingFunction: 'steps(1)',
+    animationIterationCount: 'infinite',
+  },
+  health: {
+    marginInlineStart: space.sm,
+    fontFamily: font.mono,
+    fontSize: text.xxs,
+    fontWeight: 500,
+    letterSpacing: '.05em',
+    textTransform: 'uppercase',
+    paddingBlock: 0,
+    paddingInline: space.xs,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: `color-mix(in srgb, ${colors.ok} 30%, transparent)`,
+    verticalAlign: 1,
+    backgroundColor: colors.okSoft,
+    color: colors.ok,
+  },
+  healthBad: {
+    backgroundColor: colors.badSoft,
+    color: colors.bad,
+    borderColor: `color-mix(in srgb, ${colors.bad} 35%, transparent)`,
+  },
+  healthIdle: { backgroundColor: colors.idleSoft, color: colors.muted, borderColor: colors.line2 },
+  name: { fontFamily: font.display, fontWeight: 600, fontSize: text.body },
 });
 
 const isCompanion = (s: { role: string | null }) => !!s.role && s.role !== 'agent';
+
+/** Docker's "Up 2 hours (healthy)" as "up 2 hours" and "healthy"; anything else (Exited (1) …) as it is. */
+export function readStatus(c: Container): { uptime: string; health: string } {
+  const m = /^Up (.+?)(?: \((?:health: )?([^)]+)\))?$/.exec(c.status);
+  if (!m) return { uptime: c.status, health: '' };
+  return { uptime: `up ${(m[1] ?? '').toLowerCase()}`, health: m[2] ?? '' };
+}
 
 /** Shown until the host watcher has reported container health once. */
 export const WATCHER_PENDING = {
@@ -60,24 +124,43 @@ export function StackName({ stack }: { stack: { label: string; profile: string |
   if (stack.profile && stack.role && isCompanion(stack))
     return (
       <>
-        <b>{capitalize(stack.role)}</b>
+        <b {...stylex.props(styles.name)}>{capitalize(stack.role)}</b>
         <Tag>companion</Tag>
       </>
     );
   if (stack.profile)
     return (
       <>
-        <b>{stack.profile}</b>
+        <b {...stylex.props(styles.name)}>{stack.profile}</b>
         <Tag>agent</Tag>
       </>
     );
-  return <b>{stack.label}</b>;
+  return <b {...stylex.props(styles.name)}>{stack.label}</b>;
+}
+
+export const StatusLight = ({ ok }: { ok: boolean }) => (
+  <span {...stylex.props(styles.well, !ok && styles.wellBad)}>
+    <i {...stylex.props(styles.light, !ok && styles.lightBad)} />
+  </span>
+);
+
+export function HealthTag({ c }: { c: Container }) {
+  const { health } = readStatus(c);
+  const word = health || (c.healthy ? '' : c.state);
+  if (!word) return null;
+  return (
+    <span
+      {...stylex.props(styles.health, !c.healthy && styles.healthBad, c.healthy && health !== 'healthy' && styles.healthIdle)}
+    >
+      {word}
+    </span>
+  );
 }
 
 const Status = ({ c }: { c: Container }) => (
   <span {...stylex.props(styles.status)}>
-    <Dot ok={c.healthy} />
-    {c.status}
+    {readStatus(c).uptime}
+    <HealthTag c={c} />
   </span>
 );
 
@@ -104,7 +187,8 @@ export function StackHead({
   );
 }
 
-function ContainerActions({ stack, c }: { stack: Stack; c: Container }) {
+/** Logs, and Restart (asks first) for anything but Coolify itself. */
+export function ContainerActions({ stack, c }: { stack: Stack; c: Container }) {
   const openLogs = useLogs();
   const warn = `Restart ${c.service}? ${
     stack.role === 'agent' ? 'Running agent chats are interrupted (they can be continued).' : 'It is back in a few seconds.'
@@ -126,10 +210,10 @@ function ContainerActions({ stack, c }: { stack: Stack; c: Container }) {
   );
 }
 
-export function ConfigLink({ stack }: { stack: { id: string } }) {
+export function ConfigLink({ stack, iconOnly }: { stack: { id: string }; iconOnly?: boolean }) {
   const canSee = useCanSee();
   if (stack.id === 'coolify' || stack.id === 'other' || !canSee('/config')) return null;
-  return <LinkButton label="Config" icon="sliders" variant="quiet" small to={`/config/${stack.id}`} />;
+  return <LinkButton label="Config" icon="sliders" variant="quiet" small iconOnly={iconOnly} to={`/config/${stack.id}`} />;
 }
 
 export function StackBlock({ stack }: { stack: Stack }) {
@@ -157,13 +241,24 @@ export function ContainerRows({ stack }: { stack: Stack }) {
       {stack.containers.map((c) => (
         <Row
           key={c.name}
-          icon="power"
-          tone={c.healthy ? 'ok' : 'bad'}
-          title={c.service}
+          lead={<StatusLight ok={c.healthy} />}
+          accent={c.healthy ? undefined : 'bad'}
+          title={
+            <>
+              {c.service}
+              <HealthTag c={c} />
+            </>
+          }
           nestedUnder={isCompanion(stack) ? stack.profile : null}
           detail={
             <>
-              {c.status} · <Mono>{c.image}</Mono>
+              <span {...stylex.props(styles.uptime)}>{readStatus(c).uptime}</span>
+              {c.image && (
+                <>
+                  {' · '}
+                  <Mono>{c.image}</Mono>
+                </>
+              )}
             </>
           }
           actions={<ContainerActions stack={stack} c={c} />}
@@ -185,11 +280,11 @@ export function DomainCard({
   children?: ReactNode;
 }) {
   return (
-    <Card agentTop={profile}>
+    <Card>
       <DomainHead>
         <Badge name={profile} />
         <div {...stylex.props(styles.grow)}>
-          <b>{profile}</b>
+          <b {...stylex.props(styles.name)}>{profile}</b>
           <Text block tone="faint" size="md">
             {sub}
           </Text>

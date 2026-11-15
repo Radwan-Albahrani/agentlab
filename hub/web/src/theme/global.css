@@ -1,8 +1,8 @@
+@layer ui-sdk;
+
 /* What StyleX can't target: the document itself. Everything else is styled in its component. */
 :root {
   color-scheme: light dark;
-  --glow-a: light-dark(rgba(54, 84, 245, 0.07), rgba(110, 130, 255, 0.09));
-  --glow-b: light-dark(rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.05));
 }
 *,
 *::before,
@@ -11,34 +11,25 @@
 }
 html {
   -webkit-text-size-adjust: 100%;
-  scrollbar-color: light-dark(#cfcfc8, #2a2b33) transparent;
+  scrollbar-color: light-dark(#bdbcb4, #3a3f48) transparent;
   scrollbar-width: thin;
 }
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: light-dark(#f4f4f1, #07080b);
-  /* two faint glows behind everything, fixed, so the page has depth without noise */
-  background-image:
-    radial-gradient(900px 520px at 78% -8%, var(--glow-a), transparent 70%),
-    radial-gradient(700px 480px at 12% 108%, var(--glow-b), transparent 70%);
-  background-attachment: fixed;
-  color: light-dark(#121316, #f1f1f4);
+  background-color: light-dark(#ecebe7, #121417);
+  color: light-dark(#15171a, #e6e8eb);
   font:
-    14.5px/1.5 Geist,
-    Inter,
+    14px/1.5 'IBM Plex Sans',
     ui-sans-serif,
     -apple-system,
-    BlinkMacSystemFont,
     'Segoe UI',
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'ss01';
-  letter-spacing: -0.005em;
 }
 ::selection {
-  background: light-dark(rgba(54, 84, 245, 0.18), rgba(142, 163, 255, 0.3));
+  background: light-dark(rgba(163, 93, 0, 0.2), rgba(242, 169, 59, 0.3));
 }
 a {
   color: inherit;

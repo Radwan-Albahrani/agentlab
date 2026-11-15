@@ -2,23 +2,44 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, font, media, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 import { Card } from './Card';
 import { Num } from './motion';
 import { Badge } from './status';
-import { Eyebrow } from './text';
 
-const shimmer = stylex.keyframes({ from: { backgroundPosition: '200% 0' }, to: { backgroundPosition: '-200% 0' } });
+const pulse = stylex.keyframes({ '50%': { opacity: 0.45 } });
 
 const styles = stylex.create({
   head: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: space.xl, flexWrap: 'wrap' },
+  headMain: { display: 'flex', alignItems: 'center', gap: space.xl, minWidth: 0 },
+  headIcon: {
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    display: 'grid',
+    placeItems: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line2,
+    backgroundColor: colors.panel,
+    color: colors.accent,
+  },
+  kicker: {
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    letterSpacing: '.1em',
+    textTransform: 'uppercase',
+    color: colors.faint,
+  },
   h1: {
+    fontFamily: font.display,
     fontSize: text.display,
-    fontWeight: 700,
+    fontWeight: 600,
     lineHeight: 1.1,
-    letterSpacing: '-.03em',
-    marginBlockStart: space.xxxs,
+    letterSpacing: '-.01em',
+    marginBlockStart: space.xxs,
     marginBlockEnd: space.xs,
     marginInline: 0,
     textWrap: 'balance',
@@ -27,32 +48,41 @@ const styles = stylex.create({
     gap: space.md,
     flexWrap: 'wrap',
   },
-  lede: { margin: 0, color: colors.muted, maxWidth: '68ch', fontSize: text.body },
+  lede: { margin: 0, color: colors.muted, maxWidth: '72ch', fontSize: text.body },
   actions: { display: 'flex', gap: space.sm, flexWrap: 'wrap' },
   section: { display: 'grid', gap: space.lg, minWidth: 0, scrollMarginTop: 80 },
-  sectionHead: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: space.lg, flexWrap: 'wrap' },
-  h2: { fontSize: text.xl, fontWeight: 650, margin: 0, letterSpacing: '-.02em' },
-  sub: { marginBlockStart: space.xxxs, marginBlockEnd: '0', marginInline: 0, color: colors.muted, fontSize: text.md },
+  // a mono label on a hairline rule, its count or action at the right
+  sectionHead: { display: 'flex', alignItems: 'center', gap: space.lg, flexWrap: 'wrap', minHeight: 30 },
+  rule: { flex: '1', minWidth: 24, height: 1, backgroundColor: colors.line },
+  h2: {
+    margin: 0,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    fontWeight: 600,
+    letterSpacing: '.12em',
+    textTransform: 'uppercase',
+    color: colors.fg,
+  },
+  sectionTitle: { display: 'flex', alignItems: 'center', gap: space.sm, color: colors.faint },
+  sub: { margin: 0, color: colors.faint, fontSize: text.sm },
   hero: {
-    position: 'relative',
-    overflow: 'hidden',
     display: 'flex',
     gap: space.xxxl,
     alignItems: 'center',
-    padding: space.huge,
-    borderRadius: radius.xxl,
+    paddingBlock: space.xxxl,
+    paddingInline: space.huge,
+    borderRadius: radius.xl,
     flexWrap: 'wrap',
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, ${agent.hue} 28%, ${colors.line})`,
-    boxShadow: colors.shadow,
+    borderColor: colors.line,
     backgroundColor: colors.panel,
-    backgroundImage: `radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, ${agent.hue} 24%, transparent), transparent 55%), radial-gradient(80% 120% at 100% 100%, color-mix(in srgb, ${agent.hue} 9%, transparent), transparent 60%)`,
   },
   heroText: { flex: '1', minWidth: 220 },
   heroTitle: {
+    fontFamily: font.display,
     fontSize: text.display,
-    fontWeight: 700,
+    fontWeight: 600,
     lineHeight: 1.1,
     marginBlock: space.xxs,
     marginInline: 0,
@@ -60,46 +90,43 @@ const styles = stylex.create({
     alignItems: 'center',
     gap: space.md,
     flexWrap: 'wrap',
-    letterSpacing: '-.03em',
   },
-  crumb: { display: 'inline-flex', alignItems: 'center', gap: space.xs, fontSize: text.sm, fontWeight: 600, color: colors.muted },
-  crumbLink: { display: 'inline-flex', alignItems: 'center', gap: space.xs, color: { default: colors.fg, ':hover': agent.hue } },
+  crumb: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    letterSpacing: '.06em',
+    textTransform: 'uppercase',
+    color: colors.faint,
+  },
+  crumbLink: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.xs,
+    color: { default: colors.muted, ':hover': colors.fg },
+  },
+  // a cell of a number strip (StatGrid draws the hairlines between cells)
   stat: {
     position: 'relative',
-    overflow: 'hidden',
     backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: colors.line,
-    borderRadius: radius.xl,
-    paddingBlock: space.xxl,
-    paddingInline: space.xxxl,
+    boxShadow: `0 0 0 1px ${colors.line}`,
+    paddingBlock: space.xl,
+    paddingInline: space.xxl,
     display: 'grid',
     gap: space.xxs,
-    boxShadow: colors.shadow,
-    transitionProperty: 'transform, box-shadow, border-color',
-    transitionDuration: '260ms',
-    transitionTimingFunction: motion.settle,
+    alignContent: 'start',
+    transitionProperty: 'background-color',
+    transitionDuration: '140ms',
   },
-  statLink: {
-    borderColor: { default: colors.line, ':hover': colors.line2 },
-    transform: { default: null, ':hover': 'translateY(-2px)', ':active': 'scale(.985)' },
-    boxShadow: { default: colors.shadow, ':hover': colors.hoverShadow },
-  },
-  // a thin line of the number's tone along the top edge, fading out
-  statGlow: {
-    position: 'absolute',
-    insetInline: 0,
-    top: 0,
-    height: 2,
-    backgroundImage: 'linear-gradient(90deg, currentColor, transparent 75%)',
-    pointerEvents: 'none',
-  },
-  statLabel: { fontSize: text.sm, color: colors.muted, fontWeight: 550 },
+  statLink: { backgroundColor: { default: colors.panel, ':hover': colors.hover } },
+  statLabel: { fontSize: text.sm, color: colors.muted, display: 'flex', alignItems: 'center', gap: space.xs },
   statValue: {
-    fontSize: text.display,
-    fontWeight: 700,
-    letterSpacing: '-.035em',
+    fontFamily: font.mono,
+    fontSize: { default: text.display, [media.phone]: text.xxl },
+    fontWeight: 500,
+    letterSpacing: '-.03em',
     lineHeight: 1.1,
     fontVariantNumeric: 'tabular-nums',
   },
@@ -107,40 +134,44 @@ const styles = stylex.create({
   ok: { color: colors.ok },
   warn: { color: colors.warn },
   bad: { color: colors.bad },
-  info: { color: colors.accent },
+  info: { color: colors.info },
   idle: {},
-  small: { fontSize: text.body, color: colors.faint, fontWeight: 500, letterSpacing: 0, marginInlineStart: 2 },
-  empty: {
-    display: 'flex',
-    gap: space.xl,
-    alignItems: 'center',
-    padding: space.xxxl,
-    color: colors.muted,
-  },
+  toneDot: { width: 7, height: 7, backgroundColor: 'currentColor', display: 'inline-block' },
+  small: { fontSize: text.base, color: colors.faint, fontWeight: 400, letterSpacing: 0, marginInlineStart: 3 },
+  empty: { display: 'flex', gap: space.xl, alignItems: 'center', padding: space.xxxl, color: colors.muted },
   emptyIcon: {
-    color: colors.ok,
+    color: colors.faint,
     display: 'grid',
     placeItems: 'center',
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     flexShrink: 0,
     borderRadius: radius.lg,
-    backgroundColor: colors.okSoft,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.line2,
   },
+  emptyOk: { color: colors.ok, borderStyle: 'solid', borderColor: `color-mix(in srgb, ${colors.ok} 40%, transparent)` },
   emptyTitle: { color: colors.fg, fontWeight: 600 },
   emptyText: { marginBlockStart: space.xxxs, marginBlockEnd: '0', marginInline: 0, fontSize: text.md },
-  loading: { display: 'grid', gap: space.huge },
-  loadingRow: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: space.lg },
+  loading: { display: 'grid', gap: space.xxl },
+  loadingRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: 1,
+    backgroundColor: colors.line,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+  },
   bone: (height: number, width: string) => ({
     display: 'block',
     height,
     width,
-    borderRadius: radius.xl,
-    backgroundImage: `linear-gradient(90deg, ${colors.sunk} 0%, ${colors.hover} 50%, ${colors.sunk} 100%)`,
-    backgroundSize: '200% 100%',
-    animationName: shimmer,
-    animationDuration: '1.6s',
-    animationTimingFunction: 'linear',
+    borderRadius: radius.md,
+    backgroundColor: colors.panel,
+    animationName: pulse,
+    animationDuration: '1.4s',
     animationIterationCount: 'infinite',
   }),
 });
@@ -150,18 +181,27 @@ export function PageHead({
   sub,
   right,
   eyebrow,
+  icon,
 }: {
   title: ReactNode;
   sub?: ReactNode;
   right?: ReactNode;
   eyebrow?: ReactNode;
+  icon?: string;
 }) {
   return (
     <header {...stylex.props(styles.head)}>
-      <div>
-        {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
-        <h1 {...stylex.props(styles.h1)}>{title}</h1>
-        {sub && <p {...stylex.props(styles.lede)}>{sub}</p>}
+      <div {...stylex.props(styles.headMain)}>
+        {icon && (
+          <span {...stylex.props(styles.headIcon)}>
+            <Icon name={icon} size={22} />
+          </span>
+        )}
+        <div>
+          {eyebrow && <div {...stylex.props(styles.kicker)}>{eyebrow}</div>}
+          <h1 {...stylex.props(styles.h1)}>{title}</h1>
+          {sub && <p {...stylex.props(styles.lede)}>{sub}</p>}
+        </div>
       </div>
       {right && <div {...stylex.props(styles.actions)}>{right}</div>}
     </header>
@@ -173,21 +213,25 @@ export function Section({
   sub,
   right,
   id,
+  icon,
   children,
 }: {
   title: string;
   sub?: ReactNode;
   right?: ReactNode;
   id?: string;
+  icon?: string;
   children: ReactNode;
 }) {
   return (
     <section {...stylex.props(styles.section)} id={id}>
       <div {...stylex.props(styles.sectionHead)}>
-        <div>
+        <div {...stylex.props(styles.sectionTitle)}>
+          {icon && <Icon name={icon} size={14} />}
           <h2 {...stylex.props(styles.h2)}>{title}</h2>
-          {sub && <p {...stylex.props(styles.sub)}>{sub}</p>}
         </div>
+        {sub && <p {...stylex.props(styles.sub)}>{sub}</p>}
+        <span {...stylex.props(styles.rule)} />
         {right && <div {...stylex.props(styles.actions)}>{right}</div>}
       </div>
       {children}
@@ -227,7 +271,7 @@ export function Crumb({ profile, here }: { profile: string; here: string }) {
         <Badge name={profile} size="xs" />
         {profile}
       </Link>
-      <span>›</span>
+      <span>/</span>
       <span>{here}</span>
     </div>
   );
@@ -235,7 +279,7 @@ export function Crumb({ profile, here }: { profile: string; here: string }) {
 
 type StatTone = 'ok' | 'warn' | 'bad' | 'info' | 'idle';
 
-/** `of` adds a quieter "/ total" or unit after the number; a number value counts up and glides on change. */
+/** A cell of a number strip (put several in a StatGrid). `of` adds a quieter "/ total" or unit after the number. */
 export function Stat({
   label,
   value,
@@ -253,8 +297,10 @@ export function Stat({
 }) {
   const inner = (
     <>
-      {tone !== 'idle' && <span {...stylex.props(styles.statGlow, styles[tone])} />}
-      <div {...stylex.props(styles.statLabel)}>{label}</div>
+      <div {...stylex.props(styles.statLabel)}>
+        {tone !== 'idle' && <i {...stylex.props(styles.toneDot, styles[tone])} />}
+        {label}
+      </div>
       <div {...stylex.props(styles.statValue, styles[tone])}>
         {typeof value === 'number' ? <Num value={value} /> : value}
         {of && <small {...stylex.props(styles.small)}>{of}</small>}
@@ -274,8 +320,8 @@ export function Stat({
 export function Empty({ title, text, icon = 'check' }: { title: string; text?: string; icon?: string }) {
   return (
     <div {...stylex.props(styles.empty)}>
-      <span {...stylex.props(styles.emptyIcon)}>
-        <Icon name={icon} size={20} />
+      <span {...stylex.props(styles.emptyIcon, icon === 'check' && styles.emptyOk)}>
+        <Icon name={icon} size={18} />
       </span>
       <div>
         <b {...stylex.props(styles.emptyTitle)}>{title}</b>
@@ -291,17 +337,17 @@ export const EmptyCard = (props: { title: string; text?: string; icon?: string }
   </Card>
 );
 
-/** A skeleton of a typical page (title, a row of numbers, a block) while the first answer loads. */
+/** A skeleton of a typical page (title, a number strip, a panel) while the first answer loads. */
 export function Loading() {
   return (
     <div {...stylex.props(styles.loading)} aria-busy="true" aria-label="Loading">
-      <span {...stylex.props(styles.bone(40, '38%'))} />
+      <span {...stylex.props(styles.bone(34, '34%'))} />
       <div {...stylex.props(styles.loadingRow)}>
-        {[0, 1, 2].map((i) => (
-          <span key={i} {...stylex.props(styles.bone(112, '100%'))} />
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} {...stylex.props(styles.bone(92, '100%'))} />
         ))}
       </div>
-      <span {...stylex.props(styles.bone(260, '100%'))} />
+      <span {...stylex.props(styles.bone(240, '100%'))} />
     </div>
   );
 }

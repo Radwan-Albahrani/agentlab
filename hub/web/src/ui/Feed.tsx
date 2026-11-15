@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { Event } from '../api/types';
-import { colors, space, text } from '../theme/tokens.stylex';
+import { colors, font, space, text } from '../theme/tokens.stylex';
 import { Card } from './Card';
 import { Empty, Section } from './page';
 import { When } from './When';
@@ -34,21 +34,20 @@ const styles = stylex.create({
   dot: {
     position: 'relative',
     zIndex: 1,
-    width: 11,
-    height: 11,
-    borderRadius: '50%',
+    width: 9,
+    height: 9,
     marginTop: space.xs,
     marginInlineStart: 5,
     backgroundColor: colors.faint,
     boxShadow: `0 0 0 4px ${colors.panel}`,
   },
-  ok: { backgroundColor: colors.ok, boxShadow: `0 0 0 4px ${colors.panel}, 0 0 10px ${colors.ok}` },
-  bad: { backgroundColor: colors.bad, boxShadow: `0 0 0 4px ${colors.panel}, 0 0 10px ${colors.bad}` },
-  info: { backgroundColor: colors.accent, boxShadow: `0 0 0 4px ${colors.panel}, 0 0 10px ${colors.accent}` },
-  warn: { backgroundColor: colors.warn, boxShadow: `0 0 0 4px ${colors.panel}, 0 0 10px ${colors.warn}` },
+  ok: { backgroundColor: colors.ok },
+  bad: { backgroundColor: colors.bad },
+  info: { backgroundColor: colors.info },
+  warn: { backgroundColor: colors.warn },
   body: { minWidth: 0 },
-  src: { fontSize: text.xxs, color: colors.faint, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em' },
-  title: { fontWeight: 550, overflowWrap: 'anywhere' },
+  src: { fontFamily: font.mono, fontSize: text.xxs, color: colors.faint, textTransform: 'uppercase', letterSpacing: '.08em' },
+  title: { fontWeight: 500, overflowWrap: 'anywhere' },
   detail: {
     color: colors.muted,
     fontSize: text.md,
@@ -58,7 +57,7 @@ const styles = stylex.create({
     WebkitBoxOrient: 'vertical',
     overflow: 'hidden',
   },
-  when: { color: colors.faint, fontSize: text.xs, whiteSpace: 'nowrap' },
+  when: { fontFamily: font.mono, color: colors.faint, fontSize: text.xs, whiteSpace: 'nowrap' },
 });
 
 const TONE: Record<string, 'ok' | 'bad' | 'info' | 'warn'> = {

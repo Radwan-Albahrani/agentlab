@@ -9,19 +9,17 @@ import { buildMenu } from './menu';
 import { Palette } from './Palette';
 import { PhoneNav } from './PhoneNav';
 import { Sidebar } from './Sidebar';
+import { StatusLine } from './StatusLine';
 import { usePresentingSwitch } from './usePresentingSwitch';
 
-const enter = stylex.keyframes({
-  from: { opacity: 0, transform: 'translateY(10px)', filter: 'blur(3px)' },
-  to: { opacity: 1, transform: 'none', filter: 'none' },
-});
+const enter = stylex.keyframes({ from: { opacity: 0, transform: 'translateY(3px)' } });
 
 const styles = stylex.create({
-  app: { display: 'grid', gridTemplateColumns: { default: '256px minmax(0, 1fr)', [media.nav]: '1fr' }, minHeight: '100vh' },
+  app: { display: 'grid', gridTemplateColumns: { default: '236px minmax(0, 1fr)', [media.nav]: '1fr' }, minHeight: '100vh' },
   column: { minWidth: 0 },
   main: {
     minWidth: 0,
-    paddingTop: { default: 40, [media.nav]: space.xxl },
+    paddingTop: { default: 28, [media.nav]: space.xxl },
     // room for the phone's tab bar
     paddingBottom: { default: 72, [media.nav]: 'calc(96px + env(safe-area-inset-bottom))' },
     paddingInline: {
@@ -31,12 +29,12 @@ const styles = stylex.create({
   },
   // keyed by the page: each page change eases in
   inner: {
-    maxWidth: 1240,
+    maxWidth: 1280,
     marginInline: 'auto',
     display: 'grid',
-    gap: space.giant,
+    gap: space.huge,
     animationName: enter,
-    animationDuration: '380ms',
+    animationDuration: '180ms',
     animationTimingFunction: motion.settle,
   },
 });
@@ -52,6 +50,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <Sidebar menu={menu} onLogo={onLogo} />
       <div {...stylex.props(styles.column)}>
         <PhoneNav menu={menu} />
+        <StatusLine />
         <main {...stylex.props(styles.main)}>
           {/* pages wait for the menu: it carries the agents' colours, which pages read as they render */}
           <div key={pathname} {...stylex.props(styles.inner)}>

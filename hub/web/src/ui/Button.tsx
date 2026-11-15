@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { Link } from 'react-router';
-import { colors, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
 export type Variant = 'default' | 'primary' | 'quiet' | 'danger';
@@ -10,56 +10,48 @@ const styles = stylex.create({
     appearance: 'none',
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: colors.line2,
-    backgroundColor: { default: colors.panel, ':hover': colors.hover },
+    borderColor: { default: colors.line2, ':hover': colors.faint },
+    backgroundColor: { default: colors.raised, ':hover': colors.hover },
     color: colors.fg,
     borderRadius: radius.md,
-    paddingBlock: space.sm,
+    paddingBlock: space.xs,
     paddingInline: space.lg,
-    fontSize: text.base,
-    fontWeight: 600,
+    minHeight: 32,
+    fontSize: text.md,
+    fontWeight: 500,
     display: 'inline-flex',
     alignItems: 'center',
     gap: space.sm,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     lineHeight: 1.3,
-    transitionProperty: 'background-color, border-color, transform, box-shadow, filter',
-    transitionDuration: '180ms',
-    transitionTimingFunction: motion.settle,
-    transform: { default: null, ':active': 'scale(.96)' },
-    boxShadow: { default: colors.liftShadow, ':hover': colors.liftShadow },
-    outline: { default: 'none', ':focus-visible': `2px solid color-mix(in srgb, ${colors.accent} 55%, transparent)` },
+    transitionProperty: 'background-color, border-color, opacity',
+    transitionDuration: '120ms',
+    opacity: { default: 1, ':active': 0.85 },
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
     outlineOffset: 2,
   },
   primary: {
-    backgroundColor: { default: colors.accent, ':hover': colors.accent },
-    borderColor: colors.accent,
+    backgroundColor: { default: colors.accent, ':hover': `color-mix(in srgb, ${colors.accent} 88%, ${colors.fg})` },
+    borderColor: { default: colors.accent, ':hover': colors.accent },
     color: colors.accentFg,
-    filter: { default: null, ':hover': 'brightness(1.1)' },
-    backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,.14), transparent)',
-    boxShadow: {
-      default: `0 1px 2px rgba(0,0,0,.15), 0 4px 14px -4px color-mix(in srgb, ${colors.accent} 60%, transparent)`,
-      ':hover': `0 1px 2px rgba(0,0,0,.15), 0 8px 22px -6px color-mix(in srgb, ${colors.accent} 75%, transparent)`,
-    },
+    fontWeight: 600,
   },
   quiet: {
-    boxShadow: 'none',
-    borderColor: 'transparent',
+    borderColor: { default: 'transparent', ':hover': 'transparent' },
     backgroundColor: { default: 'transparent', ':hover': colors.hover },
     color: { default: colors.muted, ':hover': colors.fg },
   },
   danger: {
-    boxShadow: 'none',
     color: colors.bad,
     backgroundColor: { default: 'transparent', ':hover': colors.badSoft },
-    borderColor: 'transparent',
+    borderColor: { default: 'transparent', ':hover': `color-mix(in srgb, ${colors.bad} 40%, transparent)` },
   },
   default: {},
-  sm: { paddingBlock: space.xs, paddingInline: space.md, fontSize: text.sm, borderRadius: radius.sm },
-  iconOnly: { paddingBlock: space.xs, paddingInline: space.xs },
+  sm: { paddingBlock: space.xxs, paddingInline: space.md, minHeight: 28, fontSize: text.sm, borderRadius: radius.sm },
+  iconOnly: { paddingBlock: space.xxs, paddingInline: space.xs, justifyContent: 'center', minWidth: 28 },
   busy: { opacity: 0.55, pointerEvents: 'none' },
-  disabled: { opacity: 0.45, cursor: 'not-allowed', transform: 'none' },
+  disabled: { opacity: 0.45, cursor: 'not-allowed' },
 });
 
 export interface ButtonLook {
@@ -94,12 +86,12 @@ export function LinkButton({ to, ...l }: ButtonLook & { to: string }) {
   const title = l.iconOnly ? l.label : undefined;
   if (external(to))
     return (
-      <a {...look(l)} href={to} target="_blank" rel="noopener" title={title}>
+      <a {...look(l)} href={to} target="_blank" rel="noopener" title={title} aria-label={title}>
         {inner(l)}
       </a>
     );
   return (
-    <Link {...look(l)} to={to} title={title}>
+    <Link {...look(l)} to={to} title={title} aria-label={title}>
       {inner(l)}
     </Link>
   );

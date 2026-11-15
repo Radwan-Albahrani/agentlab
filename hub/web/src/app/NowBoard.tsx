@@ -4,264 +4,210 @@ import type { NowAgent } from '../api/types';
 import { ago, elapsed, plural } from '../lib/format';
 import { useNow } from '../lib/useNow';
 import { hueTheme } from '../theme/hues';
-import { agent, colors, media, motion, radius, space, text } from '../theme/tokens.stylex';
+import { agent, colors, font, media, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from '../ui/Icon';
-import { Appear } from '../ui/motion';
-import { Badge } from '../ui/status';
 
-const spin = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
-const sweep = stylex.keyframes({ from: { transform: 'translateX(-100%)' }, to: { transform: 'translateX(250%)' } });
-const breathe = stylex.keyframes({ '50%': { opacity: 0.55 } });
+const run = stylex.keyframes({ to: { backgroundPosition: '20px 0' } });
+const blink = stylex.keyframes({ '50%': { opacity: 0.2 } });
 
 const styles = stylex.create({
+  // lanes share one frame: hairlines between them instead of separate cards
   grid: {
     display: 'grid',
-    gridTemplateColumns: { default: 'repeat(auto-fill, minmax(340px, 1fr))', [media.phone]: '1fr' },
-    gap: space.xxl,
-    alignItems: 'start',
-  },
-  lane: {
-    position: 'relative',
-    overflow: 'hidden',
-    borderRadius: radius.xxl,
+    gridTemplateColumns: { default: 'repeat(auto-fit, minmax(320px, 1fr))', [media.phone]: '1fr' },
+    gap: 1,
+    backgroundColor: colors.line,
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: `color-mix(in srgb, ${agent.hue} 22%, ${colors.line})`,
-    backgroundColor: colors.panel,
-    boxShadow: colors.shadow,
+    borderColor: colors.line,
+    borderRadius: radius.xl,
+    overflow: 'hidden',
   },
-  busyLane: { borderColor: `color-mix(in srgb, ${agent.hue} 45%, ${colors.line})` },
+  lane: { backgroundColor: colors.panel, minWidth: 0, display: 'grid', alignContent: 'start' },
+  single: { borderWidth: 1, borderStyle: 'solid', borderColor: colors.line, borderRadius: radius.xl, overflow: 'hidden' },
   head: {
     display: 'flex',
     alignItems: 'center',
-    gap: space.lg,
-    paddingBlock: space.xl,
-    paddingInline: space.xxxl,
-    backgroundImage: `linear-gradient(120deg, color-mix(in srgb, ${agent.hue} 18%, transparent), transparent 70%)`,
-    color: { default: colors.fg, ':hover': colors.fg },
+    gap: space.md,
+    paddingBlock: space.sm,
+    paddingInline: space.xxl,
+    backgroundColor: { default: colors.raised, ':hover': colors.hover },
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: colors.line,
+    transitionProperty: 'background-color',
+    transitionDuration: '120ms',
   },
-  // a turning ring around the badge while the agent works
-  ring: { position: 'relative', display: 'grid', placeItems: 'center', width: 44, height: 44, flexShrink: 0 },
-  ringTrack: {
-    position: 'absolute',
-    inset: 0,
-    borderRadius: radius.lg,
-    backgroundImage: `conic-gradient(from 0deg, transparent 0 40%, ${agent.hue} 100%)`,
-    // hollowed out: only a thin turning edge shows round the badge
-    '::after': {
-      content: '""',
-      position: 'absolute',
-      inset: 2,
-      borderRadius: radius.md,
-      backgroundColor: colors.panel,
-    },
-    animationName: spin,
-    animationDuration: '1.6s',
-    animationTimingFunction: 'linear',
-    animationIterationCount: 'infinite',
+  tag: {
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    fontWeight: 600,
+    letterSpacing: '.06em',
+    textTransform: 'uppercase',
+    paddingBlock: 1,
+    paddingInline: space.xs,
+    borderRadius: radius.xs,
+    backgroundColor: agent.hue,
+    color: colors.onFill,
   },
-  over: { position: 'relative', display: 'flex' },
-  name: { fontSize: text.lg, fontWeight: 700, letterSpacing: '-.01em' },
-  state: { fontSize: text.sm, color: colors.muted },
-  stateBusy: { color: agent.hue, fontWeight: 600 },
-  stateWait: { color: colors.warn, fontWeight: 600 },
+  state: { fontFamily: font.mono, fontSize: text.xs, color: colors.faint },
+  stateBusy: { color: colors.info },
+  stateWait: { color: colors.warn },
   open: { marginInlineStart: 'auto', color: colors.faint, display: 'flex' },
-  body: { display: 'grid', paddingBlockEnd: space.sm },
   row: {
     position: 'relative',
     display: 'grid',
-    gridTemplateColumns: '28px minmax(0, 1fr) auto',
-    gap: space.md,
-    alignItems: 'center',
-    paddingBlock: space.md,
-    paddingInline: space.xxxl,
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    rowGap: 1,
+    columnGap: space.lg,
+    alignItems: 'baseline',
+    paddingBlock: space.sm,
+    paddingInline: space.xxl,
+    borderBottomWidth: 1,
+    borderBottomStyle: 'dashed',
+    borderBottomColor: colors.line,
     backgroundColor: { default: 'transparent', ':hover': colors.hover },
     transitionProperty: 'background-color',
-    transitionDuration: '160ms',
+    transitionDuration: '120ms',
   },
-  icon: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    display: 'grid',
-    placeItems: 'center',
-    backgroundColor: `color-mix(in srgb, ${agent.hue} 14%, transparent)`,
-    color: agent.hue,
-  },
-  iconWait: { backgroundColor: colors.warnSoft, color: colors.warn },
-  iconOk: { backgroundColor: 'transparent', color: colors.ok },
-  iconBad: { backgroundColor: 'transparent', color: colors.bad },
-  iconIdle: { backgroundColor: 'transparent', color: colors.faint },
-  title: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: text.base },
-  titleQuiet: { fontWeight: 500, color: colors.muted },
-  meta: { fontSize: text.xs, color: colors.faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  time: {
+  wait: { backgroundColor: `color-mix(in srgb, ${colors.warnSoft} 60%, transparent)` },
+  title: { fontSize: text.base, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  titleWait: { color: colors.warn, fontWeight: 500 },
+  titleQuiet: { color: colors.muted },
+  meta: {
+    gridColumn: '1',
     fontSize: text.xs,
     color: colors.faint,
-    fontVariantNumeric: 'tabular-nums',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    textAlign: 'right',
+    display: 'flex',
+    alignItems: 'center',
+    gap: space.xs,
   },
-  timeLive: { color: agent.hue, fontWeight: 600 },
-  timeWait: { color: colors.warn, fontWeight: 600 },
-  // an indeterminate light sweeping under a running chat
+  clock: { fontFamily: font.mono, fontSize: text.sm, fontVariantNumeric: 'tabular-nums', color: colors.info, textAlign: 'right' },
+  clockWait: { color: colors.warn },
+  clockDone: { color: colors.faint, fontSize: text.xs },
+  // a dashed line running under a chat that's working
   bar: {
     position: 'absolute',
-    insetInline: space.xxxl,
-    bottom: 0,
-    height: 2,
-    overflow: 'hidden',
-    borderRadius: radius.pill,
-    backgroundColor: `color-mix(in srgb, ${agent.hue} 12%, transparent)`,
-  },
-  barLight: {
-    display: 'block',
-    width: '40%',
-    height: '100%',
-    backgroundImage: `linear-gradient(90deg, transparent, ${agent.hue}, transparent)`,
-    animationName: sweep,
-    animationDuration: '1.8s',
-    animationTimingFunction: motion.settle,
+    insetInline: 0,
+    bottom: -1,
+    height: 1,
+    backgroundImage: `repeating-linear-gradient(90deg, ${colors.info} 0 6px, transparent 6px 10px)`,
+    backgroundSize: '20px 1px',
+    animationName: run,
+    animationDuration: '1s',
+    animationTimingFunction: 'linear',
     animationIterationCount: 'infinite',
   },
-  chip: {
-    marginInlineEnd: space.xs,
-    fontSize: text.xxs,
-    fontWeight: 600,
-    paddingBlock: 1,
-    paddingInline: space.xs,
-    borderRadius: radius.pill,
-    backgroundColor: `color-mix(in srgb, ${agent.hue} 14%, transparent)`,
-    color: agent.hue,
-    verticalAlign: 1,
+  block: {
+    width: 6,
+    height: 10,
+    flexShrink: 0,
+    backgroundColor: colors.info,
+    animationName: blink,
+    animationDuration: '1s',
+    animationIterationCount: 'infinite',
   },
+  helpers: { fontFamily: font.mono, color: colors.info },
+  mark: { display: 'inline-flex' },
+  ok: { color: colors.ok },
+  bad: { color: colors.bad },
   label: {
     paddingBlockStart: space.md,
     paddingBlockEnd: space.xxs,
-    paddingInline: space.xxxl,
+    paddingInline: space.xxl,
+    fontFamily: font.mono,
     fontSize: text.xxs,
-    fontWeight: 650,
-    letterSpacing: '.07em',
+    letterSpacing: '.12em',
     textTransform: 'uppercase',
     color: colors.faint,
   },
-  idle: { paddingBlock: space.xl, paddingInline: space.xxxl, color: colors.faint, fontSize: text.md },
-  pulse: { animationName: breathe, animationDuration: '2s', animationIterationCount: 'infinite' },
+  idle: { paddingBlock: space.lg, paddingInline: space.xxl, color: colors.faint, fontSize: text.md },
 });
 
-type Outcome = readonly [icon: string, tone: stylex.StyleXStyles, word: string];
-const DONE: Outcome = ['check', styles.iconOk, 'done'];
-const OUTCOME: Partial<Record<string, Outcome>> = {
-  failed: ['alert', styles.iconBad, 'failed'],
-  interrupted: ['x', styles.iconIdle, 'stopped'],
-};
-
 function laneState(a: NowAgent): [string, 'busy' | 'wait' | 'idle'] {
-  if (a.waiting.length) return [`${plural(a.waiting.length, 'chat')} waiting on you`, 'wait'];
   const mine = a.running.filter((r) => !r.background).length;
   const bg = a.running.length - mine;
-  if (a.running.length)
-    return [[mine && `working on ${plural(mine, 'chat')}`, bg && `${bg} in the background`].filter(Boolean).join(' · '), 'busy'];
-  return ['Idle', 'idle'];
+  const parts = [mine && `${mine} running`, bg && `${bg} background`, a.waiting.length && `${a.waiting.length} asks you`].filter(
+    Boolean,
+  );
+  if (!parts.length) return ['idle', 'idle'];
+  return [parts.join(' · '), a.waiting.length ? 'wait' : 'busy'];
 }
 
 /** One lane per agent: what it's doing this second, what waits on you, what just finished. */
 export function NowBoard({ agents }: { agents: NowAgent[] }) {
   return (
     <div {...stylex.props(styles.grid)}>
-      {agents.map((a, i) => (
-        <Appear key={a.name} i={i}>
-          <Lane a={a} />
-        </Appear>
+      {agents.map((a) => (
+        <Lane key={a.name} a={a} />
       ))}
     </div>
   );
 }
 
-/** One agent's lane (also shown alone on its page). */
+/** One agent's lane; on its own page (linked false) it stands alone, framed, without a header. */
 export function Lane({ a, linked = true }: { a: NowAgent; linked?: boolean }) {
   const now = useNow(1000);
   const [state, kind] = laneState(a);
   const recent = a.recent.slice(0, a.running.length + a.waiting.length ? 2 : 4);
   return (
-    <div {...stylex.props(hueTheme(a.name), styles.lane, kind === 'busy' && styles.busyLane)}>
+    <div {...stylex.props(hueTheme(a.name), styles.lane, !linked && styles.single)}>
       {linked && (
         <Link to={`/agents/${a.name}`} {...stylex.props(styles.head)}>
-          <span {...stylex.props(styles.ring)}>
-            {a.running.length > 0 && <span {...stylex.props(styles.ringTrack)} />}
-            <span {...stylex.props(styles.over)}>
-              <Badge name={a.name} />
-            </span>
+          <span {...stylex.props(styles.tag)}>{a.name}</span>
+          <span {...stylex.props(styles.state, kind === 'busy' && styles.stateBusy, kind === 'wait' && styles.stateWait)}>
+            {state}
           </span>
-          <div>
-            <div {...stylex.props(styles.name)}>{a.name}</div>
-            <div {...stylex.props(styles.state, kind === 'busy' && styles.stateBusy, kind === 'wait' && styles.stateWait)}>
-              {state}
-            </div>
-          </div>
           <span {...stylex.props(styles.open)}>
-            <Icon name="arrow" size={18} />
+            <Icon name="arrow" size={16} />
           </span>
         </Link>
       )}
-      <div {...stylex.props(styles.body)}>
-        {a.waiting.map((w) => (
-          <Appear key={`w-${w.id}`}>
-            <a href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row)}>
-              <span {...stylex.props(styles.icon, styles.iconWait, styles.pulse)}>
-                <Icon name={w.kind === 'question' ? 'chat' : 'alert'} size={16} />
+      {a.waiting.map((w) => (
+        <a key={`w-${w.id}`} href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row, styles.wait)}>
+          <span {...stylex.props(styles.title, styles.titleWait)}>{w.title}</span>
+          <span {...stylex.props(styles.clock, styles.clockWait)}>{elapsed(now - w.since)}</span>
+          <span {...stylex.props(styles.meta)}>
+            {w.kind === 'question' ? 'Asks you a question' : 'Wants your approval'}
+            {w.project && ` · ${w.project}`}
+          </span>
+        </a>
+      ))}
+      {a.running.map((r) => (
+        <a key={`r-${r.id}`} href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row)}>
+          <span {...stylex.props(styles.title, r.background && styles.titleQuiet)}>{r.title}</span>
+          <span {...stylex.props(styles.clock)}>{elapsed(now - r.since)}</span>
+          <span {...stylex.props(styles.meta)}>
+            <i {...stylex.props(styles.block)} />
+            {[r.background ? 'background' : '', r.project].filter(Boolean).join(' · ')}
+            {r.helpers > 0 && <span {...stylex.props(styles.helpers)}>{plural(r.helpers, 'helper')}</span>}
+          </span>
+          <i {...stylex.props(styles.bar)} />
+        </a>
+      ))}
+      {!a.running.length && !a.waiting.length && <div {...stylex.props(styles.idle)}>Nothing running right now.</div>}
+      {recent.length > 0 && <div {...stylex.props(styles.label)}>Finished</div>}
+      {recent.map((r) => {
+        const failed = r.status === 'failed';
+        const stopped = r.status === 'interrupted';
+        return (
+          <a key={`d-${r.id}`} href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row)}>
+            <span {...stylex.props(styles.title, styles.titleQuiet)}>{r.title}</span>
+            <span {...stylex.props(styles.clock, styles.clockDone)}>{ago(r.at, now)}</span>
+            <span {...stylex.props(styles.meta)}>
+              <span {...stylex.props(styles.mark, failed ? styles.bad : !stopped && styles.ok)}>
+                <Icon name={failed ? 'alert' : stopped ? 'x' : 'check'} size={13} />
               </span>
-              <div>
-                <div {...stylex.props(styles.title)}>{w.title}</div>
-                <div {...stylex.props(styles.meta)}>
-                  {w.kind === 'question' ? 'Asks you a question' : 'Wants your approval'}
-                  {w.project && ` · ${w.project}`}
-                </div>
-              </div>
-              <span {...stylex.props(styles.time, styles.timeWait)}>{elapsed(now - w.since)}</span>
-            </a>
-          </Appear>
-        ))}
-        {a.running.map((r) => (
-          <Appear key={`r-${r.id}`}>
-            <a href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row)}>
-              <span {...stylex.props(styles.icon)}>
-                <Icon name={r.background ? 'bot' : 'chat'} size={16} />
-              </span>
-              <div>
-                <div {...stylex.props(styles.title, r.background && styles.titleQuiet)}>{r.title}</div>
-                <div {...stylex.props(styles.meta)}>
-                  {r.helpers > 0 && <span {...stylex.props(styles.chip)}>{plural(r.helpers, 'helper')}</span>}
-                  {[r.background ? 'Background' : '', r.project].filter(Boolean).join(' · ')}
-                </div>
-              </div>
-              <span {...stylex.props(styles.time, styles.timeLive)}>{elapsed(now - r.since)}</span>
-              <span {...stylex.props(styles.bar)}>
-                <i {...stylex.props(styles.barLight)} />
-              </span>
-            </a>
-          </Appear>
-        ))}
-        {!a.running.length && !a.waiting.length && <div {...stylex.props(styles.idle)}>Nothing running right now.</div>}
-        {recent.length > 0 && <div {...stylex.props(styles.label)}>Finished</div>}
-        {recent.map((r) => {
-          const [icon, tone, word] = OUTCOME[r.status] ?? DONE;
-          return (
-            <a key={`d-${r.id}`} href={a.chat} target="_blank" rel="noopener" {...stylex.props(styles.row)}>
-              <span {...stylex.props(styles.icon, tone)}>
-                <Icon name={icon} size={16} />
-              </span>
-              <div>
-                <div {...stylex.props(styles.title, styles.titleQuiet)}>{r.title}</div>
-                <div {...stylex.props(styles.meta)}>
-                  {[word, r.background ? 'background' : '', r.project].filter(Boolean).join(' · ')}
-                </div>
-              </div>
-              <span {...stylex.props(styles.time)}>{ago(r.at, now)}</span>
-            </a>
-          );
-        })}
-      </div>
+              {[failed ? 'failed' : stopped ? 'stopped' : 'done', r.background ? 'background' : '', r.project]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </a>
+        );
+      })}
     </div>
   );
 }

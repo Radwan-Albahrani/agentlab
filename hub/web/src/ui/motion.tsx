@@ -2,17 +2,15 @@ import * as stylex from '@stylexjs/stylex';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion } from '../theme/tokens.stylex';
 
-const rise = stylex.keyframes({
-  from: { opacity: 0, transform: 'translateY(8px) scale(.985)' },
-  to: { opacity: 1, transform: 'none' },
-});
+const rise = stylex.keyframes({ from: { opacity: 0, transform: 'translateY(4px)' } });
 
 const styles = stylex.create({
   appear: (delay: string) => ({
     animationName: rise,
-    animationDuration: '420ms',
+    animationDuration: '220ms',
     animationTimingFunction: motion.settle,
-    animationFillMode: 'both',
+    // backwards, not both: a held last frame would override the element's own hover styles
+    animationFillMode: 'backwards',
     animationDelay: delay,
   }),
   contents: { minWidth: 0 },
@@ -20,7 +18,7 @@ const styles = stylex.create({
 
 /** Fades and lifts its children in on first render; `i` staggers siblings. */
 export const Appear = ({ i = 0, children }: { i?: number; children: ReactNode }) => (
-  <div {...stylex.props(styles.contents, styles.appear(`${Math.min(i, 12) * 45}ms`))}>{children}</div>
+  <div {...stylex.props(styles.contents, styles.appear(`${Math.min(i, 12) * 30}ms`))}>{children}</div>
 );
 
 const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;

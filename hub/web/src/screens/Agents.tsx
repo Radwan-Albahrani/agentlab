@@ -20,7 +20,7 @@ export function Agents() {
 function AgentsView({ d }: { d: Data }) {
   return (
     <>
-      <PageHead title="Agents" sub="Sign-ins, connectors and the ways into every agent." />
+      <PageHead icon="agents" title="Agents" sub="Sign-ins, connectors and the ways into every agent." />
       {d.memory && (
         <Ring
           label="Shared agent memory"

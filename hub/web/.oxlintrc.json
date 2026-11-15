@@ -234,7 +234,7 @@
       {
         "patterns": [
           {
-            "group": ["@base-ui/react", "@base-ui/react/*"],
+            "group": ["@ui-sdk/react", "@ui-sdk/react/*"],
             "message": "Use the wrapper in src/ui/."
           }
         ]

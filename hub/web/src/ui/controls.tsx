@@ -1,20 +1,23 @@
 import * as stylex from '@stylexjs/stylex';
-import { Collapsible } from '@base-ui/react/collapsible';
-import { Popover } from '@base-ui/react/popover';
-import { Switch as BaseSwitch } from '@base-ui/react/switch';
-import { Toggle } from '@base-ui/react/toggle';
-import { ToggleGroup } from '@base-ui/react/toggle-group';
-import { useState, type ReactNode } from 'react';
-import { colors, radius, space, text } from '../theme/tokens.stylex';
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@ui-sdk/react/collapsible';
+import { Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/react/popover';
+import { Switch as SwitchRoot, SwitchThumb } from '@ui-sdk/react/switch';
+import { Toggle, ToggleGroup } from '@ui-sdk/react/toggle';
+import type { ReactNode } from 'react';
+import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
 import { Icon } from './Icon';
 
 const cls = (...s: stylex.StyleXStyles[]) => stylex.props(...s).className ?? '';
+
+const fading = ':is([data-starting-style], [data-ending-style])';
+const checked = ':is([data-checked])';
+const opened = ':is([data-open])';
 
 const styles = stylex.create({
   segments: {
     display: 'inline-flex',
     gap: space.xxxs,
-    padding: space.xxs,
+    padding: space.xxxs,
     borderRadius: radius.md,
     backgroundColor: colors.sunk,
     flexWrap: 'wrap',
@@ -24,42 +27,49 @@ const styles = stylex.create({
   },
   segment: {
     borderWidth: 0,
-    backgroundColor: 'transparent',
+    backgroundColor: { default: 'transparent', ':hover': colors.hover },
     paddingBlock: space.xs,
     paddingInline: space.lg,
     borderRadius: radius.sm,
     fontSize: text.md,
-    fontWeight: 600,
+    fontWeight: 500,
     color: { default: colors.muted, ':hover': colors.fg },
     cursor: 'pointer',
+    transitionProperty: 'background-color, color',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
-  segmentOn: { backgroundColor: colors.panel, color: colors.fg, boxShadow: colors.liftShadow },
+  segmentOn: {
+    backgroundColor: { default: colors.accentSoft, ':hover': colors.accentSoft },
+    color: { default: colors.accent, ':hover': colors.accent },
+    fontWeight: 600,
+  },
   switch: {
-    width: 44,
-    height: 26,
-    borderRadius: radius.pill,
+    width: 36,
+    height: 20,
+    borderRadius: radius.sm,
     borderWidth: 0,
-    backgroundColor: colors.line2,
+    backgroundColor: { default: colors.line2, [checked]: colors.accent },
     position: 'relative',
     cursor: 'pointer',
     padding: 0,
     flexShrink: 0,
     justifySelf: 'start',
-    transition: 'background-color .15s',
+    transition: 'background-color .14s',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
-  switchOn: { backgroundColor: colors.accent },
   thumb: {
     position: 'absolute',
     top: 3,
-    left: 3,
-    width: 20,
-    height: 20,
-    borderRadius: '50%',
+    left: { default: 3, [checked]: 19 },
+    width: 14,
+    height: 14,
+    borderRadius: radius.xs,
     backgroundColor: colors.onFill,
-    transition: 'left .15s',
-    boxShadow: colors.liftShadow,
+    transition: 'left .14s',
   },
-  thumbOn: { left: 21 },
   cards: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: space.sm },
   card: {
     display: 'grid',
@@ -73,43 +83,49 @@ const styles = stylex.create({
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: { default: colors.line2, ':hover': colors.faint },
-    backgroundColor: colors.panel,
+    backgroundColor: { default: colors.panel, ':hover': colors.hover },
     color: colors.fg,
+    transitionProperty: 'background-color, border-color',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
   cardOn: {
     borderColor: { default: colors.accent, ':hover': colors.accent },
-    backgroundColor: colors.accentSoft,
-    boxShadow: `inset 0 0 0 1px ${colors.accent}`,
+    backgroundColor: { default: colors.accentSoft, ':hover': colors.accentSoft },
     color: colors.accent,
   },
-  cardTitle: { fontSize: text.base, fontWeight: 700 },
+  cardTitle: { fontSize: text.base, fontWeight: 600 },
   cardHelp: { fontSize: text.sm, color: colors.muted, lineHeight: 1.4 },
   infoTrigger: {
     width: 18,
     height: 18,
-    borderRadius: '50%',
+    borderRadius: radius.xs,
     display: 'inline-grid',
     placeItems: 'center',
     padding: 0,
     cursor: 'pointer',
-    fontFamily: 'Georgia, serif',
-    fontStyle: 'italic',
+    fontFamily: font.mono,
     fontWeight: 600,
     fontSize: text.xxs,
     lineHeight: 1,
     borderWidth: 1,
     borderStyle: 'solid',
-    borderColor: { default: colors.line2, ':hover': colors.accent },
-    backgroundColor: { default: 'transparent', ':hover': colors.accent },
-    color: { default: colors.muted, ':hover': colors.accentFg },
+    borderColor: { default: colors.line2, ':hover': colors.accent, [opened]: colors.accent },
+    backgroundColor: { default: 'transparent', ':hover': colors.accent, [opened]: colors.accent },
+    color: { default: colors.muted, ':hover': colors.accentFg, [opened]: colors.accentFg },
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
-  infoOpen: { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentFg },
   infoPopup: {
     width: 'min(420px, calc(100vw - 40px))',
+    maxHeight: 'var(--available-height)',
+    overflowY: 'auto',
+    margin: 0,
     paddingBlock: space.lg,
     paddingInline: space.xl,
     borderRadius: radius.lg,
-    backgroundColor: colors.panel,
+    backgroundColor: colors.raised,
     color: colors.fg,
     borderWidth: 1,
     borderStyle: 'solid',
@@ -119,10 +135,14 @@ const styles = stylex.create({
     lineHeight: 1.5,
     display: 'grid',
     gap: space.sm,
-    zIndex: 30,
     outline: 'none',
+    transformOrigin: 'var(--transform-origin)',
+    transitionProperty: 'opacity, transform',
+    transitionDuration: '160ms',
+    transitionTimingFunction: motion.settle,
+    opacity: { default: 1, [fading]: 0 },
+    transform: { default: 'none', [fading]: 'scale(.97)' },
   },
-  positioner: { zIndex: 30 },
   disclosure: {
     cursor: 'pointer',
     color: { default: colors.muted, ':hover': colors.fg },
@@ -133,30 +153,42 @@ const styles = stylex.create({
     display: 'inline-flex',
     alignItems: 'center',
     gap: space.xs,
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
-  count: { marginInlineStart: space.xs, color: colors.faint, fontWeight: 500, fontVariantNumeric: 'tabular-nums' },
+  count: {
+    marginInlineStart: space.xs,
+    fontFamily: font.mono,
+    color: colors.faint,
+    fontWeight: 500,
+    fontVariantNumeric: 'tabular-nums',
+  },
   chips: { display: 'flex', flexWrap: 'wrap', gap: space.xs },
   chip: {
     display: 'inline-flex',
     alignItems: 'center',
-    paddingBlock: space.xxs,
-    paddingInline: space.md,
+    paddingBlock: space.xxxs,
+    paddingInline: space.sm,
     borderRadius: radius.pill,
     fontSize: text.sm,
-    fontWeight: 600,
+    fontWeight: 500,
     cursor: 'pointer',
     borderWidth: 1,
     borderStyle: 'solid',
     borderColor: { default: colors.line2, ':hover': colors.faint },
     backgroundColor: { default: colors.sunk, ':hover': colors.hover },
     color: colors.muted,
+    transitionProperty: 'background-color, border-color, color',
+    transitionDuration: '120ms',
+    outline: { default: 'none', ':focus-visible': `2px solid ${colors.accent}` },
+    outlineOffset: 2,
   },
   chipOn: {
     borderColor: { default: colors.accent, ':hover': colors.accent },
     backgroundColor: { default: colors.accentSoft, ':hover': colors.accentSoft },
     color: colors.accent,
   },
-  caret: { transition: 'transform .15s', display: 'inline-block', fontSize: text.xxs },
+  caret: { transition: 'transform .14s', display: 'inline-block', fontSize: text.xxs },
   caretOpen: { transform: 'rotate(90deg)' },
   panel: { marginTop: space.sm },
 });
@@ -179,6 +211,7 @@ export function Segments<V extends string>({
       onValueChange={(v) => {
         if (v[0]) void onChange(v[0]);
       }}
+      deselectable={false}
       aria-label={label}
       {...stylex.props(styles.segments)}
     >
@@ -244,6 +277,7 @@ export function ChoiceCards({
       onValueChange={(v) => {
         if (v[0]) void onChange(v[0]);
       }}
+      deselectable={false}
       aria-label={label}
       {...stylex.props(styles.cards)}
     >
@@ -259,43 +293,44 @@ export function ChoiceCards({
 
 export function Switch({ on, label, onToggle }: { on: boolean; label: string; onToggle: () => unknown }) {
   return (
-    <BaseSwitch.Root
+    <SwitchRoot
       checked={on}
       onCheckedChange={() => {
         void onToggle();
       }}
       aria-label={label}
-      className={(s) => cls(styles.switch, s.checked && styles.switchOn)}
+      {...stylex.props(styles.switch)}
     >
-      <BaseSwitch.Thumb className={(s) => cls(styles.thumb, s.checked && styles.thumbOn)} />
-    </BaseSwitch.Root>
+      <SwitchThumb {...stylex.props(styles.thumb)} />
+    </SwitchRoot>
   );
 }
 
 export function InfoTip({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <Popover.Root>
-      <Popover.Trigger aria-label={label} className={(s) => cls(styles.infoTrigger, s.open && styles.infoOpen)}>
+    <Popover>
+      <PopoverTrigger aria-label={label} {...stylex.props(styles.infoTrigger)}>
         i
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner sideOffset={8} align="start" {...stylex.props(styles.positioner)}>
-          <Popover.Popup {...stylex.props(styles.infoPopup)}>{children}</Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+      </PopoverTrigger>
+      <PopoverContent sideOffset={8} align="start" aria-label={label} {...stylex.props(styles.infoPopup)}>
+        {children}
+      </PopoverContent>
+    </Popover>
   );
 }
 
 export function Disclosure({ label, children }: { label: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Collapsible.Root open={open} onOpenChange={setOpen}>
-      <Collapsible.Trigger {...stylex.props(styles.disclosure)}>
-        <span {...stylex.props(styles.caret, open && styles.caretOpen)}>▶</span>
-        {label}
-      </Collapsible.Trigger>
-      <Collapsible.Panel {...stylex.props(styles.panel)}>{children}</Collapsible.Panel>
-    </Collapsible.Root>
+    <Collapsible>
+      <CollapsibleTrigger {...stylex.props(styles.disclosure)}>
+        {(s) => (
+          <>
+            <span {...stylex.props(styles.caret, s.open && styles.caretOpen)}>▶</span>
+            {label}
+          </>
+        )}
+      </CollapsibleTrigger>
+      <CollapsiblePanel {...stylex.props(styles.panel)}>{children}</CollapsiblePanel>
+    </Collapsible>
   );
 }

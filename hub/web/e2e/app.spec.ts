@@ -99,7 +99,7 @@ test('tell the companion: pick a channel by typing, write, send (intercepted)', 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect.poll(() => sent).toMatchObject({ text: 'Make a poll: pizza or sushi, ends at 2pm', review: true });
   expect((sent as Record<string, unknown> | null)?.channel).toMatch(/^C/);
-  const toast = page.getByRole('status').filter({ hasText: '(test) not sent' });
+  const toast = page.getByRole('region', { name: 'Notifications' }).getByRole('listitem').filter({ hasText: '(test) not sent' });
   await expect(toast).toBeVisible();
   const at = await toast.boundingBox();
   const view = page.viewportSize();
@@ -363,18 +363,18 @@ test('phone layout never scrolls sideways @phone', async ({ page }, info) => {
 // A broken token silently turns pills and hovers colourless.
 const PALETTE = {
   dark: {
-    bg: 'rgb(7, 8, 11)',
-    hover: 'rgb(27, 28, 35)',
-    ok: 'rgb(70, 224, 138)',
-    okSoft: 'rgb(13, 36, 24)',
-    panel: 'rgb(16, 17, 22)',
+    bg: 'rgb(18, 20, 23)',
+    hover: 'rgb(34, 39, 45)',
+    ok: 'rgb(111, 207, 151)',
+    okSoft: 'rgb(19, 38, 27)',
+    raised: 'rgb(28, 32, 37)',
   },
   light: {
-    bg: 'rgb(244, 244, 241)',
-    hover: 'rgb(236, 236, 231)',
-    ok: 'rgb(19, 128, 60)',
-    okSoft: 'rgb(226, 245, 232)',
-    panel: 'rgb(255, 255, 255)',
+    bg: 'rgb(236, 235, 231)',
+    hover: 'rgb(230, 229, 224)',
+    ok: 'rgb(27, 120, 67)',
+    okSoft: 'rgb(219, 237, 225)',
+    raised: 'rgb(251, 250, 248)',
   },
 };
 const schemeOf = (info: TestInfo) => (info.project.name.includes('dark') ? 'dark' : 'light');
@@ -389,7 +389,7 @@ test('colour tokens resolve: pills, the active menu item and hovers are coloured
   expect(await css(pill, 'backgroundColor')).toBe(p.okSoft);
   expect(await css(pill, 'color')).toBe(p.ok);
   const menu = page.getByRole('navigation', { name: 'Main' });
-  expect(await css(menu.getByRole('link', { name: 'All agents' }), 'backgroundColor')).toBe(p.panel);
+  expect(await css(menu.getByRole('link', { name: 'All agents' }), 'backgroundColor')).toBe(p.raised);
   const services = menu.getByRole('link', { name: 'Services' });
   await services.hover();
   await expect.poll(() => css(services, 'backgroundColor')).toBe(p.hover); // it eases in
@@ -399,7 +399,7 @@ test('right now: each agent shows its running chats with live timers, helpers fo
   await guard(page);
   await page.goto('/');
   await settled(page);
-  const board = page.locator('section', { has: page.getByRole('heading', { name: 'Right now' }) });
+  const board = page.locator('section', { has: page.getByRole('heading', { name: 'Your agents, now' }) });
   const billing = board.getByRole('link', { name: /Migrate billing to the new API/ });
   await expect(billing).toContainText('2 helpers');
   const timer = async () => (await billing.textContent())?.match(/\d+:\d\d(:\d\d)?/)?.[0];
@@ -417,9 +417,9 @@ test('search: Ctrl+K finds a page by a few letters and Enter goes there', async 
   await page.keyboard.press('Control+KeyK');
   const search = page.getByRole('dialog', { name: 'Search' });
   await expect(search).toBeVisible();
-  await search.getByRole('textbox', { name: 'Search' }).fill('helpr');
-  await expect(search.getByRole('button').first()).toContainText('Helper');
-  await expect(search.getByRole('button', { name: /quarterly report/ })).toHaveCount(0); // scattered letters don't count
+  await search.getByRole('combobox', { name: 'Search' }).fill('helpr');
+  await expect(search.getByRole('option').first()).toContainText('Helper');
+  await expect(search.getByRole('option', { name: /quarterly report/ })).toHaveCount(0); // scattered letters don't count
   if (shots) await page.screenshot({ path: `${shots}/${info.project.name}_search.png` });
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/agents\/sara\/helper$/);

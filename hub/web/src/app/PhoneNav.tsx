@@ -2,16 +2,13 @@ import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { hueTheme } from '../theme/hues';
-import { colors, media, motion, radius, space, text } from '../theme/tokens.stylex';
-import { Overlay } from '../ui/Dialog';
+import { colors, font, media, radius, space, text } from '../theme/tokens.stylex';
+import { Sheet } from '../ui/Dialog';
 import { Icon } from '../ui/Icon';
 import { Badge, Count, Dot } from '../ui/status';
 import { isActive, type Menu, type MenuItem } from './menu';
 import { openPalette } from './Palette';
 import { ThemeToggle } from './ThemeToggle';
-
-const rise = stylex.keyframes({ from: { transform: 'translateY(100%)' }, to: { transform: 'none' } });
-const fade = stylex.keyframes({ from: { opacity: 0 } });
 
 const styles = stylex.create({
   top: {
@@ -21,15 +18,21 @@ const styles = stylex.create({
     position: 'sticky',
     top: 0,
     zIndex: 20,
-    backgroundColor: `color-mix(in srgb, ${colors.bg} 80%, transparent)`,
-    backdropFilter: 'saturate(180%) blur(16px)',
+    backgroundColor: colors.bg,
     borderBottomWidth: 1,
     borderBottomStyle: 'solid',
     borderBottomColor: colors.line,
     paddingBlock: space.sm,
     paddingInline: `max(${space.lg}, env(safe-area-inset-left))`,
   },
-  brand: { fontWeight: 700, fontSize: text.lg, letterSpacing: '-.02em', marginInlineEnd: 'auto' },
+  brand: {
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    fontWeight: 600,
+    letterSpacing: '.14em',
+    textTransform: 'uppercase',
+    marginInlineEnd: 'auto',
+  },
   iconBtn: {
     display: 'grid',
     placeItems: 'center',
@@ -50,8 +53,7 @@ const styles = stylex.create({
     zIndex: 30,
     paddingBlockStart: space.xs,
     paddingBlockEnd: `max(${space.xs}, env(safe-area-inset-bottom))`,
-    backgroundColor: `color-mix(in srgb, ${colors.panel} 82%, transparent)`,
-    backdropFilter: 'saturate(180%) blur(20px)',
+    backgroundColor: colors.panel,
     borderTopWidth: 1,
     borderTopStyle: 'solid',
     borderTopColor: colors.line,
@@ -75,41 +77,6 @@ const styles = stylex.create({
   },
   tabOn: { color: colors.accent },
   badge: { position: 'absolute', top: 0, insetInlineStart: 'calc(50% + 6px)' },
-  backdrop: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 40,
-    backgroundColor: colors.overlay,
-    animationName: fade,
-    animationDuration: '200ms',
-  },
-  sheet: {
-    position: 'fixed',
-    insetInline: 0,
-    bottom: 0,
-    zIndex: 41,
-    maxHeight: '82vh',
-    overflowY: 'auto',
-    paddingBlockStart: space.sm,
-    paddingBlockEnd: `max(${space.xxl}, env(safe-area-inset-bottom))`,
-    paddingInline: space.lg,
-    borderStartStartRadius: radius.xxl,
-    borderStartEndRadius: radius.xxl,
-    backgroundColor: colors.panel,
-    boxShadow: colors.popShadow,
-    outline: 'none',
-    animationName: rise,
-    animationDuration: '320ms',
-    animationTimingFunction: motion.settle,
-  },
-  grabber: {
-    width: 40,
-    height: 5,
-    borderRadius: radius.pill,
-    backgroundColor: colors.line2,
-    marginInline: 'auto',
-    marginBlockEnd: space.md,
-  },
   group: {
     paddingBlockStart: space.lg,
     paddingBlockEnd: space.xs,
@@ -203,8 +170,7 @@ export function PhoneNav({ menu }: { menu: Menu }) {
           )}
         </button>
       </nav>
-      <Overlay open={sheet} onOpenChange={setSheet} label="Menu" backdrop={styles.backdrop} popup={styles.sheet}>
-        <div {...stylex.props(styles.grabber)} />
+      <Sheet open={sheet} onOpenChange={setSheet} label="Menu">
         {(
           [
             ['', menu.main],
@@ -239,7 +205,7 @@ export function PhoneNav({ menu }: { menu: Menu }) {
               </div>
             ),
         )}
-      </Overlay>
+      </Sheet>
     </>
   );
 }

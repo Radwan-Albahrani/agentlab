@@ -1,19 +1,75 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import type { Channel } from '../../api/types';
-import { space } from '../../theme/tokens.stylex';
+import { colors, font, media, radius, space, text } from '../../theme/tokens.stylex';
 import { Button } from '../../ui/Button';
-import { Card, CardBody } from '../../ui/Card';
 import { Switch } from '../../ui/controls';
 import { useAct } from '../../ui/feedback';
-import { TextArea } from '../../ui/inputs';
-import { Inline, Stack } from '../../ui/layout';
 import { Section } from '../../ui/page';
 import { Picker, type PickItem } from '../../ui/Picker';
-import { Text } from '../../ui/text';
 
 const styles = stylex.create({
-  row: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: space.lg },
+  // one composer: the text, then a footer with where it goes and how
+  composer: {
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: { default: colors.line, ':hover': colors.line2, ':focus-within': colors.accent },
+    backgroundColor: colors.panel,
+    transitionProperty: 'border-color',
+    transitionDuration: '140ms',
+  },
+  area: {
+    display: 'block',
+    width: '100%',
+    minHeight: 124,
+    resize: 'vertical',
+    paddingBlock: space.xl,
+    paddingInline: space.xxl,
+    borderWidth: 0,
+    outline: 'none',
+    fontFamily: 'inherit',
+    fontSize: text.body,
+    lineHeight: 1.55,
+    color: colors.fg,
+    backgroundColor: 'transparent',
+    '::placeholder': { color: colors.faint },
+  },
+  foot: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: space.lg,
+    paddingBlock: space.md,
+    paddingInline: { default: space.xxl, [media.phone]: space.lg },
+    borderTopWidth: 1,
+    borderTopStyle: 'solid',
+    borderTopColor: colors.line,
+    backgroundColor: colors.raised,
+  },
+  review: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: space.sm,
+    fontSize: text.md,
+    color: colors.muted,
+    whiteSpace: 'nowrap',
+  },
+  send: { marginInlineStart: 'auto' },
+  hint: { marginBlock: 0, marginInline: space.xxs, fontSize: text.xs, color: colors.faint },
+  kbd: {
+    fontFamily: font.mono,
+    fontSize: text.xxs,
+    fontWeight: 500,
+    paddingInline: space.xxs,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line2,
+    backgroundColor: colors.sunk,
+    color: colors.muted,
+  },
 });
 
 const PLACEHOLDER = 'Announce that staging is frozen on Thursday…\nor paste a list and say “make a poll, ends at 2pm”';
@@ -31,63 +87,68 @@ const pickItems = (channels: Channel[], name: string): PickItem[] =>
 
 export function AskBox({ name, display, channels }: { name: string; display: string; channels: Channel[] }) {
   const act = useAct();
-  const [text, setText] = useState('');
+  const [draft, setDraft] = useState('');
   const [channel, setChannel] = useState('');
   const [review, setReview] = useState(true);
   const [busy, setBusy] = useState(false);
   const nice = display;
   const send = async () => {
-    if (!text.trim() || busy) return;
+    if (!draft.trim() || busy) return;
     setBusy(true);
-    const ok = await act(`/api/companions/${name}/ask`, { text, channel, review });
+    const ok = await act(`/api/companions/${name}/ask`, { text: draft, channel, review });
     setBusy(false);
-    if (ok) setText('');
+    if (ok) setDraft('');
   };
   return (
-    <Section title={`Tell ${nice}`} sub="Post or run a poll in a channel. Say it in plain words; the agent prepares it.">
-      <Card>
-        <CardBody>
-          <Stack gap="lg">
-            <TextArea
-              prose
-              value={text}
-              onChange={setText}
-              placeholder={PLACEHOLDER}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void send();
+    <Section
+      title={`Tell ${nice}`}
+      icon="send"
+      sub="Post or run a poll in a channel. Say it in plain words; the agent prepares it."
+    >
+      <div {...stylex.props(styles.composer)}>
+        <textarea
+          {...stylex.props(styles.area)}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+          }}
+          placeholder={PLACEHOLDER}
+          aria-label={`Tell ${nice}`}
+          spellCheck
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void send();
+          }}
+        />
+        <div {...stylex.props(styles.foot)}>
+          <Picker
+            label="Channel"
+            items={pickItems(channels, name)}
+            value={channel}
+            onChange={setChannel}
+            placeholder="Channel: or name it in your words"
+            empty="No channel by that name"
+          />
+          <span {...stylex.props(styles.review)}>
+            <Switch
+              on={review}
+              label="Show me before it posts"
+              onToggle={() => {
+                setReview(!review);
               }}
             />
-            <div {...stylex.props(styles.row)}>
-              <Picker
-                label="Channel"
-                items={pickItems(channels, name)}
-                value={channel}
-                onChange={setChannel}
-                placeholder="Channel: or name it in your words"
-                empty="No channel by that name"
-              />
-              <Inline gap="sm" nowrap>
-                <Switch
-                  on={review}
-                  label="Show me before it posts"
-                  onToggle={() => {
-                    setReview(!review);
-                  }}
-                />
-                <Text size="md" tone="muted">
-                  Show me first
-                </Text>
-              </Inline>
-              <Button label="Send" icon="send" variant="primary" busy={busy} onClick={send} />
-            </div>
-            <Text size="xs" tone="faint">
-              {review
-                ? `${nice} shows you the post in your Slack DM; it goes out when you tap Post it. Ctrl+Enter sends.`
-                : `It goes out as soon as it is ready. Ctrl+Enter sends.`}
-            </Text>
-          </Stack>
-        </CardBody>
-      </Card>
+            Show me first
+          </span>
+          <span {...stylex.props(styles.send)}>
+            <Button label="Send" icon="send" variant="primary" busy={busy} disabled={!draft.trim()} onClick={send} />
+          </span>
+        </div>
+      </div>
+      <p {...stylex.props(styles.hint)}>
+        {review
+          ? `${nice} shows you the post in your Slack DM; it goes out when you tap Post it. `
+          : 'It goes out as soon as it is ready. '}
+        <kbd {...stylex.props(styles.kbd)}>Ctrl</kbd> + <kbd {...stylex.props(styles.kbd)}>Enter</kbd> sends.
+      </p>
     </Section>
   );
 }

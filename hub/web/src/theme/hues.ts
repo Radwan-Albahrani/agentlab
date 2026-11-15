@@ -2,14 +2,15 @@ import * as stylex from '@stylexjs/stylex';
 import { agent } from './tokens.stylex';
 
 // StyleX needs each theme as its own top-level constant.
-const green = stylex.createTheme(agent, { hue: '#10b981' });
-const pink = stylex.createTheme(agent, { hue: '#f0628f' });
-const violet = stylex.createTheme(agent, { hue: '#8b5cf6' });
-const amber = stylex.createTheme(agent, { hue: '#f59e0b' });
-const sky = stylex.createTheme(agent, { hue: '#0ea5e9' });
-const red = stylex.createTheme(agent, { hue: '#ef4444' });
-const teal = stylex.createTheme(agent, { hue: '#14b8a6' });
-const indigo = stylex.createTheme(agent, { hue: '#6366f1' });
+// Muted, equally light (about oklch 0.6): agents tell apart without competing with the status colours.
+const green = stylex.createTheme(agent, { hue: '#3f9b6a' });
+const pink = stylex.createTheme(agent, { hue: '#c2577f' });
+const violet = stylex.createTheme(agent, { hue: '#8566c7' });
+const amber = stylex.createTheme(agent, { hue: '#b37e2a' });
+const sky = stylex.createTheme(agent, { hue: '#3f84b8' });
+const red = stylex.createTheme(agent, { hue: '#c25548' });
+const teal = stylex.createTheme(agent, { hue: '#2f958f' });
+const indigo = stylex.createTheme(agent, { hue: '#5d6fc9' });
 const named = { green, pink, violet, amber, sky, red, teal, indigo };
 const themes = Object.values(named);
 let chosen: Record<string, string> = {};

@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { colors, motion, radius, space, text } from '../theme/tokens.stylex';
+import { colors, font, motion, radius, space, text } from '../theme/tokens.stylex';
 import { useTween } from './motion';
 
 const R = 30;
@@ -45,10 +45,17 @@ const styles = stylex.create({
   warn: { stroke: colors.warn, color: colors.warn },
   bad: { stroke: colors.bad, color: colors.bad },
   label: { fontSize: text.sm, color: colors.muted, fontWeight: 550 },
-  value: { fontSize: text.xxl, fontWeight: 700, letterSpacing: '-.03em', fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 },
+  value: {
+    fontFamily: font.mono,
+    fontSize: text.xxl,
+    fontWeight: 500,
+    letterSpacing: '-.03em',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.2,
+  },
   sub: { fontSize: text.sm, color: colors.faint },
   center: { position: 'relative', display: 'grid', placeItems: 'center' },
-  pct: { position: 'absolute', fontSize: text.sm, fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  pct: { position: 'absolute', fontFamily: font.mono, fontSize: text.xs, fontWeight: 500, fontVariantNumeric: 'tabular-nums' },
 });
 
 const toneOf = (p: number) => (p >= 90 ? 'bad' : p >= 75 ? 'warn' : 'ok');
@@ -76,14 +83,14 @@ export function Ring({
     <>
       <span {...stylex.props(styles.center)}>
         <svg width="72" height="72" viewBox="0 0 72 72" {...stylex.props(styles.svg)} aria-hidden="true">
-          <circle cx="36" cy="36" r={R} fill="none" strokeWidth="7" {...stylex.props(styles.track)} />
+          <circle cx="36" cy="36" r={R} fill="none" strokeWidth="5" {...stylex.props(styles.track)} />
           <circle
             cx="36"
             cy="36"
             r={R}
             fill="none"
-            strokeWidth="7"
-            strokeLinecap="round"
+            strokeWidth="5"
+            strokeLinecap="butt"
             strokeDasharray={C}
             strokeDashoffset={C * (1 - shown / 100)}
             {...stylex.props(tone)}
