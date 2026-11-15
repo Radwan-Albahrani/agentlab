@@ -451,7 +451,8 @@ class Migration(unittest.TestCase):
                 f.write('{"device": "x"}')
             t3 = f'{cfg["agents"][0]["path"]}/home/.t3/userdata'
             os.makedirs(t3)
-            sqlite3.connect(f'{t3}/statev2.sqlite').close()
+            with contextlib.closing(sqlite3.connect(f'{t3}/statev2.sqlite')) as db:
+                db.execute('create table runs (id)')
             toml = f'{d}/cluster.toml'
             with open(toml, 'w') as f:
                 f.write(self.ONE)
@@ -460,6 +461,38 @@ class Migration(unittest.TestCase):
             self.assertEqual(out['databases'], 1)
             with open(f'{d}/backups/2026-01-02/hub/notify.json') as f:
                 self.assertEqual(json.load(f), {'device': 'x'})
+
+    def test_backups_skip_empty_files(self):
+        from agentlab import backup  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as d:
+            open(f'{d}/server-owner.sqlite', 'w').close()  # T3's single-instance lock: 0 bytes
+            with open(f'{d}/state.sqlite', 'wb') as f:
+                f.write(b'SQLite format 3\0')
+            self.assertEqual(backup.databases(d), ['state.sqlite'])
+
+    def test_a_change_stuck_behind_the_lock_gives_up_naming_the_holder(self):
+        import fcntl  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as d:
+            path = f'{d}/lock'
+            with open(path, 'w') as held:
+                held.write('4242 backup run\n')
+                held.flush()
+                fcntl.flock(held, fcntl.LOCK_EX)
+                args = mock.Mock(cmd='apply', dry_run=False, action='')
+                with (
+                    mock.patch.object(main, 'LOCK', path),
+                    mock.patch.object(main, 'say'),
+                    self.assertRaises(util.Failed) as e,
+                ):
+                    main.one_at_a_time(args, wait_s=0)
+                self.assertIn('pid 4242 (agentctl backup run)', str(e.exception))
+            with mock.patch.object(main, 'LOCK', path):
+                f = main.one_at_a_time(args, wait_s=0)
+            with open(path) as got:
+                self.assertTrue(got.read().startswith(f'{os.getpid()} '))
+            f.close()
 
     def test_a_locked_database_fails_its_copy_instead_of_hanging_the_backup(self):
         import sqlite3  # noqa: PLC0415

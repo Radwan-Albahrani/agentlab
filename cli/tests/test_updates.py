@@ -318,7 +318,7 @@ class Settle(unittest.TestCase):
     def rows(self, *rows):
         return [dict(zip(('name', 'state', 'status', 'service', 'rendered'), r, strict=True)) for r in rows]
 
-    def settle(self, kind='agent', timeout_s=60):
+    def settle(self, kind='agent', timeout_s=60, on_stuck=None):
         views = iter(self.views)
         last = [[]]
 
@@ -334,7 +334,9 @@ class Settle(unittest.TestCase):
             mock.patch('agentlab.deploy.stack_containers', seen),
             mock.patch('agentlab.deploy.docker_error', lambda name: self.errors.get(name, '')),
         ):
-            deploy.settle(self.cfg, 'agentlab-agent-sara', kind, AGENT_TEXT, timeout_s, sleep, lambda: self.t)
+            deploy.settle(
+                self.cfg, 'agentlab-agent-sara', kind, AGENT_TEXT, timeout_s, sleep, lambda: self.t, on_stuck=on_stuck
+            )
 
     def test_a_container_docker_could_not_start_fails_at_once_with_its_error(self):
         self.views = [
@@ -382,6 +384,42 @@ class Settle(unittest.TestCase):
         self.views = [old, leftover]
         with self.assertRaises(util.Failed):
             self.settle(timeout_s=20)
+
+    def test_an_old_container_that_still_stands_gets_one_replacement(self):
+        stuck = self.rows(
+            ('agent-x', 'running', 'Up 3 days (unhealthy)', 'agent', 'old999'),
+            ('files-x', 'running', 'Up', 'files', 'abc123'),
+        )
+        fresh = self.rows(
+            ('agent-x', 'running', 'Up 1 second', 'agent', 'abc123'), ('files-x', 'running', 'Up', 'files', 'abc123')
+        )
+        self.views = [stuck] * 40 + [fresh]
+        replaced = []
+        with mock.patch('agentlab.deploy.warn'):
+            self.settle(timeout_s=20 * 60, on_stuck=replaced.append)
+        self.assertEqual(replaced, [['agent-x']])
+        self.assertGreaterEqual(self.t, deploy.STUCK_S)
+
+    def test_force_remove_kills_the_shim_of_a_container_that_never_exits(self):
+        cid = 'a' * 64
+        calls = []
+
+        def run(cmd, **_):
+            calls.append(cmd)
+            if cmd[:2] == ['docker', 'rm']:
+                tries = sum(c[:2] == ['docker', 'rm'] for c in calls)
+                return (0, '') if tries > 1 else (1, 'did not receive an exit event')
+            if cmd[:2] == ['docker', 'inspect']:
+                return 0, cid
+            if cmd[0] == 'pgrep':
+                return 0, '4242'
+            return 0, ''
+
+        with mock.patch('agentlab.deploy.run', run), mock.patch('agentlab.deploy.warn') as warned:
+            deploy.force_remove('agent-x')
+        self.assertIn(['kill', '-9', '4242'], calls)
+        self.assertIn(f'-id {cid}', ' '.join(next(c for c in calls if c[0] == 'pgrep')))
+        self.assertIn('reboot', warned.call_args.args[0])
 
     def test_leftovers_are_reported_once_the_stack_is_up(self):
         self.views = [

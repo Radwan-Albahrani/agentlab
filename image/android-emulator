@@ -89,6 +89,7 @@ status() {
 run() {
   ensure_avd
   export DISPLAY=:99 ANDROID_SDK_ROOT=${SDK} ANDROID_AVD_HOME=${AVD_HOME}
+  ulimit -c 0   # a crash dump of a KVM guest can hang in the kernel and wedge the whole container
   exec "${SDK}/emulator/emulator" -avd "${AVD}" -no-audio -no-boot-anim -no-snapshot-save -no-metrics \
     -gpu swiftshader_indirect
 }

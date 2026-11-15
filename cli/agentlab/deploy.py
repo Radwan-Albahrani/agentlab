@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 
 from . import coolify, render
@@ -189,7 +190,15 @@ def deploy(cfg, stack, kind, key, plan, force=False):
     if not plan.dry:
         DEPLOYED.add(stack)
         mark_deployed(cfg, stack, text)
-        settle(cfg, stack, kind, text)
+        retry = None
+        if cfg['deploy'] == 'coolify':
+
+            def retry(stuck):
+                for name in stuck:
+                    force_remove(name)
+                coolify.deploy(api, cfg, stack, kind, key, stack_folder(cfg, stack), text)
+
+        settle(cfg, stack, kind, text, on_stuck=retry)
         agent = agent_of(cfg, stack)
         if agent:  # the new container waits for this before its first downloads
             isolate(cfg, plan, [agent])
@@ -199,6 +208,7 @@ def deploy(cfg, stack, kind, key, plan, force=False):
 # Stacks deployed this run: a second Coolify deploy while the first still runs would race it.
 DEPLOYED = set()
 SETTLE_S = 15 * 60
+STUCK_S = 3 * 60  # no container of the new render while an old one still stands: Coolify couldn't replace it
 LEFTOVER = re.compile(r'^[0-9a-f]{12}_')
 
 
@@ -206,16 +216,29 @@ def deployed_this_run(stack):
     return stack in DEPLOYED
 
 
-def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
-    """Wait until every service runs in a container from this render; fail with their states otherwise."""
+def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None, on_stuck=None):
+    """Wait until every service runs in a container from this render; fail with their states otherwise. When an old
+    container still stands STUCK_S in with no new one made for its service, on_stuck(the names) gets one go at it."""
     import time  # noqa: PLC0415 - patched in tests through the arguments
 
     sleep, clock = sleep or time.sleep, clock or time.time
     want, services = render.rendered_digest(text), compose_services(text)
-    deadline, broken = clock() + timeout_s, []
+    start = clock()
+    deadline, broken = start + timeout_s, []
     while True:
         rows = stack_containers(cfg, stack)
         ours = [r for r in rows if not LEFTOVER.match(r['name']) and (not want or r['rendered'] == want)]
+        made = {r['service'] for r in ours}
+        old = [
+            r['name']
+            for r in rows
+            if not LEFTOVER.match(r['name']) and want and r['rendered'] != want and r['service'] not in made
+        ]
+        if on_stuck and old and clock() - start >= STUCK_S:
+            warn(f'{stack}: {", ".join(old)} still stand{"s" if len(old) == 1 else ""} after the deploy; replacing it')
+            on_stuck(old)
+            on_stuck = None
+            continue
         up = {r['service'] for r in ours if _up(r, kind)}
         if services and services <= up:
             leftovers = [r['name'] for r in rows if LEFTOVER.match(r['name'])]
@@ -237,6 +260,32 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None):
     )
     why = 'failed to start' if errors else f'did not come up within {timeout_s // 60} min'
     raise Failed(f'{stack} {why}: {states}{coolify_status(cfg, stack)}')
+
+
+def force_remove(name):
+    """docker rm -f; when the runtime never reports the container's exit (a task stuck in the kernel, such as a crash
+    dump that never finishes), its shim is killed first. The stuck task itself stays until the host reboots."""
+
+    def remove():
+        try:
+            return run(['docker', 'rm', '-f', name], check=False, timeout=120)
+        except subprocess.TimeoutExpired:
+            return 1, 'docker rm timed out'
+
+    if remove()[0] == 0:
+        return
+    cid = run(['docker', 'inspect', '-f', '{{.Id}}', name], check=False)[1].strip()
+    if not re.fullmatch(r'[0-9a-f]{64}', cid):
+        return
+    for pid in run(['pgrep', '-f', f'containerd-shim-runc-v2 .*-id {cid}'], check=False)[1].split():
+        run(['kill', '-9', pid], check=False)
+    rc, out = remove()
+    if rc:
+        raise Failed(f'{name} cannot be removed even with its shim gone ({out[-300:]}); the host needs a reboot')
+    warn(
+        f'{name} would not stop (a process stuck in the kernel), so its shim was killed to remove it; that process '
+        'stays until the host reboots'
+    )
 
 
 def docker_error(name):

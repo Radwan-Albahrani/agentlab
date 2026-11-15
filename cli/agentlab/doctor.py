@@ -6,10 +6,13 @@ import platform
 import re
 import shutil
 import socket
+import time
 import urllib.request
 
 from . import cloudflare, config, coolify, deploy, disks, health, preflight, render, wslhost
-from .util import is_root, run, size_bytes
+from .util import LOCK, is_root, lock_holder, run, size_bytes
+
+LOCK_HOURS = 6
 
 
 class Checks:
@@ -526,6 +529,7 @@ def cluster(cfg, c):
         c.add('backups', True, 'nightly backups are off ([backups] enabled = false); `agentctl backup run` still works')
     updates(cfg, c)
     c.add('slice', os.path.isdir('/sys/fs/cgroup/agentlab.slice'), 'agentlab.slice memory cap', 'agentctl install')
+    lock(c)
     if not is_root():
         c.sudo('firewall', 'the agentlab firewall table (nft needs root)')
         rules = None
@@ -600,3 +604,27 @@ def updates(cfg, c):
         )
     else:
         c.add('update-last', True, f'last update {last.get("at", "?")}: {last.get("commit", "")} ok')
+
+
+def lock(c, path=LOCK, hours=LOCK_HOURS):
+    """A change holding agentctl's lock for hours is likely stuck, and every other change waits behind it."""
+    import fcntl  # noqa: PLC0415
+
+    try:
+        f = open(path)  # noqa: SIM115
+    except OSError:
+        return
+    with f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return  # free
+        except BlockingIOError:
+            pass
+    holder = lock_holder(path)
+    age_h = (time.time() - os.path.getmtime(path)) / 3600
+    c.add(
+        'agentctl-lock',
+        age_h < hours,
+        f'agentctl change running: {holder or "unknown holder"}',
+        'if that process is stuck, stop it; other changes (the nightly update too) wait behind it',
+    )

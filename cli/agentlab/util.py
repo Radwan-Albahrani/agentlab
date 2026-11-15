@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AGENT_UID = 1000  # the agent user inside the image; host files it uses are owned by this uid (see disks.py)
@@ -147,3 +148,20 @@ def is_root():
 def need_root(what):
     if not is_root():
         raise Failed(f'{what} needs root: run it with sudo')
+
+
+LOCK = '/run/agentlab-agentctl.lock'  # held by the agentctl change running now
+
+
+def lock_holder(path=LOCK):
+    """'pid N (agentctl …), for 3h' from what the holder wrote into the lock file, or ''."""
+    try:
+        with open(path) as f:
+            text = f.read().strip()
+        age = time.time() - os.path.getmtime(path)
+    except OSError:
+        return ''
+    if not text:
+        return ''
+    pid, _, cmd = text.partition(' ')
+    return f'pid {pid} (agentctl {cmd}), for {age / 3600:.1f} h'

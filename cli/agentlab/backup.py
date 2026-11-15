@@ -19,7 +19,12 @@ def databases(base):
     out = []
     for folder, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', 'cache', 'Cache')]
-        out += [os.path.relpath(os.path.join(folder, f), base) for f in files if f.endswith(DB_SUFFIXES)]
+        # an empty file holds no data; T3's server-owner.sqlite is one, write-locked while t3 serve runs
+        out += [
+            os.path.relpath(os.path.join(folder, f), base)
+            for f in files
+            if f.endswith(DB_SUFFIXES) and os.path.getsize(os.path.join(folder, f)) > 0
+        ]
     return sorted(out)
 
 

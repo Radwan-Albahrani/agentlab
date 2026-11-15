@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import sys
+import time
 
 from . import (
     agents,
@@ -24,7 +25,7 @@ from . import (
     status,
     update,
 )
-from .util import NEEDS, OK, OUT, Failed, Plan, say, warn
+from .util import LOCK, NEEDS, OK, OUT, Failed, Plan, lock_holder, say, warn
 
 
 def parser():
@@ -143,22 +144,40 @@ def parser():
 
 
 CHANGES = {'apply', 'agent', 'storage', 'companion', 'update', 'install', 'backup', 'cloudflare'}
-LOCK = '/run/agentlab-agentctl.lock'
+LOCK_WAIT_S = 8 * 3600  # longer than any healthy change (an update waits up to [updates] wait_hours for idle agents)
 
 
-def one_at_a_time(args):
-    """Changes wait for each other (the hub, the nightly update and a person can all start one); reads never wait."""
+def one_at_a_time(args, wait_s=LOCK_WAIT_S, sleep=None):
+    """Changes wait for each other (the hub, the nightly update and a person can all start one); reads never wait.
+    A change that waits past wait_s fails, naming the holder, instead of queueing behind a stuck one forever."""
     if args.cmd not in CHANGES or getattr(args, 'dry_run', False) or getattr(args, 'action', '') in ('list', 'adopt'):
         return None
     try:
-        f = open(LOCK, 'a')  # noqa: SIM115 - held until the process exits (an exec closes it, the new code retakes it)
+        f = open(LOCK, 'a+')  # noqa: SIM115 - held until the process exits (an exec closes it, the new code retakes it)
     except OSError:
         return None  # not root: the command itself will ask for sudo
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        say('waiting for another agentctl change to finish…')
-        fcntl.flock(f, fcntl.LOCK_EX)
+    sleep, deadline, said = sleep or time.sleep, time.monotonic() + wait_s, False
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            holder = lock_holder(LOCK)
+            if time.monotonic() >= deadline:
+                f.close()
+                raise Failed(
+                    f'gave up after {wait_s / 3600:g} h waiting for another agentctl change'
+                    + (f': {holder}' if holder else '')
+                    + '. If it is stuck, stop that process and run this again.'
+                ) from None
+            if not said:
+                say('waiting for another agentctl change to finish' + (f' ({holder})' if holder else '') + '…')
+                said = True
+            sleep(5)
+    f.seek(0)
+    f.truncate()
+    f.write(f'{os.getpid()} {" ".join(sys.argv[1:])}\n')
+    f.flush()
     return f
 
 
