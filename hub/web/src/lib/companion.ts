@@ -1,19 +1,20 @@
 import type { Event, Poll, Task } from '../api/types';
 import { clock, duration, plural } from './format';
 
-export type TaskFilter = 'all' | 'errand' | 'task' | 'done' | 'failed';
+export type TaskFilter = 'all' | 'errand' | 'task' | 'review' | 'done' | 'failed';
 
 export const TASK_FILTERS: { value: TaskFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'errand', label: 'Errands' },
   { value: 'task', label: 'Tasks' },
+  { value: 'review', label: 'Reviews' },
   { value: 'done', label: 'Done' },
   { value: 'failed', label: 'Failed' },
 ];
 
 export function filterTasks(tasks: Task[], f: TaskFilter): Task[] {
   if (f === 'all') return tasks;
-  if (f === 'errand' || f === 'task') return tasks.filter((t) => t.kind === f);
+  if (f === 'errand' || f === 'task' || f === 'review') return tasks.filter((t) => t.kind === f);
   return tasks.filter((t) => t.status === f);
 }
 

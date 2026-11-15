@@ -119,6 +119,11 @@ def overview():
     return out
 
 
+def chat_link(p):
+    """Chat opens the T3 app (your newest chat) for your own agent; the web page otherwise or before any chat."""
+    return (scope.current().owns(p) and notify.newest_chat_link(p)) or cluster.links(p)['chat']
+
+
 def now():
     """How busy each of the viewer's own agents is, as counts read from its T3 database (cheap: the page polls it every
     few seconds). Never what the chats are about, and never someone else's agent, admins included."""
@@ -126,7 +131,7 @@ def now():
         return {'agents': []}
     mine = [p for p in shown_profiles() if scope.current().owns(p)]
     return {
-        'agents': [{'name': p, 'chat': cluster.links(p)['chat'], **notify.live(p)} for p in mine],
+        'agents': [{'name': p, 'chat': chat_link(p), **notify.live(p)} for p in mine],
         'at': time.time(),
     }
 
@@ -189,7 +194,7 @@ def agent_card(n, s):
         'accounts': [{'key': k, 'label': label, **s['accounts'][k]} for k, label in cluster.ACCOUNTS.items()],
         'connectors': [{'key': k, **c} for k, c in s['connectors'].items()],
         'links': {
-            'chat': links['chat'],
+            'chat': chat_link(n),
             'terminal': links['terminal'],
             'files': links['files'],
             'browser': links['browser'] if s.get('browserUp') else None,

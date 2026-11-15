@@ -43,6 +43,7 @@ import actions  # noqa: E402
 import cluster  # noqa: E402
 import domains  # noqa: E402
 import hub  # noqa: E402
+import notify  # noqa: E402
 import routes  # noqa: E402
 import scope  # noqa: E402
 import screens  # noqa: E402
@@ -455,6 +456,17 @@ class Screens(unittest.TestCase):
         )
         self.assertIn('/_agentlab/view/admin?next=/_agentlab/accounts/browser', card['links']['browser'])
         self.assertIsNone(screens.agents('')['agents'][1]['links']['browser'])
+
+    def test_chat_opens_the_t3_app_at_your_newest_chat_once_paired(self):
+        env = f'{notify.t3.userdata("admin")}/environment-id'
+        with open(env, 'w') as f:
+            f.write('env-1')
+        try:
+            card = screens.agents('')['agents'][0]
+            self.assertTrue(card['links']['chat'].startswith('t3code://threads/env-1/'))
+            self.assertTrue(screens.now()['agents'][0]['chat'].startswith('t3code://threads/env-1/'))
+        finally:
+            os.remove(env)
 
     def test_published_tools_link_straight_to_their_ports(self):
         ports = {'t3': 7101, 'terminal': 7104, 'files': 7105, 'browser': 7103}

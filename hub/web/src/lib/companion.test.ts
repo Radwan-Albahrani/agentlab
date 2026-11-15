@@ -42,6 +42,9 @@ describe('companion tasks', () => {
     expect(filterTasks(tasks, 'errand').map((t) => t.id)).toEqual(['a', 'c']);
     expect(filterTasks(tasks, 'done').map((t) => t.id)).toEqual(['a', 'd']);
     expect(filterTasks(tasks, 'failed').map((t) => t.id)).toEqual(['b']);
+    const reviewed = [...tasks, task({ id: 'r', kind: 'review', status: 'done' })];
+    expect(filterTasks(reviewed, 'review').map((t) => t.id)).toEqual(['r']);
+    expect(filterTasks(reviewed, 'task').map((t) => t.id)).toEqual(['b', 'd']);
   });
 
   it('counts the last 7 days', () => {
