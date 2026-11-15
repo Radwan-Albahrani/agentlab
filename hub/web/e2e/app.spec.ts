@@ -94,6 +94,8 @@ test('tell the companion: pick a channel by typing, write, send (intercepted)', 
   await expect(box).toBeVisible();
   const picker = page.getByRole('combobox', { name: 'Channel' });
   await picker.fill('gen');
+  // typing narrows the list: only matching channels stay (a picker once showed everyone whatever was typed)
+  await expect(page.getByRole('option')).toHaveCount(1);
   await page.getByRole('option', { name: /#general/ }).click();
   await expect(picker).toHaveValue('#general');
   await box.fill('Make a poll: pizza or sushi, ends at 2pm');

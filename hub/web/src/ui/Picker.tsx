@@ -153,12 +153,15 @@ export function Picker({
       <ComboboxContent sideOffset={6} {...stylex.props(styles.popup)}>
         <ComboboxEmpty {...stylex.props(styles.empty)}>{empty}</ComboboxEmpty>
         <ComboboxList>
-          {items.map((i) => (
-            <ComboboxItem key={i.value} value={i.value} label={i.label} disabled={i.disabled} {...stylex.props(styles.item)}>
-              <span>{i.label}</span>
-              {i.hint && <span {...stylex.props(styles.hint)}>{i.hint}</span>}
-            </ComboboxItem>
-          ))}
+          {/* the list's own state.items: only what matches the typed text (mapping `items` would show them all) */}
+          {(state) =>
+            (state.items as PickItem[]).map((i) => (
+              <ComboboxItem key={i.value} value={i.value} label={i.label} disabled={i.disabled} {...stylex.props(styles.item)}>
+                <span>{i.label}</span>
+                {i.hint && <span {...stylex.props(styles.hint)}>{i.hint}</span>}
+              </ComboboxItem>
+            ))
+          }
         </ComboboxList>
       </ComboboxContent>
     </Combobox>
