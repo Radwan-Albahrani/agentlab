@@ -1049,3 +1049,17 @@ def test_a_queued_colleague_sees_how_many_are_ahead(gh, told, fresh_bot, their_d
     reviews.tick()
     assert review(5923)['active']
     assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · next up'
+
+
+def test_a_dm_missed_while_it_could_not_see_it_is_replayed_once(gh, told, fresh_bot, their_dm, monkeypatch):
+    link = f'https://github.com/{REPO}/pull/'
+    history = [
+        {'ts': '80.3', 'user': 'U_SALAH', 'text': f'{link}5923'},
+        {'ts': '80.2', 'user': 'U_SALAH', 'text': f'{link}5922'},
+        {'ts': '80.1', 'user': 'BCOMPANION', 'bot_id': 'B1', 'text': 'Companion reviewed your pull request'},
+        {'ts': '79.0', 'user': 'U_SALAH', 'text': f'{link}5924'},
+    ]
+    monkeypatch.setattr(fresh_bot, 'conversations_history', lambda **kw: {'messages': history}, raising=False)
+    routing.replay('D_SALAHBOT')
+    routing.replay('D_SALAHBOT')  # each message is handled once
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]

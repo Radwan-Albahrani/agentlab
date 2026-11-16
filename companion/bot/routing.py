@@ -1,7 +1,7 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
 from . import drafts, jobs, requests, reviews, slack, tasks
-from .config import COMP, OWNER, has_access, mode
+from .config import COMP, OWNER, has_access, log, mode
 from .state import key, save, state
 
 _seen = []
@@ -104,6 +104,18 @@ def route(ev, mentioned):
         requests.await_invite(ev)
     elif (mentioned or (in_dm and not thr)) and not reviews.from_slack(ch, tts, ts, ev.get('text', '')):
         jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''))
+
+
+def replay(channel):
+    """Handle a DM's messages since the companion's last reply, oldest first: ones it missed (it couldn't see them)."""
+    missed = []
+    for m in slack.app.client.conversations_history(channel=channel, limit=20)['messages']:  # newest first
+        if m.get('bot_id') or m.get('user') == slack.bot_user():
+            break
+        missed.append(m)
+    for m in reversed(missed):
+        route(dict(m, channel=channel, channel_type='im'), f'<@{slack.bot_user()}>' in (m.get('text') or ''))
+    log('replayed', channel, len(missed))
 
 
 @slack.app.event('app_mention')

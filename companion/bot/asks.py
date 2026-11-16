@@ -1,6 +1,6 @@
 """Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
-from . import jobs, polls, prompts, publish, reviews, slack, t3, tasks
+from . import jobs, polls, prompts, publish, reviews, routing, slack, t3, tasks
 from .config import COMP, OWNER, default_project, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
@@ -11,6 +11,8 @@ def tick():
         if ask.get('type') == 'poll':
             with lock:
                 polls.change(ask)
+        elif ask.get('type') == 'replay':
+            jobs.run_later(routing.replay, str(ask.get('channel') or ''))
         elif ask.get('type') == 'pulls':
             jobs.run_later(refresh_pulls)
         elif ask.get('type') == 'review':
