@@ -65,6 +65,13 @@ def test_a_guests_task_says_who_asked_and_what_needs_approval():
     p = prompts.task('make it bigger', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '', 'Salah')
     assert 'Salah asked in' in p and "Radwan's explicit approval" in p and 'approval.json' in p
     assert 'Salah' not in prompts.task('x', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '')
+    assert 'approved this request' not in p
+
+
+def test_an_approved_ask_checks_back_when_a_follow_up_leaves_it_or_wants_sensitive_data():
+    p = prompts.task('make it bigger', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '', 'Salah', approved=True)
+    assert 'Radwan approved this request as Salah asked it above, and only that' in p
+    assert 'clearly bigger job' in p and 'sensitive or confidential information' in p and 'approval.json' in p
 
 
 def test_a_new_message_gets_only_recent_context_and_is_not_called_a_thread(monkeypatch, fresh_bot):

@@ -109,7 +109,7 @@ def decide(k, approve):
         return
     slack.note_only(a['ch'], a['ts'], f':white_check_mark: {owner} approved this. Starting now.')
     if not reviews.from_slack(a['ch'], a['ts'], a['ts'], a['text'], by=a['user'], any_words=True):
-        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'])
+        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'], approved=a['card'])
 
 
 def card_of(channel, thread_ts):

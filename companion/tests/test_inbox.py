@@ -10,7 +10,11 @@ def channel(monkeypatch):
     state.pop('inbox', None)
     calls = []
     monkeypatch.setattr(
-        tasks, 'start', lambda ch, tts, ts, text, elsewhere=None, guest=None: calls.append(('task', ts, text, guest))
+        tasks,
+        'start',
+        lambda ch, tts, ts, text, elsewhere=None, guest=None, approved=False: calls.append(
+            ('task', ts, text, guest, approved)
+        ),
     )
     monkeypatch.setattr(
         tasks, 'follow_up', lambda task, text, files, ts, by=None: calls.append(('follow', ts, text, by))
@@ -56,7 +60,9 @@ def test_an_ask_goes_to_the_owner_with_approve_and_decline(fresh_bot, channel):
 def test_approved_it_runs_as_their_task_in_the_thread(fresh_bot, channel):
     asked()
     inbox.decide(key('C_REQ', '90.1'), True)
-    assert channel == [('task', '90.1', 'please make the logo bigger', 'U_SALAH')]
+    assert channel == [
+        ('task', '90.1', 'please make the logo bigger', 'U_SALAH', state['inbox'][key('C_REQ', '90.1')]['card'])
+    ]
     assert 'Sam approved this. Starting now.' in fresh_bot.text()
     assert 'actions' not in [b['type'] for b in last_card(fresh_bot)['blocks']]
     inbox.decide(key('C_REQ', '90.1'), False)  # a second click changes nothing
@@ -136,3 +142,32 @@ def test_after_approval_untagged_replies_are_just_talk(fresh_bot, channel):
     state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'guest': 'U_SALAH'}
     asked(ts='90.6', text='nice, thanks', thread='90.1', tag=False)
     assert channel[-1][0] == 'task'
+
+
+def test_their_follow_ups_carry_a_reminder_to_stay_within_what_was_approved(fresh_bot, monkeypatch):
+    sent = []
+    monkeypatch.setattr(tasks.t3, 'waiting_question', lambda tid: False)
+    monkeypatch.setattr(tasks.t3, 'busy', lambda tid: False)
+    monkeypatch.setattr(tasks.t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    task = {
+        'channel': 'C_REQ',
+        'thread_ts': '90.1',
+        'thread': 'T',
+        'outbox': 'f',
+        'guest': 'U_SALAH',
+        'approved': '5.0',
+        'trigger_ts': '90.1',
+        'active': True,
+        'prs': [],
+        'asked': [],
+        'options': {},
+        'status_ts': 's',
+    }
+    state['tasks'][key('C_REQ', '90.1')] = task
+    tasks.follow_up(task, 'also export the customer list', None, '90.9', 'U_SALAH')
+    assert sent[0].startswith('Salah: also export the customer list') and 'beyond what Sam approved' in sent[0]
+    mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
+    assert mirrored[-1]['blocks'][0]['text'] == '**Salah** followed up:\n> also export the customer list'
+    tasks.reply(task, 'Exported it: 120 rows, attached.')
+    mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
+    assert mirrored[-1]['blocks'][0]['text'] == '**Companion replied to Salah:**\nExported it: 120 rows, attached.'

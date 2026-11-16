@@ -9,9 +9,12 @@ def outbox(folder):
     return f'{AGENT_FILES}/outbox/{folder}'
 
 
-def task(ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None, fresh=False):
+def task(
+    ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None, fresh=False, approved=False
+):
     """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM).
-    fresh: asked in a new message, not in a thread, so `lines` are only what came just before it."""
+    fresh: asked in a new message, not in a thread, so `lines` are only what came just before it.
+    approved: the owner approved this one ask (the requests channel), so follow-ups stay within it."""
     who = guest or owner
     if fresh:
         p = ask + f'\n\n---\n{who} asked this in a new message in {where}, not in a thread. For context only,'
@@ -44,8 +47,30 @@ def task(ask, owner, where, lines, files, folder, channel, channels, open_polls,
         else f'{owner} approves a preview first.'
     )
     rules = guest_rules(folder, guest, owner) if guest else ''
+    if guest and approved:
+        rules += within_approval(guest, owner)
     return (
         p + rules + posting(outbox(folder), owner, channels, default, then, open_polls) + work_accounts(owner, folder)
+    )
+
+
+def within_approval(guest, owner):
+    """An approved ask: follow-ups that leave it, or want sensitive information, go back to the owner first."""
+    return (
+        f'\n\n{owner} approved this request as {guest} asked it above, and only that. {guest} may follow up in the'
+        ' thread: small refinements of the same request need no approval. But if a follow-up turns it into a different'
+        ' or clearly bigger job than the one approved, or asks for sensitive or confidential information (credentials,'
+        ' customer or personal data, contracts, HR, salaries, finances, private conversations, internal documents the'
+        ' request does not need), do not act on it: write approval.json the same way, with "action" saying what they'
+        ' now want and "details" how it differs from what was approved or which information it is, and end your turn'
+        f' with one line saying you are checking with {owner}.'
+    )
+
+
+def follow_up_reminder(owner):
+    return (
+        f'\n\n(Reminder: if this goes beyond what {owner} approved or asks for sensitive information, check with'
+        f' {owner} through approval.json first.)'
     )
 
 

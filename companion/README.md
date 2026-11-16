@@ -15,7 +15,8 @@ What it does:
   them wait for your Send. Team mode also notices colleagues asking you directly; dry-run mode lets you rehearse.
 - **A requests channel.** Pick one on the hub ("Requests channel") and invite the companion. Anyone on the team tags it
   with an ask there (untagged messages are left alone); it comes to your DM with Approve and Decline. Approved, it runs
-  for them in its thread (a PR link is a review they follow) and their tagged replies there steer it; declined, they
+  for them in its thread (a PR link is a review they follow) and their tagged replies there steer it (one that leaves what you approved, or wants sensitive
+  information, comes back to you first); declined, they
   are told. Replies under the card in your DM are passed on to their thread, and anything they add (tagged) while it
   waits joins the ask.
 - **Posts, DMs and polls.** The agent never posts itself: it writes a file and the companion previews it for you,

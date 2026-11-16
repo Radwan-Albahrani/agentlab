@@ -4,9 +4,9 @@ import re
 import time
 
 from . import errands, limits, polls, projects, prompts, slack, t3
-from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
+from .config import AGENT, COMP, NAME, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
-from .text import first_sentence, hour, mins, no_emoji
+from .text import first_sentence, hour, mins, no_emoji, quote
 
 THINKING = ':seedling: thinking…'
 
@@ -16,8 +16,10 @@ def quiet(task):
     return bool(review_of(task))
 
 
-def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
-    """elsewhere: (where, messages) of a conversation the bot can't post in; guest: who asked, if not the owner."""
+def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, approved=False):
+    """elsewhere: (where, messages) of a conversation the bot can't post in; guest: who asked, if not the owner;
+    approved: the ts of the owner's approval card for the guest's ask (requests channel): the thread is mirrored
+    under it, and follow-ups that leave the ask come back to the owner."""
     k = key(channel, thread_ts)
     slack.react(channel, trigger_ts, 'eyes')
     folder = f'{channel}-{thread_ts.replace(".", "")}'
@@ -38,7 +40,7 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
     asker = slack.name(guest or OWNER)
     fresh = not elsewhere and thread_ts == trigger_ts
     prompt = prompts.task(
-        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker, fresh
+        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker, fresh, approved
     )
     tid, err = t3.start_thread(project, title, prompt)
     if not tid:
@@ -47,7 +49,8 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None):
         COMP.event('failed', f'Could not start: {title}', task=k, detail=err, ok=False)
         return
     status = slack.note_only(channel, thread_ts, THINKING)
-    new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **({'guest': guest} if guest else {}))
+    extra = {'guest': guest, **({'approved': approved} if approved else {})} if guest else {}
+    new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **extra)
     log('started', k, tid, 'for', guest or 'owner')
     COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))
 
@@ -83,6 +86,9 @@ def follow_up(task, text, files, ts, by=None):
         return
     if task.get('guest') or (by and by != OWNER):
         msg = f'{slack.name(by or OWNER)}: {msg}'
+    if task.get('approved') and by == task.get('guest'):
+        msg += prompts.follow_up_reminder(slack.name(OWNER))
+        loop_in(task, f'**{slack.name(by)}** followed up:\n' + quote(slack.ask(text).strip() or '(files)'))
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
     between, more = ([], []) if quiet(task) else since_last(task, ts, folder)  # a batch thread mixes reviews
@@ -202,6 +208,19 @@ def reply(task, md, note=None, outcome='answered below'):
         slack.update(ch, task['status_ts'], no_emoji(line), note=line)
     slack.post(ch, tts, first_sentence(no_emoji(md), 300) or 'Reply', md=md, note=note)
     task['status_ts'] = None
+    if task.get('guest'):
+        loop_in(task, f'**{NAME} replied to {slack.name(task["guest"])}:**\n{_clip(md, 1500)}')
+
+
+def loop_in(task, md):
+    """Mirror an approved ask's thread under the owner's approval card, so they follow it from their DM."""
+    card = task.get('approved')
+    if isinstance(card, str) and card:
+        slack.post(slack.dm_owner(), card, first_sentence(no_emoji(md), 150) or 'Update', md=md)
+
+
+def _clip(md, limit):
+    return md if len(md) <= limit else md[:limit].rsplit('\n', 1)[0] + '\n…'
 
 
 TRANSIENT = re.compile(
