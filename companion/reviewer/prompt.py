@@ -247,6 +247,10 @@ Then write {box}/review.json LAST:
    development build of this branch would let the next review run them.'>"}}
 Blocking findings first, one per underlying problem. Leave "findings" empty when nothing clears the bar.
 
+Then settle this chat so it leaves the owner's active list: call t3_thread_organize with action "settle" and no
+threadId (it applies when your turn ends). Settle only once review.json is written; a chat that asks a question or
+could not finish stays unsettled.
+
 Then end your turn with one short line, for example "2 findings (1 blocking) · QA: 3 of 4 claims pass, 1 blocked"."""
 
 

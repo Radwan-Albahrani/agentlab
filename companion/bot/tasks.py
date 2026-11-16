@@ -3,7 +3,7 @@
 import re
 import time
 
-from . import errands, jobs, limits, polls, projects, prompts, slack, t3
+from . import errands, limits, polls, projects, prompts, slack, t3
 from .config import AGENT, COMP, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
 from .text import first_sentence, hour, mins, no_emoji
@@ -459,7 +459,8 @@ def _post_milestones(task, s):
 
 REVIEW_NUDGE = (
     'Every helper you started has reported back. Collect what they found, run the verification step, write qa.md (when QA'
-    ' ran) and review.json exactly as your brief says, then end with the one-line summary.'
+    ' ran) and review.json exactly as your brief says, settle this chat (t3_thread_organize, action "settle"), then'
+    ' end with the one-line summary.'
 )
 
 
@@ -517,8 +518,6 @@ def _finish_turn(task, s):
     if task.get('reply_pending') and status == 'completed':
         errands.reply_requester(task, task.pop('reply_pending'), approved=True)
     slack.react(ch, task['trigger_ts'], 'eyes', remove=True)
-    if review_of(task) and outcome != 'asked you':  # its result is posted; the chat only clutters T3 now
-        jobs.run_later(t3.archive, task['thread'])
     COMP.event(
         'failed' if outcome == 'failed' else 'finished',
         f'{task.get("title", "")[:80]}: {outcome}',

@@ -924,15 +924,13 @@ def test_limit_failures_of_a_batch_that_already_ended_come_back_on_a_new_card(gh
     assert head == f':mag: **Reviewing 2 pull requests** · 2 paused until {resumes}'
     assert all(line.endswith('· paused') for line in lines) and len(lines) == 2
     assert [m['text'] for m in fresh_bot.messages].count('Paused for the usage limit') == 1
-    assert review(5922)['active'] and not fresh_bot.archived
+    assert review(5922)['active']
 
 
-def test_a_finished_review_archives_its_chat_but_not_one_that_asks(gh, told, fresh_bot):
-    task = started(gh, told)
-    finish(task, CLEAN)
-    turn = {'last_status': 'completed', 'last_done': None, 'messages': [], 'requests': [], 'workers': [], 'prs': []}
-    tasks._finish_turn(task, turn)
-    assert fresh_bot.archived == ['T_REV']
-    asking_task = dict(task, active=True, latest='Which branch?')
-    tasks._finish_turn(asking_task, dict(turn, asked=[{'questions': [{'question': 'Which branch?'}]}]))
-    assert fresh_bot.archived == ['T_REV']
+def test_the_lead_settles_its_own_chat_once_review_json_is_written(gh, told):
+    # T3 refuses the companion's token for auto-mode chats, so the chat settles itself; a failed turn stays active
+    started(gh, told)
+    _, _, message = told[0]
+    assert 't3_thread_organize' in message and '"settle"' in message
+    assert message.index('review.json LAST') < message.index('"settle"')
+    assert 't3_thread_organize' in tasks.REVIEW_NUDGE and 'settle' in tasks.REVIEW_NUDGE
