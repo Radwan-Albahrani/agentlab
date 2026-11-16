@@ -331,8 +331,15 @@ def agent(cfg, a):
         'cgroup_parent': 'agentlab.slice',
         'mem_limit': a['memory'],
         'cpus': a['cpus'],
-        # A fixed address: the firewall's rules for this agent are written against it.
-        'networks': {network(aid): {'aliases': [f'agent-{aid}'], 'ipv4_address': config.agent_ip(a)}},
+        # A fixed address: the firewall's rules for this agent are written against it. The veth- name keeps T3 from
+        # advertising this internal address to its apps as a direct route (they can't reach it and stop retrying).
+        'networks': {
+            network(aid): {
+                'aliases': [f'agent-{aid}'],
+                'ipv4_address': config.agent_ip(a),
+                'interface_name': 'veth-agentlab',
+            }
+        },
     }
     published = {t: p for t, p in a['publish'].items() if t != 'files'}
     if published:

@@ -634,6 +634,7 @@ class Rendering(unittest.TestCase):
         svc = body['services']['agent']
         self.assertNotIn('ports', svc)
         self.assertEqual(svc['networks']['agentlab-sara']['ipv4_address'], '10.207.1.2')
+        self.assertEqual(svc['networks']['agentlab-sara']['interface_name'], 'veth-agentlab')  # not advertised by T3
         self.assertEqual(svc['runtime'], 'sysbox-runc')
         self.assertNotIn('security_opt', svc)
         self.assertNotIn('user', svc)
