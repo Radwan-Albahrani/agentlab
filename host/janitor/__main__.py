@@ -15,25 +15,25 @@ import cluster
 
 from janitor.dedupe import dedupe
 
-SETTLED_HOURS = 12
+SETTLED_HOURS = 6
 ORPHAN_DAYS = 2
-CACHES_AT = 75
-NOTICE_DAYS = 7  # untouched this long, a worktree with unsaved work goes too (saved as a ref)
-SCRATCH_DAYS = 7  # untouched this long, a scratch project in the agent's home loses its rebuildable folders
+CACHES_AT = 70
+NOTICE_DAYS = 3  # untouched this long, a worktree with unsaved work goes too (saved as a ref)
+SCRATCH_DAYS = 2  # untouched this long, a scratch project in the agent's home loses its rebuildable folders
 REBUILDABLE = ('node_modules', 'venv', '.venv')
 DRY = bool(os.environ.get('DRY'))
 
 DOCKER_PRUNE = """docker info >/dev/null 2>&1 || exit 0
-docker container prune -f --filter until=72h >/dev/null
-docker image prune -af --filter until=72h | tail -1
-docker builder prune -af --filter until=72h | tail -1
+docker container prune -f --filter until=24h >/dev/null
+docker image prune -af --filter "until=${IMAGES_AGE:-24h}" | tail -1
+docker builder prune -af | tail -1
 docker volume prune -f | tail -1
-cut=$(( $(date +%s) - 259200 )) n=0
+cut=$(( $(date +%s) - 86400 )) n=0
 for v in $(docker volume ls -qf dangling=true); do
   t=$(date -d "$(docker volume inspect -f '{{.CreatedAt}}' "$v" 2>/dev/null)" +%s 2>/dev/null || echo "$cut")
   [ "$t" -lt "$cut" ] && docker volume rm "$v" >/dev/null 2>&1 && n=$((n + 1))
 done
-[ "$n" -eq 0 ] || echo "removed $n unused volumes older than 3 days"
+[ "$n" -eq 0 ] || echo "removed $n unused volumes older than a day"
 true"""
 
 # Runs as the agent with worktree paths on stdin; unsaved work is kept as refs/agentlab/removed/<name> before removal.
@@ -73,14 +73,19 @@ done
 [ -n "${DRY}" ] || for r in /workspace/*/; do [ -d "${r}.git" ] && git -C "${r}" worktree prune; done
 echo "$([ -n "${DRY}" ] && echo "would remove" || echo removed) ${n} idle worktrees:${removed:- none}${kept:+; kept:${kept}}"'''
 
-# Not bun's cache: its files are hardlinked into every node_modules, so removing it frees nothing and the next
-# install would make full copies again.
+# Every run. Not bun's cache: its files are hardlinked into every node_modules, so removing it frees nothing and the
+# next install would make full copies again.
 CLEAR_CACHES = """npm cache clean --force 2>/dev/null
 command -v pnpm >/dev/null && (cd /workspace && pnpm store prune >/dev/null 2>&1)
 command -v brew >/dev/null && brew cleanup -s >/dev/null 2>&1
 command -v pip >/dev/null && pip cache purge >/dev/null 2>&1
 command -v uv >/dev/null && uv cache clean >/dev/null 2>&1
-for b in ~/.cache/puppeteer/*/; do ls -dt "$b"*/ 2>/dev/null | tail -n +2 | xargs -r rm -rf; done; true"""
+for b in ~/.cache/puppeteer/*/; do ls -dt "$b"*/ 2>/dev/null | tail -n +2 | xargs -r rm -rf; done
+rm -rf ~/.cache/node-gyp ~/.cache/go-build; true"""
+
+# Only when the agent's storage is filling up: caches that cost a download to bring back.
+CLEAR_MORE = """rm -rf ~/.cache/huggingface ~/.cache/dotslash ~/.cache/ms-playwright ~/.cache/puppeteer
+command -v cargo >/dev/null && rm -rf ~/.cargo/registry/cache; true"""
 
 
 def _epoch(iso):
@@ -233,9 +238,11 @@ def tidy(data, agent):
     if not cid or not os.path.isdir(root) or (agent.get('storage_unit') and not os.path.ismount(unit)):
         return [], 0
     lines = []
-    before = used(unit)[0]
+    before, size = used(unit)
+    full = bool(size) and 100 * before / size >= CACHES_AT  # filling up: unused images of any age, more caches
     if not DRY:
-        pruned = _run(['docker', 'exec', '-u', 'agent', cid, 'sh', '-c', DOCKER_PRUNE])
+        age = ['-e', 'IMAGES_AGE=1h'] if full else []
+        pruned = _run(['docker', 'exec', *age, '-u', 'agent', cid, 'sh', '-c', DOCKER_PRUNE])
         lines += [f'{agent_id}: {line}' for line in pruned.splitlines() if line.strip()]
     trees = '\n'.join(idle_worktrees(root)) + '\n'
     out = _run(
@@ -269,11 +276,11 @@ def tidy(data, agent):
         lines.append(
             f'{agent_id}: {"would share" if DRY else "shared"} {n} identical package files ({saved / 1e9:.1f} GB)'
         )
-    u, size = used(unit)
-    if not DRY and size and 100 * u / size >= CACHES_AT:
-        _run(['docker', 'exec', '-u', 'agent', cid, 'bash', '-lc', CLEAR_CACHES])
+    if not DRY:
+        _run(['docker', 'exec', '-u', 'agent', cid, 'bash', '-lc', CLEAR_CACHES + ('\n' + CLEAR_MORE if full else '')])
         lines.append(
-            f'{agent_id}: package caches cleared, pip and old browsers too (its storage at {CACHES_AT} % or more)'
+            f'{agent_id}: package caches cleared'
+            + (f', downloaded browsers and models too (its storage at {CACHES_AT} % or more)' if full else '')
         )
     return lines, max(0, before - used(unit)[0])
 

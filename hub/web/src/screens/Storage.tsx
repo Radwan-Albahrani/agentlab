@@ -330,7 +330,9 @@ function StorageView({ d }: { d: Data }) {
           {cleanup}
         </>
       )}
-      {d.manage && <FeedSection title="Cleanups and alerts" sub="Nightly cleanup, plus any you start here." events={d.events} />}
+      {d.manage && (
+        <FeedSection title="Cleanups and alerts" sub="Cleanups twice a day, plus any you start here." events={d.events} />
+      )}
     </>
   );
 }
@@ -406,7 +408,8 @@ function Cleanup({ events }: { events: Event[] }) {
         Reclaim space
       </div>
       <p {...stylex.props(styles.cleanupText)}>
-        Removes Docker images, build cache and stopped containers unused for 3+ days inside every agent. It also runs nightly.
+        Inside every agent: Docker leftovers unused for a day, package caches, idle worktrees, and node_modules or venvs in
+        scratch folders untouched for 2 days. It also runs twice a day.
       </p>
       {last && (
         <div {...stylex.props(styles.cleanupLast)}>
@@ -420,7 +423,7 @@ function Cleanup({ events }: { events: Event[] }) {
           icon="broom"
           variant="primary"
           url="/api/storage/cleanup"
-          confirm="Remove Docker images, build cache and stopped containers unused for 3+ days inside every agent?"
+          confirm="Clean up every agent now: Docker leftovers unused for a day, package caches, idle worktrees and stale scratch builds?"
         />
       </div>
     </div>

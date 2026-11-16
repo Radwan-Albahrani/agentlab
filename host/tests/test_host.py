@@ -696,7 +696,7 @@ class ScratchBuilds(unittest.TestCase):
         ).stdout
         with open(removed) as f:
             self.assertEqual(f.read().split(), ['old_db'])
-        self.assertIn('removed 1 unused volumes older than 3 days', out)
+        self.assertIn('removed 1 unused volumes older than a day', out)
 
 
 class WorktreeNotice(unittest.TestCase):

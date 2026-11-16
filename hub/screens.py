@@ -478,7 +478,7 @@ def folder_hint(path):
             return hint
     parts = path.split('/')
     if parts[0] == 'home' and len(parts) > 1 and not parts[1].startswith('.'):
-        return "A scratch folder in the agent's home; node_modules and venvs go after a week untouched"
+        return "A scratch folder in the agent's home; node_modules and venvs go after 2 days untouched"
     if parts[0] == 'workspace' and len(parts) == 2:
         return 'A repository the agent works in'
     return ''

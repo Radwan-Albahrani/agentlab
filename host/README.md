@@ -7,7 +7,7 @@ What runs on the server itself, outside containers. `agentctl install` puts it i
 |---|---|---|
 | `throttle/` | `agentlab-throttle.service` | admits heavy jobs (installs, builds, tests) when the agent and the shared pool have room |
 | `watch/` | `agentlab-watch.service` | the hub's hands: its buttons, the agents' companion requests, usage, inventory, network joins, secrets applied where used |
-| `janitor/` | `agentlab-janitor.timer` | nightly: Docker leftovers, settled worktrees, package caches when storage is 75 % full |
+| `janitor/` | `agentlab-janitor.timer` | twice a day: Docker leftovers (a day unused), settled worktrees, package caches, scratch node_modules/venvs (2 days untouched); more caches and any unused image when storage is 70 % full |
 | `bin/agentlab-mount-storage` | `agentlab-disks.service` | mounts the storage images before Docker starts |
 | `install/` | | the numbered install steps (exit 2 = a manual step is needed) |
 | `systemd/` | | unit templates, plus `agentlab.slice`, `agentlab-backup.*`, `agentlab-firewall.service`, `cloudflared.service` |
