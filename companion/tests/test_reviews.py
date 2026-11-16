@@ -948,14 +948,27 @@ def their_dm(monkeypatch):
 def test_a_colleague_dms_a_pr_link_and_hears_the_result_in_their_thread(gh, told, fresh_bot, their_dm):
     set_settings({'github_people': [{'github': 'sam-albahrani', 'slack': 'U_SALAH'}]})
     routing.route(colleague_dm('70.1', f'hey can you look at this? https://github.com/{REPO}/pull/5922'), False)
-    ack = fresh_bot.messages[-1]
+    ack = next(m for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT')
     assert (ack['channel'], ack['thread_ts']) == ('D_SALAHBOT', '70.1')
     assert 'On it: reviewing' in ack['blocks'][0]['text']
+    assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · next up'
     reviews.tick()
     task = review(5922)
     assert task['channel'] == 'D_OWNER'  # the batch, and the review's questions, stay with the owner
     assert '· for Salah' in card_now(fresh_bot, state.state['review_batch']['card'])
+    assert status_line(fresh_bot, ack).startswith(':arrows_counterclockwise: Reviewing · started ')
+    task['workers_said'] = 3
+    task['question'] = True
+    reviews.tick()
+    assert status_line(fresh_bot, ack) == ':raised_hand: Waiting for Sam to answer a question from the review'
+    task['question'] = False
+    reviews.tick()
+    assert status_line(fresh_bot, ack).endswith(' · 3 reviewers on it')
+    edits = len(fresh_bot.updates)
+    reviews.tick()
+    assert len(fresh_bot.updates) == edits  # edited only when it changes
     finish(task, {'head': 'a' * 40, 'findings': FINDINGS})
+    assert status_line(fresh_bot, ack).startswith(':octagonal_sign: Changes requested · ')
     theirs = [m for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
     assert [m['text'] for m in theirs] == ['Reviewing app#5922', 'Review of app#5922: changes requested']
     assert '2 findings (1 blocking)' in theirs[-1]['blocks'][0]['text']
@@ -998,3 +1011,41 @@ def test_someone_with_access_still_gives_tasks_that_mention_a_pr(gh, told, fresh
     monkeypatch.setattr(tasks, 'start', lambda *a, **kw: calls.append(a))
     routing.route(colleague_dm('75.1', f'fix the failing test in https://github.com/{REPO}/pull/5922'), False)
     assert calls and not state.state.get('review_queue')
+
+
+def status_line(bot, msg):
+    """The grey status line of a colleague's "On it" message, as last posted or edited."""
+    ts = bot.messages.index(msg) + 1
+    edits = [u for u in bot.updates if u['ts'] == f'{ts}.0' and u['channel'] == msg['channel']]
+    return (edits[-1] if edits else msg)['blocks'][-1]['elements'][0]['text']
+
+
+def test_a_colleague_asking_for_a_review_already_going_follows_it(gh, told, fresh_bot, their_dm):
+    task = started(gh, told)
+    routing.route(colleague_dm('76.1', f'https://github.com/{REPO}/pull/5922'), False)
+    ack = fresh_bot.messages[-1]
+    assert 'Already on it' in ack['blocks'][0]['text'] and not state.state['review_queue']
+    assert status_line(fresh_bot, ack).startswith(':arrows_counterclockwise: Reviewing')
+    assert '· for Salah' in card_now(fresh_bot, state.state['review_batch']['card'])
+    routing.route(colleague_dm('76.2', f'https://github.com/{REPO}/pull/5922', user='U_ALI'), False)
+    routing.route(colleague_dm('76.3', f'https://github.com/{REPO}/pull/5922'), False)
+    assert 'Still on it' in fresh_bot.messages[-1]['blocks'][0]['text']
+    finish(task, CLEAN)
+    results = [m['channel'] for m in fresh_bot.messages if m['text'] == 'Review of app#5922: approved']
+    assert sorted(results) == ['D_SALAHBOT', 'D_SALAHBOT']  # each follower once (the fake DM is shared)
+    assert len(told) == 1
+
+
+def test_a_queued_colleague_sees_how_many_are_ahead(gh, told, fresh_bot, their_dm):
+    set_settings({'review_slots': '1'})
+    for n in (5922, 5923):
+        reviews.request(REPO, n)
+    reviews.tick()
+    routing.route(colleague_dm('77.1', f'https://github.com/{REPO}/pull/5924'), False)
+    ack = fresh_bot.messages[-1]
+    assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · 1 ahead'
+    finish(review(5922), CLEAN)
+    review(5922)['active'] = False  # its chat ended: the slot is free
+    reviews.tick()
+    assert review(5923)['active']
+    assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · next up'

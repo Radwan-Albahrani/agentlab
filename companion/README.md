@@ -27,8 +27,9 @@ What it does:
   reply there (start with `#5922` when several reviews ask at once). "Reviews at a time" is a hub setting, and
   "GitHub people" pairs GitHub logins with Slack people, who get a DM with the result of a review of their PR.
   Colleagues can ask too ("Who can ask for reviews": everyone on the team by default): a DM or tag with a PR link
-  joins your batch, with "for <name>" on the card. You get its questions, and they get the result in their thread,
-  three reviews at a time each.
+  joins your batch, with "for <name>" on the card (asking for one already going follows it). You get its questions;
+  they get a status line in their thread that follows it (queued, reviewing, waiting on you, paused) and the result
+  as a reply, three reviews at a time each.
 
 Everything it does is shown on the hub (task cards, events, polls, pull requests, settings).
 

@@ -169,8 +169,14 @@ def from_slack(channel, thread_ts, trigger_ts, text, by=None, any_words=False):
     if by:
         origin['by'] = by
     with lock:
+        going = by and _going(f'{repo}#{number}')
         if by and _asked_by(by) >= MAX_ASKED:
             problem = f'you already have {MAX_ASKED} reviews going; ask again once one is done'
+        elif going:  # already queued or running: follow that review
+            problem = ''
+            _follow(going, origin, new=False)
+            _show()
+            save()
         else:
             problem = request(repo, number, origin)
     if problem:
@@ -180,9 +186,73 @@ def from_slack(channel, thread_ts, trigger_ts, text, by=None, any_words=False):
     return True
 
 
+def _going(pr_id):
+    """The batch's entry for this PR while it is queued or running, or None."""
+    return next((e for e in reversed(_run()) if e['id'] == pr_id and e.get('verdict') in (None, 'asked')), None)
+
+
+def _askers(e):
+    """The colleagues following this review (one dict in the first version)."""
+    v = e.get('for')
+    return [v] if isinstance(v, dict) else v or []
+
+
 def _asked_by(user):
-    """This colleague's reviews in the batch that haven't finished."""
-    return sum(1 for e in _run() if (e.get('for') or {}).get('user') == user and e.get('verdict') in (None, 'asked'))
+    """The reviews this colleague follows in the batch that haven't finished."""
+    return sum(1 for e in _run() if e.get('verdict') in (None, 'asked') and any(a['user'] == user for a in _askers(e)))
+
+
+def _follow(e, origin, new=True):
+    """Keep a colleague posted on a review: an "On it" message whose status line follows it, then the result."""
+    by, ch, thr = origin['by'], origin['channel'], origin['thread_ts']
+    short, line = _short(e['id']), _progress(e)
+    pr = f'<{e["url"]}|{short}>'
+    if any(a['user'] == by for a in _askers(e)):
+        slack.post(ch, thr, f'Reviewing {short}', md=f':mag: Still on it: {pr}. Updates are in your first thread.')
+        return
+    head = f':mag: On it: reviewing {pr}.' if new else f':mag: Already on it: {pr} was asked for before you.'
+    md = head + " I'll keep this updated and reply here when it's done."
+    ts = slack.post(ch, thr, f'Reviewing {short}', md=md, note=line)
+    asker = {'channel': ch, 'thread': thr, 'user': by, 'name': slack.name(by), 'ts': origin['trigger_ts']}
+    e['for'] = [*_askers(e), dict(asker, msg=ts, md=md, shown=line)]
+
+
+def _progress(e):
+    """A colleague's live status line for a review."""
+    st = _state(e)
+    if st == 'queued':
+        queue = [q['id'] for q in state.get('review_queue') or []]
+        ahead = queue.index(e['id']) if e['id'] in queue else 0
+        return ':hourglass_flowing_sand: Queued · ' + (f'{ahead} ahead' if ahead else 'next up')
+    if st == 'reviewing':
+        bits = ['Reviewing'] + ([f'started {hour(e["began"])}'] if e.get('began') else [])
+        n = (state['tasks'].get(e.get('task') or '') or {}).get('workers_said') or 0
+        if n:
+            bits.append(f'{_plural(n, "reviewer")} on it')
+        return ':arrows_counterclockwise: ' + ' · '.join(bits)
+    if st == 'waiting':
+        return f':raised_hand: Waiting for {slack.name(OWNER)} to answer a question from the review'
+    if st == 'paused':
+        when = f'resumes at {hour(e["paused"])}' if e.get('paused') else 'resumes when it resets'
+        return f':double_vertical_bar: Paused for the usage limit · {when}'
+    icon, label = VERDICTS[st]
+    return f'{icon} {label}' + (f' · {hour(e["ended"])}' if e.get('ended') else '')
+
+
+def _status(e, a):
+    """Edit a colleague's status line when it changed; True if it did."""
+    line = _progress(e)
+    if not a.get('msg') or line == a.get('shown'):
+        return False
+    a['shown'] = line
+    slack.update(a['channel'], a['msg'], f'Reviewing {_short(e["id"])}', md=a.get('md'), note=line)
+    return True
+
+
+def _keep_posted():
+    changed = [_status(e, a) for e in _run() for a in _askers(e)]  # every line, not just up to the first change
+    if True in changed:
+        save()
 
 
 def _linked(text):
@@ -295,6 +365,7 @@ def tick():
             _finish(e, 'failed', f"Couldn't start: {str(ex)[:200]}")
             COMP.event('failed', f'Could not review {item["id"]}', detail=str(ex)[:300], ok=False)
     _settle(queue)
+    _keep_posted()
 
 
 def _recover():
@@ -383,21 +454,13 @@ def _join(item):
         'url': f'https://github.com/{item["repo"]}/pull/{item["number"]}',
         'title': next((p['title'] for p in state.get('pulls') or [] if p['id'] == item['id']), ''),
     }
-    if origin:
+    if origin and not by:  # a colleague's 👀 goes with their follow
         e['asked'] = {'channel': origin['channel'], 'ts': origin['trigger_ts']}
-    if by:
-        e['for'] = {'channel': origin['channel'], 'thread': origin['thread_ts'], 'user': by, 'name': slack.name(by)}
     b['prs'].append(e)
-    _show()
     if by:
-        short = _short(e['id'])
-        slack.post(
-            origin['channel'],
-            origin['thread_ts'],
-            f'Reviewing {short}',
-            md=f":mag: On it: reviewing <{e['url']}|{short}>. I'll reply here when it's done.",
-        )
-    elif origin and (origin['channel'], origin['thread_ts']) != (b['channel'], b['thread']) and b.get('card'):
+        _follow(e, origin)
+    _show()
+    if origin and not by and (origin['channel'], origin['thread_ts']) != (b['channel'], b['thread']) and b.get('card'):
         link = slack.link(b['channel'], b['card'])
         where = f'<{link}|the review batch>' if link else 'the review batch'
         slack.note_only(origin['channel'], origin['thread_ts'], f':mag: Added {_short(e["id"])} to {where}')
@@ -451,7 +514,8 @@ def _line(e):
     elif st == 'approved' and c.get('findings'):
         label += f' · {_plural(c["findings"], "finding")}'
     pr = f'<{e.get("link") or e["url"]}|#{e["id"].rsplit("#", 1)[-1]}>'
-    asker = f' · for {e["for"]["name"]}' if e.get('for') else ''
+    names = ', '.join(a['name'] for a in _askers(e))
+    asker = f' · for {names}' if names else ''
     return f'{icon} {pr}' + (f' {_clip(e["title"], 40)}' if e.get('title') else '') + f' · {label}{asker}'
 
 
@@ -526,15 +590,17 @@ def _done_md(e):
 def _finish(e, verdict, detail='', link='', thread=None):
     """Close a review's entry: edit the card, and reply in the batch thread unless the batch's done message will say
     it (a batch of one); thread: (channel, ts) of a review whose batch already ended."""
-    e.update(verdict=verdict, detail=detail, link=link or e['url'], waiting=False)
+    e.update(verdict=verdict, detail=detail, link=link or e['url'], waiting=False, ended=time.time())
     e.pop('paused', None)
     asked = e.pop('asked', None)
     if asked:
         slack.react(asked['channel'], asked['ts'], 'eyes', remove=True)
-    asker = e.get('for')
-    if asker and verdict != 'asked' and asker.get('told') != verdict:  # a question to the owner isn't an end
-        asker['told'] = verdict
-        _tell_asker(e, asker)
+    for a in _askers(e):
+        _status(e, a)
+        if verdict != 'asked' and a.get('told') != verdict:  # a question to the owner isn't an end
+            a['told'] = verdict
+            slack.react(a['channel'], a.get('ts'), 'eyes', remove=True)
+            _tell_asker(e, a)
     b = _batch()
     if thread is None and b:
         _show()
@@ -704,7 +770,7 @@ def start(item, e):
             'title': f['title'],
         },
     )
-    e.update(task=k, title=f['title'], url=f['url'], rereview=rereview)
+    e.update(task=k, title=f['title'], url=f['url'], rereview=rereview, began=time.time())
     _show()
     log('review started', pr_id, tid)
     COMP.event('started', title, task=k, detail=f'{pr_id} at {f["head"][:7]}')
@@ -776,7 +842,7 @@ def publish(task, box, data):
     said = summary + (' · :warning: trouble with ' + '; '.join(problems) if problems else '')
     k = key_of(task)
     e = next((x for x in reversed(_run()) if x.get('task') == k), None)
-    asker = ((e or {}).get('for') or {}).get('user')
+    askers = {a['user'] for a in _askers(e or {})}
     if e:
         e['counts'] = counts
         _finish(e, verdict, said, link)
@@ -786,18 +852,18 @@ def publish(task, box, data):
     if os.path.exists(with_token):
         os.remove(with_token)
     COMP.event('sent', f'Review of {r["id"]}: {summary}', task=k, to=r['id'], ok=not problems)
-    _tell_author(r, verdict, link, asker)
+    _tell_author(r, verdict, link, askers)
     save()
 
 
-def _tell_author(r, verdict, link, asker=None):
+def _tell_author(r, verdict, link, askers=()):
     """DM the PR's author, if the hub links their GitHub login to a Slack person, once per reviewed commit (not when
     they asked for the review: they hear in their thread)."""
     author = r.get('author') or ''
     who = slack_for_github(author)
     told = state.setdefault('authors_told', {})
     mine = author.casefold() == (COMP.setting('github_user') or '').strip().casefold()
-    if not who or who in (OWNER, asker) or mine or mode() == 'owner' or told.get(r['id']) == r['head']:
+    if not who or who == OWNER or who in askers or mine or mode() == 'owner' or told.get(r['id']) == r['head']:
         return
     told[r['id']] = r['head']
     save()
