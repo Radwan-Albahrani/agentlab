@@ -1,7 +1,7 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
 from . import drafts, jobs, requests, reviews, slack, tasks
-from .config import OWNER, has_access
+from .config import COMP, OWNER, has_access, mode
 from .state import key, save, state
 
 _seen = []
@@ -22,7 +22,16 @@ def _refuse(channel, thread_ts, user):
         return
     state['refused'].append(k)
     save()
-    slack.post(channel, thread_ts, f'Hi <@{user}>, I only take tasks from <@{OWNER}>.')
+    can = ', but I can review a pull request: send me its GitHub link' if _reviews_from(user) else ''
+    slack.post(channel, thread_ts, f'Hi <@{user}>, I only take tasks from <@{OWNER}>{can}.')
+
+
+def _reviews_from(user):
+    """Can this colleague ask for pull request reviews (the hub's setting; never in dry run)?"""
+    who = COMP.setting('review_requests')
+    if user == OWNER or mode() == 'owner' or who == 'off':
+        return False
+    return has_access(user) or (who == 'team' and requests.team_member(user))
 
 
 def _bot_reads(ev):
@@ -56,6 +65,14 @@ def route(ev, mentioned):
         return
     if not (mentioned or (in_dm and requests.own_dm(ch))):
         requests.notice(ev)
+        return
+    if (
+        user != OWNER
+        and key(ch, tts) not in state['tasks']
+        and _reviews_from(user)
+        and _bot_reads(ev)
+        and reviews.from_slack(ch, tts, ts, ev.get('text', ''), by=user, any_words=not has_access(user))
+    ):
         return
     if not has_access(user):
         if not in_dm or requests.own_dm(ch):

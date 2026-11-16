@@ -934,3 +934,67 @@ def test_the_lead_settles_its_own_chat_once_review_json_is_written(gh, told):
     assert 't3_thread_organize' in message and '"settle"' in message
     assert message.index('review.json LAST') < message.index('"settle"')
     assert 't3_thread_organize' in tasks.REVIEW_NUDGE and 'settle' in tasks.REVIEW_NUDGE
+
+
+def colleague_dm(ts, text, user='U_SALAH'):
+    return {'channel': 'D_SALAHBOT', 'channel_type': 'im', 'ts': ts, 'user': user, 'text': text}
+
+
+@pytest.fixture
+def their_dm(monkeypatch):
+    monkeypatch.setattr(routing.requests, 'own_dm', lambda ch: True)
+
+
+def test_a_colleague_dms_a_pr_link_and_hears_the_result_in_their_thread(gh, told, fresh_bot, their_dm):
+    set_settings({'github_people': [{'github': 'sam-albahrani', 'slack': 'U_SALAH'}]})
+    routing.route(colleague_dm('70.1', f'hey can you look at this? https://github.com/{REPO}/pull/5922'), False)
+    ack = fresh_bot.messages[-1]
+    assert (ack['channel'], ack['thread_ts']) == ('D_SALAHBOT', '70.1')
+    assert 'On it: reviewing' in ack['blocks'][0]['text']
+    reviews.tick()
+    task = review(5922)
+    assert task['channel'] == 'D_OWNER'  # the batch, and the review's questions, stay with the owner
+    assert '· for Salah' in card_now(fresh_bot, state.state['review_batch']['card'])
+    finish(task, {'head': 'a' * 40, 'findings': FINDINGS})
+    theirs = [m for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
+    assert [m['text'] for m in theirs] == ['Reviewing app#5922', 'Review of app#5922: changes requested']
+    assert '2 findings (1 blocking)' in theirs[-1]['blocks'][0]['text']
+    assert not [m for m in fresh_bot.messages if m['channel'] == 'D_U_SALAH']  # no second DM as the author
+
+
+def test_a_colleagues_failed_review_says_so_without_the_details(gh, told, fresh_bot, their_dm):
+    routing.route(colleague_dm('71.1', f'https://github.com/{REPO}/pull/5922'), False)
+    reviews.tick()
+    review(5922).update(active=False, outcome='failed', latest='Internal: the token in /secrets broke')
+    reviews.tick()
+    said = [m['blocks'][0]['text'] for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
+    assert 'failed; Sam has the details' in said[-1] and 'token' not in said[-1]
+
+
+def test_a_colleague_can_have_three_reviews_going(gh, told, fresh_bot, their_dm):
+    for n in (5922, 5923, 5924, 5925):
+        routing.route(colleague_dm(f'72.{n}', f'review https://github.com/{REPO}/pull/{n}'), False)
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923, 5924]
+    assert 'you already have 3 reviews going' in fresh_bot.messages[-1]['blocks'][0]['text']
+
+
+@pytest.mark.parametrize('settings', [{'review_requests': 'off'}, {'review_requests': 'access'}, {'mode': 'owner'}])
+def test_who_can_ask_for_reviews_is_the_owners_choice(gh, told, fresh_bot, their_dm, settings):
+    set_settings(settings)
+    routing.route(colleague_dm('73.1', f'https://github.com/{REPO}/pull/5922'), False)
+    assert not state.state.get('review_queue')
+    assert fresh_bot.messages[-1]['text'] == f'Hi <@U_SALAH>, I only take tasks from <@{OWNER}>.'
+
+
+def test_a_colleague_without_a_link_hears_they_can_ask_for_a_review(gh, told, fresh_bot, their_dm):
+    routing.route(colleague_dm('74.1', 'can you fix the login page?'), False)
+    assert 'but I can review a pull request: send me its GitHub link' in fresh_bot.messages[-1]['text']
+    assert not state.state.get('review_queue')
+
+
+def test_someone_with_access_still_gives_tasks_that_mention_a_pr(gh, told, fresh_bot, their_dm, monkeypatch):
+    set_settings({'access': ['U_SALAH']})
+    calls = []
+    monkeypatch.setattr(tasks, 'start', lambda *a, **kw: calls.append(a))
+    routing.route(colleague_dm('75.1', f'fix the failing test in https://github.com/{REPO}/pull/5922'), False)
+    assert calls and not state.state.get('review_queue')

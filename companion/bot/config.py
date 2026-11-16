@@ -125,6 +125,20 @@ SCHEMA = [
         'help': 'How many pull request reviews run at once. More finishes a batch sooner and uses more memory.',
     },
     {
+        'key': 'review_requests',
+        'label': 'Who can ask for reviews',
+        'type': 'choice',
+        'options': [
+            {'value': 'team', 'label': 'Everyone', 'help': 'Anyone on the team (not guests or other workspaces).'},
+            {'value': 'access', 'label': 'People who can tag it', 'help': 'Only the people listed above.'},
+            {'value': 'off', 'label': 'Only you', 'help': 'Colleagues can not ask for reviews.'},
+        ],
+        'when': {'mode': ['tag', 'team']},
+        'default': 'team',
+        'help': f'A colleague DMs or tags @{NAME} with a pull request link; the review joins your batch, its questions '
+        'come to you, and they get the result in their thread.',
+    },
+    {
         'key': 'github_people',
         'label': 'GitHub people',
         'type': 'links',

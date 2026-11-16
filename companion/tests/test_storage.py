@@ -36,6 +36,7 @@ def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
         'github_user',
         'qa_evidence_repo',
         'review_slots',
+        'review_requests',
         'github_people',
         'publish_channel',
     ]
