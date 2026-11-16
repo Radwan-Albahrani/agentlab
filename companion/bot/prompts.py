@@ -212,7 +212,17 @@ def triage(owner, who, convo, texts):
     )
 
 
-def revise_draft(folder, key, owner, feedback, next_revision):
+def revise_draft(folder, key, owner, feedback, next_revision, video=False):
+    if video:
+        return (
+            f'Revise the product update draft in {folder}/{key}/ (update.md, the attachments (screenshots or video) '
+            f'listed in ready.json under "images"). Feedback from {owner}:\n\n{feedback}\n\n'
+            'Keep everything else as it is. The attachments (screenshots or video) are attached as files, so never '
+            'reference them inside update.md (no ![...](...) lines or links to them). Rewrite update.md (standard '
+            'markdown) and any attachments you change (you may replace or re-render the video), then rewrite '
+            f'ready.json LAST with "revision": {next_revision}. Do not post anything to Slack; the new draft is '
+            'previewed for approval automatically.'
+        )
     return (
         f'Revise the product update draft in {folder}/{key}/ (update.md, the screenshots listed in '
         f'ready.json). Feedback from {owner}:\n\n{feedback}\n\n'

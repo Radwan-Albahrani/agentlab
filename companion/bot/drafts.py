@@ -1,5 +1,7 @@
-"""Product-update drafts (product-updates/<id>/: update.md, images, ready.json written last), previewed to the owner."""
+"""Product-update drafts (product-updates/<id>/: update.md, images or a video, ready.json written last), previewed to
+the owner."""
 
+import copy
 import json
 import os
 import re
@@ -15,8 +17,16 @@ AGENT_DRAFTS = f'{AGENT_FILES}/product-updates'
 IMAGE_REF = re.compile(r'^[ \t]*!\[[^\]]*\]\([^)]*\)[ \t]*\n?', re.M)
 
 
+VIDEOS = ('.mp4', '.mov', '.webm')
+MAX_MB = 200  # Slack takes up to 1 GB; a weekly update's video is 20-50 MB, so anything near this is a mistake
+UPLOAD_TIMEOUT = 300  # seconds per upload call when a video is attached
+SHARE_TRIES, SHARE_EVERY = 30, 2  # files.info polls for a video post's message, ~60 s: Slack processes videos first
+
+
 def _files(d, meta):
-    imgs = meta.get('images') or sorted(
+    """update.md without image lines, and the attachments: ready.json's "images" as given, else any videos then images."""
+    videos = sorted(f for f in os.listdir(d) if f.lower().endswith(VIDEOS))
+    imgs = meta.get('images') or videos + sorted(
         f for f in os.listdir(d) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
     )
     with open(os.path.join(d, 'update.md'), encoding='utf-8') as f:
@@ -25,18 +35,69 @@ def _files(d, meta):
     return text, [os.path.join(d, f) for f in imgs if os.path.isfile(os.path.join(d, f))]
 
 
+def has_video(paths):
+    return any(p.lower().endswith(VIDEOS) for p in paths)
+
+
+def _too_big(paths):
+    """Why these can't be uploaded, or ''."""
+    for p in paths:
+        mb = os.path.getsize(p) / 2**20
+        if mb > MAX_MB:
+            return f'{os.path.basename(p)} is {mb:.0f} MB, over the {MAX_MB} MB upload cap. Make it smaller, then rewrite ready.json.'
+    return ''
+
+
+def _uploader():
+    """The bot client with a long timeout, for uploads that carry a video."""
+    c = copy.copy(slack.app.client)
+    c.timeout = UPLOAD_TIMEOUT
+    return c
+
+
 def _send(channel, text_md, images, thread_ts=None):
-    """Post text plus screenshots as one message; returns where it landed."""
+    """Post text plus screenshots (or a video) as one message; returns where it landed."""
     if images:
+        if problem := _too_big(images):
+            raise ValueError(problem)
+        video = has_video(images)
         since = time.time() - 5
-        slack.app.client.files_upload_v2(
+        r = (_uploader() if video else slack.app.client).files_upload_v2(
             channel=channel,
             thread_ts=thread_ts,
             initial_comment=to_slack(text_md, 3900),
             file_uploads=[{'file': p, 'filename': os.path.basename(p)} for p in images],
         )
-        return {'channel': channel, 'ts': None if thread_ts else _find_upload(channel, since), 'files': True}
+        if thread_ts:
+            ts = None
+        elif video:  # a video's message shows up only once Slack has processed it
+            ids = [f['id'] for f in ((r or {}).get('files') or []) if f.get('id')]
+            ts = _shared_ts(channel, ids) or _find_upload(channel, since)
+        else:
+            ts = _find_upload(channel, since)
+        return {'channel': channel, 'ts': ts, 'files': True}
     return {'channel': channel, 'ts': slack.post(channel, thread_ts, first_sentence(text_md, 300), md=text_md)}
+
+
+def _shared_ts(channel, file_ids, tries=SHARE_TRIES):
+    """The ts of the message an upload became, from files.info `shares`, filled in once Slack has the file ready."""
+    for i in range(tries if file_ids else 0):
+        for fid in file_ids:
+            try:
+                shares = slack.app.client.files_info(file=fid)['file'].get('shares') or {}
+            except Exception as e:
+                log('files.info failed:', fid, e)
+                continue
+            for kind in ('public', 'private'):
+                for s in (shares.get(kind) or {}).get(channel) or []:
+                    if s.get('ts'):
+                        return s['ts']
+        if i < tries - 1:
+            time.sleep(SHARE_EVERY)
+    return None
+
+
+_refused = {}  # draft key -> the ready.json mtime already reported as too big to preview
 
 
 def _find_upload(channel, since, tries=5):
@@ -66,11 +127,12 @@ def _edit(st, text_md):
     return p['channel']
 
 
-def _buttons(key, rev, st):
+def _buttons(key, rev, st, video=False):
     if st['status'] == 'editing':
         ch = (st.get('posted') or {}).get('channel') or publish_channel()
         head, go, stop = f'*Edit of the post in <#{ch}>* · revision {rev}', 'Update the post', 'Keep it as it is'
-        foot = 'Updates the text in place; the screenshots stay as posted. Reply here to change something.'
+        kept = 'the attachments (screenshots or video) stay' if video else 'the screenshots stay'
+        foot = f'Updates the text in place; {kept} as posted. Reply here to change something.'
     else:
         head, go, stop = f'*Draft for <#{publish_channel()}>* · revision {rev}', 'Post to the channel', 'Discard'
         foot = 'Reply in this thread to change something.'
@@ -106,6 +168,17 @@ def tick():
             rev = st['revision'] + 1
         text_md, images = _files(d, meta)
         dm = slack.dm_owner()
+        if problem := _too_big(images):
+            if _refused.get(key) != mtime:
+                _refused[key] = mtime
+                slack.post(
+                    dm,
+                    st['thread'] if st else None,
+                    f'Product update draft {key} not previewed',
+                    md=f":warning: **Product update draft {key} can't be previewed:** {problem}",
+                )
+                log('draft refused', key, problem)
+            continue
         if not st:
             head = slack.post(
                 dm,
@@ -129,7 +202,7 @@ def tick():
             channel=dm,
             thread_ts=st['thread'],
             text='Post or discard this draft',
-            blocks=_buttons(key, rev, st),
+            blocks=_buttons(key, rev, st, has_video(images)),
             reply_broadcast=bool(st['revision']),
         )
         st.update(revision=rev, buttons=r['ts'], revising=False, mtime=mtime)
@@ -144,6 +217,15 @@ def for_thread(ch, tts):
     return None, None
 
 
+def _draft_has_video(key):
+    d = os.path.join(DRAFTS, key)
+    try:
+        with open(os.path.join(d, 'ready.json')) as f:
+            return has_video(_files(d, json.load(f))[1])
+    except (OSError, ValueError):
+        return False
+
+
 def revise(key, st, text, ts):
     """Owner feedback on a draft -> a T3 chat that rewrites the draft files."""
     if st['status'] == 'discarded':
@@ -153,7 +235,9 @@ def revise(key, st, text, ts):
     tid, err = t3.start_thread(
         default_project(),
         f'Revise product update {key}',
-        prompts.revise_draft(AGENT_DRAFTS, key, slack.name(OWNER), slack.readable(text), st['revision'] + 1),
+        prompts.revise_draft(
+            AGENT_DRAFTS, key, slack.name(OWNER), slack.readable(text), st['revision'] + 1, _draft_has_video(key)
+        ),
     )
     slack.react(st['dm'], ts, 'eyes', remove=True)
     if tid:
