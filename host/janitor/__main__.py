@@ -161,11 +161,13 @@ def _newest(top, skip=REBUILDABLE):
 
 
 def _size(path):
+    """Space removing `path` gives back: files linked elsewhere too (bun's store) free nothing."""
     total = 0
     for d, _, files in os.walk(path):
         for name in files:
             with contextlib.suppress(OSError):
-                total += os.lstat(f'{d}/{name}').st_blocks * 512
+                st = os.lstat(f'{d}/{name}')
+                total += st.st_blocks * 512 if st.st_nlink == 1 else 0
     return total
 
 
