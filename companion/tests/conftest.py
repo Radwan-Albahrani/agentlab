@@ -74,6 +74,8 @@ class FakeSlack:
         return {'channel': {'id': 'D_OWNER' if users == OWNER else 'D_' + users}}
 
     def conversations_history(self, **kw):
+        if kw.get('channel') == 'D_SALAH':  # the owner's DM with Salah: not the bot's to read
+            raise Exception("The server responded with: {'ok': False, 'error': 'channel_not_found'}")
         return {'messages': [{'text': 'head', 'blocks': [{'type': 'actions'}]}]}
 
     def conversations_replies(self, **kw):

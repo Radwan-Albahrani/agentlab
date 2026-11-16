@@ -148,3 +148,14 @@ def test_only_a_leading_mention_of_the_companion_is_dropped_from_an_ask():
     assert without_mention('<@U0BOT> send the invoice', me) == 'send the invoice'
     assert without_mention('Send it to <@U0ALI>', me) == 'Send it to <@U0ALI>'
     assert without_mention('<@U0ALI> needs the invoice', me) == '<@U0ALI> needs the invoice'
+
+
+def test_a_colleagues_dm_to_the_companion_is_its_own_without_im_read(fresh_bot, monkeypatch):
+    def history(channel, limit):
+        if channel != 'D_THEIRS':
+            raise Exception("The server responded with: {'ok': False, 'error': 'channel_not_found'}")
+        return {'messages': []}
+
+    monkeypatch.setattr(fresh_bot, 'conversations_history', history, raising=False)
+    assert requests.own_dm('D_THEIRS')
+    assert not requests.own_dm('D_OWNER_WITH_SOMEONE')

@@ -23,11 +23,14 @@ def own_dm(ch):
             return True
     except Exception as e:
         log('owner DM lookup failed:', e)
-    try:
-        r = slack.app.client.conversations_members(channel=ch, limit=10)
-        _known[ch] = slack.bot_user() in r.get('members', [])
-    except Exception:
-        return False
+    try:  # the bot token reads only DMs it is in (im:history; conversations.members would need im:read)
+        slack.app.client.conversations_history(channel=ch, limit=1)
+        _known[ch] = True
+    except Exception as e:
+        if 'channel_not_found' not in str(e) and 'not_in_channel' not in str(e):
+            log('DM check failed:', ch, e)
+            return False
+        _known[ch] = False
     return _known[ch]
 
 
