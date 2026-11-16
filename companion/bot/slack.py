@@ -23,6 +23,34 @@ WORKSPACE = ''  # https://<workspace>.slack.com/, set at start
 _people = {'at': 0.0, 'list': [], 'by_id': {}}  # cached workspace directory
 _others = {}  # id -> users_info record for people missing from _people
 _bot = []
+MANIFEST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'slack-manifest.yml')
+
+
+def wanted_scopes(kind, path=MANIFEST):
+    """The manifest's `bot` or `user` scopes."""
+    out, inside = [], False
+    with open(path) as f:
+        for line in f:
+            if re.match(rf'^ {{4}}{kind}:\s*$', line):
+                inside = True
+            elif inside and (m := re.match(r'^\s+- (\S+)', line)):
+                out.append(m.group(1))
+            elif inside and line.strip() and not line.lstrip().startswith('#'):
+                break
+    return out
+
+
+def missing_scopes(response, kind):
+    """Scopes the manifest asks for that this token (auth.test response) wasn't granted; [] when unknown."""
+    granted = (getattr(response, 'headers', None) or {}).get('x-oauth-scopes')
+    if granted is None:
+        return []
+    try:
+        wanted = wanted_scopes(kind)
+    except OSError:
+        return []
+    have = set(granted.split(','))
+    return [s for s in wanted if s not in have]
 
 
 def _refresh_people():

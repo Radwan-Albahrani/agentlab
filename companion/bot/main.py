@@ -59,14 +59,37 @@ def watch_asks():
         _guarded('asks', asks.tick)
 
 
+def _check_scopes(me):
+    """Say on the hub when the Slack app lacks scopes its manifest asks for: without them messages go unseen."""
+    tokens = [('bot', me)]
+    if slack.USER:
+        try:
+            tokens.append(('user', slack.USER.auth_test()))
+        except Exception as e:
+            log('user token check failed:', e)
+    for kind, r in tokens:
+        missing = slack.missing_scopes(r, kind)
+        if missing:
+            log(f'Slack {kind} token is missing scopes:', ', '.join(missing))
+            COMP.event(
+                'failed',
+                f'The Slack app is missing {kind} scopes: {", ".join(missing)}',
+                detail=f'Add them under OAuth & Permissions ({kind} token scopes), then reinstall the app. Until then '
+                'some messages are never seen.',
+                ok=False,
+            )
+
+
 def run():
     for d in (DATA, FILES, drafts.DRAFTS, outbox.OUTBOX):
         os.makedirs(d, exist_ok=True)
     prepare_for_start()
     polls.migrate()
     log(f'{NAME} for {AGENT}: owner {OWNER}, bridge {BRIDGE}, {len(state["tasks"])} known threads, mode {mode()}')
-    slack.WORKSPACE = slack.app.client.auth_test()['url']  # also verifies the bot token
+    me = slack.app.client.auth_test()  # also verifies the bot token
+    slack.WORKSPACE = me['url']
     COMP.event('live', f'{NAME} started', detail=f'mode: {mode()}')
+    _check_scopes(me)
     threading.Thread(target=poll, daemon=True).start()
     threading.Thread(target=watch_asks, daemon=True).start()
     publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
