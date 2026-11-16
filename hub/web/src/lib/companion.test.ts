@@ -79,6 +79,27 @@ describe('taskWho', () => {
     expect(taskWho(task({ kind: 'task', requester: 'Salah' }))).toBe('started by Salah');
     expect(taskWho(task({ kind: 'task' }))).toBe('started by you');
   });
+
+  it('reads the audit: where it came from, who approved it, who else asked', () => {
+    expect(taskWho(task({ kind: 'task', startedBy: 'Ali', via: 'in a DM', requester: 'Ali' }))).toBe('started by Ali in a DM');
+    expect(
+      taskWho(
+        task({
+          kind: 'task',
+          startedBy: 'Salah',
+          requester: 'Salah',
+          via: 'in the requests channel #leafy-requests',
+          approvedBy: 'Radwan',
+        }),
+      ),
+    ).toBe('started by Salah in the requests channel #leafy-requests · approved by Radwan');
+    expect(taskWho(task({ kind: 'review', startedBy: '', via: 'from the hub', requester: 'Ali' }))).toBe(
+      'started by you from the hub · for Ali',
+    );
+    expect(taskWho(task({ kind: 'errand', requester: 'Salah', via: 'by your tag on their message' }))).toBe(
+      'for Salah · by your tag on their message',
+    );
+  });
 });
 
 describe('pollSummary', () => {

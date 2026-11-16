@@ -191,6 +191,13 @@ create table pulls (id text primary key, repo text, number integer, updated text
         ),
     ]
     con.executemany('insert into tasks values (?,?,?,?,?,?,?,?,?,?,?,"slack",?)', [(*t, NOW) for t in tasks])
+    # the audit columns a newer companion adds (older databases have none: the hub copes either way)
+    for column in ('started_by', 'via', 'approved_by'):
+        con.execute(f'alter table tasks add column {column} text')
+    con.execute(
+        "update tasks set started_by = 'Sara', via = 'in the requests channel #asks', approved_by = 'Admin' where id = 't2'"
+    )
+    con.execute("update tasks set via = 'from the hub' where id = 't4'")
     events = [
         (NOW - 7000, 'sent', 'Booked the meeting room', 't3', '#general', 'Room 2, 10:00', 1),
         (NOW - 3000, 'files', 'Shared the report', 't2', 'Sara', 'report.pdf', 1),

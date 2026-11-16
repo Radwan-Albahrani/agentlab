@@ -5,7 +5,7 @@ import threading
 import time
 
 from . import polls, reviews, slack
-from .config import COMP, MODES, mode
+from .config import COMP, MODES, OWNER, mode
 from .state import lock, review_of, state
 
 _last = 0.0
@@ -47,13 +47,15 @@ def card(k, t):
     else:
         status = 'done'
     req = t.get('requester')
-    asker = req or t.get('guest')
+    a = t.get('audit') or {}
+    by = a.get('by') or t.get('guest') or ''  # tasks from before the audit: the guest, else the owner
+    asker = req or (by if by != OWNER else '')
     asked_by = review_of(t).get('asked_by') or []
     return {
         'id': k,
         'title': t.get('title') or '',
         'kind': 'errand' if req else 'review' if review_of(t) else 'task',
-        'requester': slack.name(asker) if asker else ', '.join(slack.name(u) for u in asked_by),
+        'requester': ', '.join(slack.name(u) for u in asked_by) if asked_by else slack.name(asker) if asker else '',
         'status': status,
         'waiting': waiting,
         'outcome': polls.summary(poll) if poll and poll['open'] else closed or outcome,
@@ -63,6 +65,9 @@ def card(k, t):
         'slack': slack.link(t.get('channel'), t.get('thread_ts')),
         'source': t.get('source') or '',
         'resumes_at': (paused or {}).get('resumes_at') or '',
+        'started_by': slack.name(by) if by and by != OWNER else '',
+        'via': a.get('via') or '',
+        'approved_by': slack.name(a['approved_by']) if a.get('approved_by') else '',
     }
 
 

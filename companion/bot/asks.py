@@ -68,6 +68,16 @@ def start(ask):
         slack.post(dm, head, f"Couldn't start: {err}", md=f":warning: I couldn't start on it: {err}")
         COMP.event('failed', f'Could not start: {title}', task=key(dm, head), detail=err, ok=False)
         return
-    new_task(dm, head, tid, title, folder, head, slack.note_only(dm, head, tasks.THINKING), review=review)
+    new_task(
+        dm,
+        head,
+        tid,
+        title,
+        folder,
+        head,
+        slack.note_only(dm, head, tasks.THINKING),
+        review=review,
+        audit=tasks.audit(OWNER, 'from the hub'),
+    )
     log('ask started', tid)
     COMP.event('started', title, task=key(dm, head), detail='from the hub')

@@ -358,6 +358,7 @@ test('tasks: filter by who asked, and Slack links read as links', async ({ page 
   await page.getByRole('combobox', { name: 'Asked by' }).click();
   await page.getByRole('option', { name: /^Sara/ }).click();
   await expect(tasks).toContainText('Summarise the incident thread');
+  await expect(tasks).toContainText('started by Sara in the requests channel #asks · approved by Admin');
   await expect(tasks).not.toContainText('Review example/app#12');
 });
 

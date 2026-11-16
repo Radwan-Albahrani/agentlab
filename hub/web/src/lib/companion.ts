@@ -113,9 +113,15 @@ export function askedBy(tasks: Task[], who: string): Task[] {
   return tasks.filter((t) => (t.requester || ME) === want);
 }
 
-/** An errand is done for someone; a task or review was started by them (or by you). */
+/** Who and how: an errand is done for someone; a task or review was started by someone (or you), somewhere, maybe
+ * after an approval; a review others asked for too names them. */
 export function taskWho(t: Task): string {
-  return `${t.kind === 'errand' ? 'for' : 'started by'} ${t.requester || 'you'}`;
+  const via = t.via ? ` ${t.via}` : '';
+  const approved = t.approvedBy ? ` · approved by ${t.approvedBy}` : '';
+  if (t.kind === 'errand') return `for ${t.requester || 'you'}${t.via ? ` · ${t.via}` : ''}${approved}`;
+  const by = t.startedBy || (t.via === undefined || t.via === '' ? t.requester : '') || 'you';
+  const also = t.requester && t.requester !== by ? ` · for ${t.requester}` : '';
+  return `started by ${by}${via}${approved}${also}`;
 }
 
 const WEEK = 7 * 86400;

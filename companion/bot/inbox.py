@@ -108,8 +108,11 @@ def decide(k, approve):
         COMP.event('sent', f'Declined the request of {a["name"]}', to=a['name'], detail=first_sentence(a['text'], 120))
         return
     slack.note_only(a['ch'], a['ts'], f':white_check_mark: {owner} approved this. Starting now.')
-    if not reviews.from_slack(a['ch'], a['ts'], a['ts'], a['text'], by=a['user'], any_words=True):
-        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'], approved=a['card'])
+    how = {'via': f'in the requests channel #{slack.channel_name(a["ch"])}'}
+    if not reviews.from_slack(
+        a['ch'], a['ts'], a['ts'], a['text'], by=a['user'], any_words=True, approved_by=OWNER, **how
+    ):
+        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'], approved=a['card'], **how)
 
 
 def card_of(channel, thread_ts):

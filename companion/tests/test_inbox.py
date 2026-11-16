@@ -12,7 +12,7 @@ def channel(monkeypatch):
     monkeypatch.setattr(
         tasks,
         'start',
-        lambda ch, tts, ts, text, elsewhere=None, guest=None, approved=False: calls.append(
+        lambda ch, tts, ts, text, elsewhere=None, guest=None, approved=False, **kw: calls.append(
             ('task', ts, text, guest, approved)
         ),
     )
@@ -22,7 +22,7 @@ def channel(monkeypatch):
     monkeypatch.setattr(
         reviews,
         'from_slack',
-        lambda ch, tts, ts, text, by=None, any_words=False: (
+        lambda ch, tts, ts, text, by=None, any_words=False, **kw: (
             'github.com' in text and not calls.append(('review', ts, by))
         ),
     )

@@ -145,7 +145,7 @@ def request(repo, number, origin=None):
 MAX_ASKED = 3  # a colleague's reviews queued or running at once
 
 
-def from_slack(channel, thread_ts, trigger_ts, text, by=None, any_words=False):
+def from_slack(channel, thread_ts, trigger_ts, text, by=None, any_words=False, approved_by=None, via=None):
     """Start a review if this Slack message asks for one; False means it doesn't (an ordinary task, or a refusal).
 
     by: a colleague asking (questions go to the owner, the result back to them); any_words: one PR link is enough."""
@@ -168,6 +168,9 @@ def from_slack(channel, thread_ts, trigger_ts, text, by=None, any_words=False):
     origin = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts}
     if by:
         origin['by'] = by
+    if approved_by:
+        origin['approved_by'] = approved_by
+    origin['via'] = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
     with lock:
         going = by and _going(f'{repo}#{number}')
         if by and _asked_by(by) >= MAX_ASKED:
@@ -756,6 +759,7 @@ def start(item, e):
     tid, err = t3.start_thread(project or '/workspace', title, message)
     if not tid:
         raise GitHubError(0, f"T3 didn't start the chat: {err}")
+    origin = item.get('origin') or {}
     new_task(
         ch,
         tts,
@@ -766,6 +770,7 @@ def start(item, e):
         None,
         project or '/workspace',
         key=k,
+        audit=tasks.audit(origin.get('by') or OWNER, origin.get('via') or 'from the hub', origin.get('approved_by')),
         review={
             'id': pr_id,
             'repo': f['repo'],

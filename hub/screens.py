@@ -278,6 +278,8 @@ def companion(name):
     poll_of = {p['task']: p['id'] for p in c['polls']}
     for t in tasks:
         t.pop('started', None), t.pop('ended', None), t.pop('resumes_at', None)
+        # the audit (from a companion new enough to record it): who started it, how, who approved it
+        t['startedBy'], t['via'], t['approvedBy'] = (t.pop(k, None) or '' for k in ('started_by', 'via', 'approved_by'))
         t['poll'] = poll_of.get(t['id'])
     hb = c['heartbeat']
     mode = next(

@@ -68,6 +68,11 @@ def track(p, dm, head, tid, title, folder, link):
         head,
         slack.note_only(dm, head, tasks.THINKING),
         requester=p['user'],
+        audit=tasks.audit(
+            OWNER if p.get('tagged') else p['user'],
+            'by your tag on their message' if p.get('tagged') else 'noticed in team mode',
+            for_=p['user'],
+        ),
         source=link,
         source_ch=p['ch'],
         source_im=p['im'],

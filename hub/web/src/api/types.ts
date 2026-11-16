@@ -216,6 +216,10 @@ export interface Task {
   title: string;
   kind: 'task' | 'errand' | 'review';
   requester: string;
+  /** The audit: who started it ('' = you), how ("in #general", "from the hub"...), who approved it first. */
+  startedBy?: string;
+  via?: string;
+  approvedBy?: string;
   status: TaskStatus;
   waiting: string;
   outcome: string;

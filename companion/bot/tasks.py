@@ -16,10 +16,10 @@ def quiet(task):
     return bool(review_of(task))
 
 
-def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, approved=False):
+def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, approved=False, via=None):
     """elsewhere: (where, messages) of a conversation the bot can't post in; guest: who asked, if not the owner;
     approved: the ts of the owner's approval card for the guest's ask (requests channel): the thread is mirrored
-    under it, and follow-ups that leave the ask come back to the owner."""
+    under it, and follow-ups that leave the ask come back to the owner; via: how it came, for the audit."""
     k = key(channel, thread_ts)
     slack.react(channel, trigger_ts, 'eyes')
     folder = f'{channel}-{thread_ts.replace(".", "")}'
@@ -50,9 +50,21 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
         return
     status = slack.note_only(channel, thread_ts, THINKING)
     extra = {'guest': guest, **({'approved': approved} if approved else {})} if guest else {}
+    if elsewhere:
+        via = via or f'in {elsewhere[0]}'
+    extra['audit'] = audit(
+        guest or OWNER,
+        via or ('in a DM' if channel.startswith('D') else f'in #{chan}' if chan else 'in a channel'),
+        OWNER if approved else None,
+    )
     new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **extra)
     log('started', k, tid, 'for', guest or 'owner')
     COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))
+
+
+def audit(by, via, approved_by=None, for_=None):
+    """Who started a task and how, kept on it for the hub (started_by, via, approved_by)."""
+    return {'by': by, 'via': via, 'approved_by': approved_by, 'for': for_, 'at': time.time()}
 
 
 STATUS_ASK = re.compile(
