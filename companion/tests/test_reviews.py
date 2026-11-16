@@ -1063,3 +1063,16 @@ def test_a_dm_missed_while_it_could_not_see_it_is_replayed_once(gh, told, fresh_
     routing.replay('D_SALAHBOT')
     routing.replay('D_SALAHBOT')  # each message is handled once
     assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+
+
+def test_the_hub_says_who_asked_for_a_review(gh, told, fresh_bot, their_dm):
+    routing.route(colleague_dm('78.1', f'https://github.com/{REPO}/pull/5922'), False)
+    reviews.tick()
+    task = review(5922)
+    k = next(k for k, t in state.state['tasks'].items() if t is task)
+    assert publish.card(k, task)['requester'] == 'Salah'
+    routing.route(colleague_dm('78.2', f'https://github.com/{REPO}/pull/5922', user='U_ALI'), False)
+    assert publish.card(k, task)['requester'] == 'Salah, Ali'
+    other = started(gh, told, 5923)
+    k2 = next(k for k, t in state.state['tasks'].items() if t is other)
+    assert publish.card(k2, other)['requester'] == ''  # the owner's own: "started by you"

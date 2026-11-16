@@ -48,11 +48,12 @@ def card(k, t):
         status = 'done'
     req = t.get('requester')
     asker = req or t.get('guest')
+    asked_by = review_of(t).get('asked_by') or []
     return {
         'id': k,
         'title': t.get('title') or '',
         'kind': 'errand' if req else 'review' if review_of(t) else 'task',
-        'requester': slack.name(asker) if asker else '',
+        'requester': slack.name(asker) if asker else ', '.join(slack.name(u) for u in asked_by),
         'status': status,
         'waiting': waiting,
         'outcome': polls.summary(poll) if poll and poll['open'] else closed or outcome,

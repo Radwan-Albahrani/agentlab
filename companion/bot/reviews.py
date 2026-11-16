@@ -215,6 +215,9 @@ def _follow(e, origin, new=True):
     ts = slack.post(ch, thr, f'Reviewing {short}', md=md, note=line)
     asker = {'channel': ch, 'thread': thr, 'user': by, 'name': slack.name(by), 'ts': origin['trigger_ts']}
     e['for'] = [*_askers(e), dict(asker, msg=ts, md=md, shown=line)]
+    t = state['tasks'].get(e.get('task') or '')
+    if t and by not in review_of(t).setdefault('asked_by', []):
+        review_of(t)['asked_by'].append(by)
 
 
 def _progress(e):
@@ -250,6 +253,11 @@ def _status(e, a):
 
 
 def _keep_posted():
+    for e in _run():  # who asked, on the task too (reviews started before it was recorded there)
+        t = state['tasks'].get(e.get('task') or '')
+        if t:
+            mine = review_of(t).setdefault('asked_by', [])
+            mine += [a['user'] for a in _askers(e) if a['user'] not in mine]
     changed = [_status(e, a) for e in _run() for a in _askers(e)]  # every line, not just up to the first change
     if True in changed:
         save()
@@ -768,6 +776,7 @@ def start(item, e):
             'rereview': rereview,
             'author': f['author'],
             'title': f['title'],
+            'asked_by': [a['user'] for a in _askers(e)],  # colleagues who asked for it (the hub's "started by")
         },
     )
     e.update(task=k, title=f['title'], url=f['url'], rereview=rereview, began=time.time())
