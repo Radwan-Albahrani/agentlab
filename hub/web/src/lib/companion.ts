@@ -41,6 +41,40 @@ export function sentTo(e: Event): Exclude<SentTo, 'all'> {
   return 'person';
 }
 
+export interface Delivery {
+  where: Exclude<SentTo, 'all'>;
+  to: string;
+  link: string;
+  what: string;
+  note: string;
+}
+
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** A delivery read at a glance: where it went, what it was, and a line about it, without the destination said twice. */
+export function delivery(e: Event): Delivery {
+  const where = sentTo(e);
+  const raw = e.to ?? '';
+  const pr = /^(?:([\w.-]+)\/)?([\w.-]+)#(\d+)$/.exec(raw);
+  const to = where === 'github' && pr ? `${pr[2]}#${pr[3]}` : raw.replace(/ by DM$/, '') || 'a channel';
+  const link = pr?.[1] ? `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}` : '';
+  const title = raw ? e.title.replace(new RegExp(`\\s+(?:to|in|of|for)\\s+${escape(raw)}`), '') : e.title;
+  const [what = title, summary = ''] = title.split(/:\s+(.*)/s);
+  const detail =
+    slackPlain(e.detail ?? '')
+      .split('\n')
+      .find((l) => l.trim()) ?? '';
+  return { where, to, link, what, note: detail.trim() || summary };
+}
+
+/** Today, Yesterday, or the date, for grouping deliveries by day. */
+export function dayLabel(t: number, now = Date.now() / 1000): string {
+  const day = (s: number) => new Date(s * 1000).toDateString();
+  if (day(t) === day(now)) return 'Today';
+  if (day(t) === day(now - 86400)) return 'Yesterday';
+  return new Date(t * 1000).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 /** Slack text in pieces: plain strings and {url, label} for its <url|label> and <url> links. */
 export function slackParts(s: string): (string | { url: string; label: string })[] {
   const out: (string | { url: string; label: string })[] = [];

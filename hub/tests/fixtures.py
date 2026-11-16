@@ -194,6 +194,8 @@ create table pulls (id text primary key, repo text, number integer, updated text
     events = [
         (NOW - 7000, 'sent', 'Booked the meeting room', 't3', '#general', 'Room 2, 10:00', 1),
         (NOW - 3000, 'files', 'Shared the report', 't2', 'Sara', 'report.pdf', 1),
+        (NOW - 2500, 'sent', 'Review of example/app#12: 2 findings · QA verified', 't4', 'example/app#12', '', 1),
+        (NOW - 2400, 'sent', 'Review result for app#12', None, 'Omar', 'Slack refused the DM: not_in_channel', 0),
         (NOW - 120, 'task', 'New task from Sara', 't2', '', '', 1),
     ]
     con.executemany('insert into events (at, kind, title, task, "to", detail, ok) values (?,?,?,?,?,?,?)', events)

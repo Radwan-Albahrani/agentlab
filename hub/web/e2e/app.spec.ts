@@ -361,7 +361,7 @@ test('tasks: filter by who asked, and Slack links read as links', async ({ page 
   await expect(tasks).not.toContainText('Review example/app#12');
 });
 
-test('sent: the header card opens its own tab, and DMs to people filter out', async ({ page }) => {
+test('sent: the header card opens its own tab, and DMs to people filter out', async ({ page }, info) => {
   await guard(page);
   await page.goto('/agents/admin/scout');
   await settled(page);
@@ -369,12 +369,22 @@ test('sent: the header card opens its own tab, and DMs to people filter out', as
   await expect(page).toHaveURL(/#sent$/);
   const sent = page.getByRole('tabpanel', { name: 'Sent' });
   await expect(sent).toContainText('Booked the meeting room');
+  const review = sent.getByRole('link', { name: 'app#12' });
+  await expect(review).toHaveAttribute('href', 'https://github.com/example/app/pull/12');
+  await expect(sent).toContainText('Review · 2 findings · QA verified');
+  await expect(sent).toContainText('Not sent: Review result for app#12 · Slack refused the DM');
+  if (shots) {
+    await sent.screenshot({ path: `${shots}/${info.project.name}_sent.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sent.screenshot({ path: `${shots}/${info.project.name}_sent_phone.png` });
+  }
   await sent
     .getByRole('group', { name: 'Filter deliveries' })
     .getByRole('button', { name: /To people/ })
     .click();
   await expect(sent).toContainText('Shared the report');
   await expect(sent).not.toContainText('Booked the meeting room');
+  await expect(sent).not.toContainText('2 findings');
 });
 
 test('display settings: three states per item', async ({ page }) => {

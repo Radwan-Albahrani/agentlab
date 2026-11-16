@@ -2,6 +2,8 @@ import type { Event, Poll, Task } from '../api/types';
 import {
   askedBy,
   askers,
+  dayLabel,
+  delivery,
   sentTo,
   filterTasks,
   pollSummary,
@@ -133,5 +135,38 @@ describe('deliveries', () => {
     expect(sentTo(e('#general'))).toBe('channel');
     expect(sentTo(e('netzerosa/platform#6182'))).toBe('github');
     expect(sentTo(e('app#12'))).toBe('github');
+  });
+
+  it('says where once and what it was, without repeating the destination', () => {
+    const d = (title: string, to: string, detail = '') => delivery({ at: 0, kind: 'sent', title, to, detail });
+    expect(d('Review of netzerosa/platform#6111: no findings · QA verified', 'netzerosa/platform#6111')).toEqual({
+      where: 'github',
+      to: 'platform#6111',
+      link: 'https://github.com/netzerosa/platform/pull/6111',
+      what: 'Review',
+      note: 'no findings · QA verified',
+    });
+    expect(d('Message sent to Ali Al-Shaikh by DM', 'Ali Al-Shaikh by DM', '\nHi Ali,\nmore')).toMatchObject({
+      where: 'person',
+      to: 'Ali Al-Shaikh',
+      what: 'Message sent',
+      note: 'Hi Ali,',
+    });
+    expect(d('Product update posted to #product-updates', '#product-updates', 'revision 2')).toMatchObject({
+      where: 'channel',
+      what: 'Product update posted',
+      note: 'revision 2',
+    });
+    expect(d('Review result for platform#6111', 'Sara', '<https://x|Approved> · clean')).toMatchObject({
+      what: 'Review result for platform#6111',
+      note: 'Approved · clean',
+    });
+  });
+
+  it('groups by Today, Yesterday, then the date', () => {
+    const noon = new Date(2026, 10, 16, 12).getTime() / 1000;
+    expect(dayLabel(noon - 3600, noon)).toBe('Today');
+    expect(dayLabel(noon - 86400, noon)).toBe('Yesterday');
+    expect(dayLabel(noon - 4 * 86400, noon)).not.toMatch(/Today|Yesterday/);
   });
 });
