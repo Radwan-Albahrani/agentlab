@@ -112,7 +112,21 @@ def posting(box, owner, channels, default, then, open_polls):
         f' the working day). {NAME} runs the poll itself: voting buttons, the live count, closing on time and'
         f' announcing the winner in the channel, so you do not watch it. {then} Never post to Slack yourself, and'
         ' write it the way people talk in that channel: short, clear, friendly. If you are asked for changes, write'
-        ' post.json again. Once it is written, end with one short line.' + poll_changes(box, owner, open_polls)
+        ' post.json again. Once it is written, end with one short line.'
+        + editing(box, owner)
+        + poll_changes(box, owner, open_polls)
+    )
+
+
+def editing(box, owner, sent=''):
+    """How to edit a message the agent posted through post.json (posts.edit)."""
+    return (
+        (f'\nMessages you posted for this task so far (id: where: start):\n{sent}' if sent else '')
+        + f'\nYou CAN edit a message you posted with post.json: when {owner} asks to fix, change or correct it, write'
+        f' {box}/post.json with "edit": "<its id>" and the complete new "text" (not just the change), and no'
+        f' "channel" or "to". {NAME} replaces the message wherever it went (after {owner} approves a preview, like'
+        ' the first post), so never post a correction as a new message and never say you cannot edit it. Ids are'
+        ' numbered 1, 2, 3 in the order your messages went out.'
     )
 
 

@@ -1,7 +1,7 @@
 import json
 import os
 
-from bot import outbox, prompts, slack, state
+from bot import outbox, posts, prompts, slack, state
 
 
 def task_in(channel='C_TECH', thread='300.1', **extra):
@@ -87,3 +87,27 @@ def test_a_new_message_gets_only_recent_context_and_is_not_called_a_thread(monke
     p = prompts.task('hello', 'Radwan', 'Slack channel C1', ['hello'], [], 'f', 'C1', [], '', 'Salah', True)
     assert 'new message' in p and 'whole thread' not in p
     assert 'whole thread' in prompts.task('x', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '')
+
+
+def test_a_sent_message_can_be_edited_after_a_preview(fresh_bot):
+    t = task_in(channel='D_OWNER', thread='301.1')
+    drop(t, 'post.json', {'channel': 'C_TECH', 'text': "Post-mortem for last night's outage"})
+    outbox.tick(t)
+    posts.decide(t, 'k', True)
+    assert t['sent'][0]['id'] == '1' and t['sent'][0]['where'] == 'in #general'
+    posted = t['sent'][0]['msgs'][0]
+    assert 'post.json with "edit"' in prompts.editing('box', 'Sam', posts.sent_list(t))
+    drop(t, 'post.json', {'edit': '1', 'text': "Post-mortem for today's outage"})
+    outbox.tick(t)
+    assert fresh_bot.messages[-1]['text'] == 'Edit this?' and 'Edit it' in json.dumps(fresh_bot.messages[-1])
+    posts.decide(t, 'k', True)
+    edited = next(u for u in fresh_bot.updates if u['channel'] == 'C_TECH')
+    assert [edited['channel'], edited['ts']] == posted and "today's outage" in json.dumps(edited)
+    assert t['sent'][0]['text'] == "Post-mortem for today's outage"
+
+
+def test_an_edit_of_a_message_it_never_sent_is_refused(fresh_bot):
+    t = task_in()
+    drop(t, 'post.json', {'edit': '3', 'text': 'x'})
+    outbox.tick(t)
+    assert 'names no message this task sent' in fresh_bot.text() and not fresh_bot.updates

@@ -3,7 +3,7 @@
 import re
 import time
 
-from . import errands, limits, polls, projects, prompts, slack, t3
+from . import errands, limits, polls, posts, projects, prompts, slack, t3
 from .config import AGENT, COMP, NAME, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
 from .text import first_sentence, hour, mins, no_emoji, quote
@@ -109,6 +109,8 @@ def follow_up(task, text, files, ts, by=None):
         paths += more
     if paths:
         msg += '\n\nFiles (saved for you):\n' + '\n'.join(f'- {p}' for p in paths)
+    if task.get('sent'):
+        msg += '\n\n---' + prompts.editing(prompts.outbox(task['outbox']), slack.name(OWNER), posts.sent_list(task))
     open_polls = polls.for_prompt(ch, task['thread_ts'])
     if open_polls and POLL_WORDS.search(msg):
         msg += '\n\n---' + prompts.poll_changes(prompts.outbox(task['outbox']), slack.name(OWNER), open_polls)
