@@ -161,8 +161,9 @@ SCHEMA = [
         'source': 'channels',
         'default': '',
         'when': {'mode': ['tag', 'team']},
-        'help': f'Anyone on the team can post an ask in this channel (invite @{NAME} to it). Each one comes to your DM '
-        'to approve or decline; an approved ask runs for them in its thread, a declined one is told so.',
+        'help': f'Anyone on the team can tag @{NAME} with an ask in this channel (invite it first); untagged messages '
+        'are left alone. Each ask comes to your DM to approve or decline; an approved one runs for them in its thread '
+        '(tag it there to follow up), a declined one is told so.',
     },
 ]
 

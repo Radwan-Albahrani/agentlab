@@ -13,10 +13,11 @@ What it does:
 - **Errands.** Tag it bare on someone else's message and it handles their request as you (find a document, give
   access, look something up). Anything sensitive (access, money, deleting, sharing) waits for your Approve; replies to
   them wait for your Send. Team mode also notices colleagues asking you directly; dry-run mode lets you rehearse.
-- **A requests channel.** Pick one on the hub ("Requests channel") and invite the companion. Anyone on the team posts
-  an ask there; it comes to your DM with Approve and Decline. Approved, it runs for them in its thread (a PR link is a
-  review they follow) and their replies there steer it; declined, they are told. Replies under the card in your DM
-  are passed on to their thread, and anything they add while it waits joins the ask.
+- **A requests channel.** Pick one on the hub ("Requests channel") and invite the companion. Anyone on the team tags it
+  with an ask there (untagged messages are left alone); it comes to your DM with Approve and Decline. Approved, it runs
+  for them in its thread (a PR link is a review they follow) and their tagged replies there steer it; declined, they
+  are told. Replies under the card in your DM are passed on to their thread, and anything they add (tagged) while it
+  waits joins the ask.
 - **Posts, DMs and polls.** The agent never posts itself: it writes a file and the companion previews it for you,
   then posts it, DMs the people you named, or runs a poll (buttons, live count, closing on time, the winner).
 - **Product-update drafts.** Drafts the agent prepares are previewed in your DM; reply to revise, tap to post, and a

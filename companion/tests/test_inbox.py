@@ -25,11 +25,11 @@ def channel(monkeypatch):
     return calls
 
 
-def asked(ts='90.1', text='please make the logo bigger', user='U_SALAH', thread=None):
-    ev = {'channel': 'C_REQ', 'ts': ts, 'user': user, 'text': text}
+def asked(ts='90.1', text='please make the logo bigger', user='U_SALAH', thread=None, tag=True):
+    ev = {'channel': 'C_REQ', 'ts': ts, 'user': user, 'text': f'<@BCOMPANION> {text}' if tag else text}
     if thread:
         ev['thread_ts'] = thread
-    routing.route(ev, False)
+    routing.route(ev, tag)
 
 
 def card(bot):
@@ -91,7 +91,8 @@ def test_the_owners_reply_under_the_card_reaches_their_thread(fresh_bot, channel
 def test_more_from_them_while_pending_joins_the_ask(fresh_bot, channel):
     asked()
     asked(ts='90.2', text='on mobile too', thread='90.1')
-    asked(ts='90.3', text='me too', user='U_ALI', thread='90.1')  # someone else's chatter
+    asked(ts='90.3', text='me too', user='U_ALI', thread='90.1', tag=False)  # someone else's chatter
+    asked(ts='90.5', text='and the footer', thread='90.1', tag=False)  # not tagged: just talk
     assert state['inbox'][key('C_REQ', '90.1')]['text'] == 'please make the logo bigger\non mobile too'
     assert '**Salah** added:' in fresh_bot.text() and 'me too' not in fresh_bot.text()
     inbox.decide(key('C_REQ', '90.1'), True)
@@ -103,7 +104,7 @@ def test_after_approval_their_replies_steer_the_task(fresh_bot, channel):
     inbox.decide(key('C_REQ', '90.1'), True)
     state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'guest': 'U_SALAH'}
     asked(ts='90.4', text='make it green too', thread='90.1')
-    assert channel[-1] == ('follow', '90.4', 'make it green too', 'U_SALAH')
+    assert channel[-1] == ('follow', '90.4', '<@BCOMPANION> make it green too', 'U_SALAH')  # follow_up drops the tag
 
 
 @pytest.mark.parametrize('settings', [{}, {'requests_channel': 'C_REQ', 'mode': 'owner'}])
@@ -121,3 +122,17 @@ def test_only_the_owner_can_press_the_buttons(fresh_bot, channel):
     assert state['inbox'][k]['status'] == 'pending'
     press(lambda: None, {'user': {'id': OWNER}, 'actions': [{'value': k}]})
     assert state['inbox'][k]['status'] == 'approved'
+
+
+def test_untagged_talk_in_the_channel_is_left_alone(fresh_bot, channel):
+    asked(tag=False)
+    asked(ts='92.1', text='what do you all think?', user='U_ALI', tag=False)
+    assert not state.get('inbox') and not fresh_bot.messages and not channel
+
+
+def test_after_approval_untagged_replies_are_just_talk(fresh_bot, channel):
+    asked()
+    inbox.decide(key('C_REQ', '90.1'), True)
+    state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'guest': 'U_SALAH'}
+    asked(ts='90.6', text='nice, thanks', thread='90.1', tag=False)
+    assert channel[-1][0] == 'task'

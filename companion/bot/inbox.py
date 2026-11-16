@@ -14,10 +14,14 @@ def _asks():
 
 
 def route(ev, mentioned):
-    """Handle a message in the requests channel; False leaves it to the usual routing."""
+    """Handle a message in the requests channel; False leaves it to the usual routing.
+
+    Only tags count, top level or in a thread: people discuss things there too."""
     ch, ts, user, thr = ev['channel'], ev['ts'], ev.get('user'), ev.get('thread_ts')
     if not user or user == OWNER or mode() == 'owner':
         return False
+    if not mentioned:
+        return True
     if not thr:
         if requests.team_member(user):
             jobs.run_later(ask, ev)
@@ -30,12 +34,12 @@ def route(ev, mentioned):
     if a and a['user'] == user and a['status'] == 'pending':
         jobs.run_later(_added, a, ev.get('text', ''))
         return True
-    return bool(a) and not mentioned  # chatter under an ask isn't for the companion
+    return False
 
 
 def ask(ev):
     ch, ts, user = ev['channel'], ev['ts'], ev['user']
-    text = slack.readable(ev.get('text') or '').strip()
+    text = slack.ask(ev.get('text') or '').strip()
     who, owner = slack.name(user), slack.name(OWNER)
     link = slack.permalink(ch, ts)
     card = slack.post(
@@ -77,7 +81,7 @@ def _show(a):
 
 def _added(a, text):
     """The colleague added to a pending ask: it joins the ask, and the owner sees it under the card."""
-    more = slack.readable(text).strip()
+    more = slack.ask(text).strip()
     if not more:
         return
     with lock:
