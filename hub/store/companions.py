@@ -237,6 +237,10 @@ def pulls_refresh(name):
     _drop(name, {'type': 'pulls', 'at': time.time()})
 
 
+def channels_refresh(name):
+    _drop(name, {'type': 'channels', 'at': time.time()})
+
+
 def review(name, pr_id):
     """Ask the bot to review one of its listed pull requests ("owner/repo#123")."""
     pr = next((p for p in companion(name)['pulls'] if p['id'] == pr_id), None)

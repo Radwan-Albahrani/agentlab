@@ -15,6 +15,8 @@ def tick():
             jobs.run_later(routing.replay, str(ask.get('channel') or ''))
         elif ask.get('type') == 'pulls':
             jobs.run_later(refresh_pulls)
+        elif ask.get('type') == 'channels':
+            jobs.run_later(refresh_channels)
         elif ask.get('type') == 'review':
             with lock:
                 problem = reviews.request(str(ask.get('repo') or ''), int(ask.get('number') or 0))
@@ -29,6 +31,12 @@ def tick():
 def refresh_pulls():
     """Re-read open pull requests and publish them at once."""
     reviews.refresh()
+    publish.now()
+
+
+def refresh_channels():
+    """Re-read the Slack channels (a hub search found none: maybe one it was just invited to) and publish at once."""
+    slack.forget_channels()
     publish.now()
 
 

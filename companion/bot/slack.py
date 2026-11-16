@@ -195,6 +195,10 @@ def channels():
     return _channels['list']
 
 
+def forget_channels():
+    _channels['at'] = 0.0
+
+
 def bot_in(channel):
     try:
         return bool(app.client.conversations_info(channel=channel)['channel'].get('is_member'))

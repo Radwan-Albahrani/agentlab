@@ -576,6 +576,15 @@ class Routes(unittest.TestCase):
         actions.companion('scout', 'remove', {})
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/remove~companion~scout'))
 
+    def test_a_channel_search_that_misses_asks_the_companion_to_reread_its_channels(self):
+        self.assertIn('Refreshing', actions.companion('scout', 'channels', {}))
+        folder = os.path.join(store.companions._folder('scout'), 'asks')
+        kinds = []
+        for f in os.listdir(folder):
+            with open(os.path.join(folder, f)) as fh:
+                kinds.append(json.load(fh)['type'])
+        self.assertIn('channels', kinds)
+
     def test_companion_restart_finds_its_container(self):
         actions.companion('scout', 'restart', {})
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/restart~companion-scout'))

@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
+import { useChannelsRefresh } from '../../api/queries';
 import type { Channel, GithubPerson, SettingField } from '../../api/types';
 import { Select } from '../../ui/Select';
 import { Disclosure, Switch } from '../../ui/controls';
@@ -112,6 +113,7 @@ export function CompanionSettings({
       {shown.map((f) => (
         <Setting key={f.key} label={f.label} help={f.help}>
           <Control
+            name={name}
             field={f}
             onChange={(v) => set(f.key, v)}
             authors={authors}
@@ -132,6 +134,7 @@ const SEARCH = {
 };
 
 function Control({
+  name,
   field: f,
   onChange,
   authors,
@@ -139,6 +142,7 @@ function Control({
   repos,
   channels,
 }: {
+  name: string;
   field: SettingField;
   onChange: (v: unknown) => unknown;
   authors: Author[];
@@ -146,6 +150,7 @@ function Control({
   repos: string[];
   channels: Channel[];
 }) {
+  const [looking, lookAgain] = useChannelsRefresh(name, channels);
   if (f.type === 'choice')
     return <Select label={f.label} value={String(f.value)} options={f.options ?? []} onChange={onChange} />;
   const source =
@@ -163,7 +168,8 @@ function Control({
         value={typeof f.value === 'string' ? f.value : ''}
         label={f.label}
         placeholder={SEARCH[f.source ?? 'channels']}
-        empty="Nothing matches"
+        empty={looking ? 'Looking for new channels…' : 'Nothing matches'}
+        onMiss={f.source === 'channels' ? lookAgain : undefined}
         onChange={onChange}
       />
     );

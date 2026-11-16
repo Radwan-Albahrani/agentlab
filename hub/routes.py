@@ -157,6 +157,7 @@ POST = [
     (r'/api/companions/([\w-]+)/(poll)', ('companion.{0}', 'companion.polls'), _companion),
     (r'/api/companions/([\w-]+)/(pulls|review)', ('companion.{0}', 'companion.pulls'), _companion),
     (r'/api/companions/([\w-]+)/(secret)', ('companion.{0}', 'companion.settings'), _companion),
+    (r'/api/companions/([\w-]+)/(channels)', ('companion.{0}', 'companion.settings'), _companion),
     (r'/api/manage/(add|resize|remove)', 'page.manage', lambda m, b, host: actions.manage(m[0], b)),
     (r'/api/manage/disks', 'page.manage', lambda m, b, host: actions.disk_sizes(b)),
     (r'/api/services/(restart|logs)', 'page.services', lambda m, b, host: actions.service(m[0], b)),

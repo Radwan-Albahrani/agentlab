@@ -15,10 +15,11 @@ import { Tabs } from './Tabs';
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 0)));
 
-function ChannelPicker({ onPick }: { onPick: (v: string) => void }) {
+function ChannelPicker({ onPick, onMiss }: { onPick: (v: string) => void; onMiss?: () => void }) {
   const [v, setV] = useState('');
   return (
     <Picker
+      onMiss={onMiss}
       label="Channel"
       placeholder="Pick a channel"
       items={[
@@ -59,6 +60,17 @@ describe('Picker', () => {
     await user.keyboard('zzz');
     expect(screen.queryAllByRole('option')).toHaveLength(0);
     expect(screen.getByText('Nothing matches')).toBeTruthy();
+  });
+
+  it('asks for a fresher list only when the typed text matches nothing', async () => {
+    const user = userEvent.setup();
+    const missed: string[] = [];
+    render(<ChannelPicker onPick={() => undefined} onMiss={() => missed.push('miss')} />);
+    await user.click(screen.getByRole('combobox', { name: 'Channel' }));
+    await user.keyboard('ge');
+    expect(missed).toEqual([]);
+    await user.keyboard('x');
+    expect(missed).toEqual(['miss']);
   });
 });
 

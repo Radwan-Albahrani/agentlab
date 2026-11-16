@@ -122,6 +122,7 @@ export function Picker({
   label,
   placeholder,
   empty = 'Nothing matches',
+  onMiss,
 }: {
   items: PickItem[];
   value: string;
@@ -129,6 +130,8 @@ export function Picker({
   label: string;
   placeholder: string;
   empty?: string;
+  /** Called when the typed text matches nothing (e.g. to ask for a fresher list). */
+  onMiss?: () => void;
 }) {
   return (
     <Combobox
@@ -139,7 +142,15 @@ export function Picker({
       }}
     >
       <div {...stylex.props(styles.group)}>
-        <ComboboxInput {...stylex.props(styles.input)} placeholder={placeholder} aria-label={label} />
+        <ComboboxInput
+          {...stylex.props(styles.input)}
+          placeholder={placeholder}
+          aria-label={label}
+          onInput={(e) => {
+            const q = e.currentTarget.value.trim().toLowerCase();
+            if (onMiss && q && !items.some((i) => i.label.toLowerCase().includes(q))) onMiss();
+          }}
+        />
         <span {...stylex.props(styles.buttons)}>
           <ComboboxClear {...stylex.props(styles.iconBtn)} aria-label="Clear">
             <Icon name="x" size={15} />

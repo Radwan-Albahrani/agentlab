@@ -32,6 +32,9 @@ def companion(name, what, b):
     if what == 'pulls':
         store.companions.pulls_refresh(name)
         return 'Refreshing.'
+    if what == 'channels':
+        store.companions.channels_refresh(name)
+        return 'Refreshing the channel list.'
     if what == 'review':
         pr = store.companions.review(name, str(b.get('pr', '')))
         return f'Reviewing #{pr["number"]}. {cluster.display_name(name)} posts the result on the pull request.'

@@ -26,6 +26,32 @@ export function useCompanionPoll(name: string, on: boolean, giveUp: () => void) 
   }, [on, qc, name]);
 }
 
+/** Asks a companion to re-read its Slack channels (at most every 15 s), then polls until the list changes (max 30 s). */
+export function useChannelsRefresh(name: string, channels: { id: string }[]): [boolean, () => void] {
+  const ids = channels.map((c) => c.id).join(',');
+  const [waiting, setWaiting] = useState<string | null>(null);
+  const last = useRef(0);
+  const refreshing = waiting !== null && waiting === ids;
+  useCompanionPoll(name, refreshing, () => {
+    setWaiting(null);
+  });
+  return [
+    refreshing,
+    () => {
+      if (Date.now() - last.current < 15_000) return;
+      last.current = Date.now();
+      post(`/api/companions/${name}/channels`).then(
+        () => {
+          setWaiting(ids);
+        },
+        () => {
+          setWaiting(null);
+        },
+      );
+    },
+  ];
+}
+
 /** Asks a companion to re-read its PRs, then polls until a list newer than `at` arrives (max 30 s); never on a timer. */
 export function usePullsRefresh(name: string, at: number): [boolean, () => void] {
   const [opened] = useState(at);
