@@ -163,7 +163,8 @@ def offer(task, p):
         ],
     )['ts']
     task['post_draft'] = {**post, 'ts': ts, 'md': md, 'at': at}
-    COMP.event('approval', f'Asked you to check a message for {where(post)}', task=k)
+    what = f'an edit of your message {post["where"]}' if post.get('edit') else f'a message for {where(post)}'
+    COMP.event('approval', f'Asked you to check {what}', task=k)
     save()
 
 
