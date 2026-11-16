@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { useStorage } from '../api/queries';
-import type { DiskScan, Event, PersonDisk, Pool, ProfileUsage, Storage as Data } from '../api/types';
+import type { DiskScan, Event, PersonDisk, Pool, ProfileUsage, Reconcile, Storage as Data } from '../api/types';
 import { Screen } from '../app/Screen';
 import { ago, gb, pct, plural, toneFor } from '../lib/format';
 import { colors, font, media, motion, radius, space, text } from '../theme/tokens.stylex';
@@ -224,6 +224,35 @@ const styles = stylex.create({
   rankSize: { color: colors.muted, fontVariantNumeric: 'tabular-nums' },
   rankTrack: { gridColumnStart: 1, gridColumnEnd: -1, height: 4, backgroundColor: colors.sunk, overflow: 'hidden' },
   rankFill: (p: number) => ({ display: 'block', height: '100%', width: `${p}%`, backgroundColor: colors.faint }),
+  rankHint: {
+    gridColumnStart: 1,
+    gridColumnEnd: -1,
+    marginTop: -2,
+    fontFamily: font.sans,
+    fontSize: text.xxs,
+    color: colors.faint,
+  },
+  sums: {
+    display: 'grid',
+    gap: space.sm,
+    marginBottom: space.xl,
+    paddingBlock: space.lg,
+    paddingInline: space.xxl,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: colors.line,
+    backgroundColor: colors.panel,
+  },
+  sumRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    columnGap: space.lg,
+    fontSize: text.sm,
+    color: colors.muted,
+  },
+  sumNum: { fontFamily: font.mono, fontVariantNumeric: 'tabular-nums', color: colors.fg, textAlign: 'right' },
+  sumTotal: { paddingTop: space.sm, borderTopWidth: 1, borderTopStyle: 'solid', borderTopColor: colors.line, color: colors.fg },
 });
 
 const FILL = { ok: styles.fillOk, warn: styles.fillWarn, bad: styles.fillBad };
@@ -438,6 +467,7 @@ function Breakdown({ scan }: { scan: DiskScan | undefined }) {
   const all = scan?.profiles.reduce((n, x) => n + x.total, 0) ?? 0;
   return (
     <Section title="Where the space goes" icon="poll" sub={sub}>
+      {scan?.reconcile && <Sums r={scan.reconcile} />}
       {scan?.profiles.length ? (
         <div {...stylex.props(styles.usage)}>
           {scan.profiles.map((x, i) => (
@@ -450,6 +480,40 @@ function Breakdown({ scan }: { scan: DiskScan | undefined }) {
         <EmptyMeasuring />
       )}
     </Section>
+  );
+}
+
+const NOISE = 100 * 2 ** 20; // differences under 100 MB are not worth a line
+
+/** How the folders below add up to the pool's used figure above. */
+function Sums({ r }: { r: Reconcile }) {
+  const sign = r.since >= 0 ? '+' : '−';
+  return (
+    <div {...stylex.props(styles.sums)} aria-label="How it adds up">
+      <div {...stylex.props(styles.sumRow)}>
+        <span>Folders, at the last scan</span>
+        <span {...stylex.props(styles.sumNum)}>{gb(r.folders)}</span>
+      </div>
+      {r.overhead >= NOISE && (
+        <div {...stylex.props(styles.sumRow)}>
+          <span>The disk's own bookkeeping (file tables, journal)</span>
+          <span {...stylex.props(styles.sumNum)}>{gb(r.overhead)}</span>
+        </div>
+      )}
+      {Math.abs(r.since) >= NOISE && (
+        <div {...stylex.props(styles.sumRow)}>
+          <span>{r.since >= 0 ? 'Written since the scan' : 'Freed since the scan'}</span>
+          <span {...stylex.props(styles.sumNum)}>
+            {sign}
+            {gb(Math.abs(r.since))}
+          </span>
+        </div>
+      )}
+      <div {...stylex.props(styles.sumRow, styles.sumTotal)}>
+        <span>In use on the pool now</span>
+        <span {...stylex.props(styles.sumNum)}>{gb(r.now)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -486,6 +550,7 @@ function ProfileBreakdown({ usage: x, share }: { usage: ProfileUsage; share: num
                   <span {...stylex.props(styles.rankTrack)}>
                     <i {...stylex.props(styles.rankFill(Number(pct(i.bytes, top).toFixed(1))))} />
                   </span>
+                  {i.hint && <span {...stylex.props(styles.rankHint)}>{i.hint}</span>}
                 </li>
               ))}
             </ul>

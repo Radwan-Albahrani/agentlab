@@ -506,6 +506,27 @@ class Screens(unittest.TestCase):
         titles = [n['title'] for n in screens.overview()['needs']]
         self.assertIn("sara@example.com's disk 83% full", titles)
 
+    def test_storage_names_what_fills_a_folder_and_explains_the_pool(self):
+        gb = fixtures.GB
+        rows = [
+            {'path': '', 'bytes': 30 * gb},
+            {'path': 'home/.local', 'bytes': 14 * gb},
+            {'path': 'home/.local/share', 'bytes': 13.5 * gb},
+            {'path': 'home/.local/share/docker', 'bytes': 13 * gb},
+            {'path': 'home/.local/share/docker/volumes', 'bytes': 5 * gb},
+            {'path': 'home/bugfix-work', 'bytes': 9 * gb},
+            {'path': 'workspace/app', 'bytes': 7 * gb},
+        ]
+        top = screens.biggest(rows)
+        self.assertEqual((top[0]['path'], top[0]['bytes']), ('home/.local/share/docker', 13 * gb))
+        self.assertIn('Docker inside the agent', top[0]['hint'])
+        self.assertIn('scratch folder', top[1]['hint'])
+        self.assertEqual(top[2]['hint'], 'A repository the agent works in')
+        scan = {'units': {'/pool': 80 * gb}, 'items': [{'agent': 'a', 'path': '', 'bytes': 78 * gb}]}
+        r = screens.reconcile({'used': 84 * gb}, scan)
+        self.assertEqual((r['overhead'], r['since'], r['now']), (2 * gb, 4 * gb, 84 * gb))
+        self.assertIsNone(screens.reconcile({'used': 84 * gb}, {'items': scan['items']}))  # a scan from before
+
     def test_secrets_map_spells_out_companions(self):
         items = {s['name']: s for s in screens.secrets()['items']}
         token = items['companions/scout/bot-token.txt']

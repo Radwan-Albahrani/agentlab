@@ -1,8 +1,10 @@
-"""Per-agent tidy: Docker leftovers, idle worktrees, shared package files, and caches when storage is full; DRY=1 only
-lists."""
+"""Per-agent tidy: Docker leftovers (old unused volumes too), idle worktrees, rebuildable folders in scratch projects
+left alone for a week, shared package files, and caches when storage is full; DRY=1 only lists."""
 
+import contextlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -17,13 +19,22 @@ SETTLED_HOURS = 12
 ORPHAN_DAYS = 2
 CACHES_AT = 75
 NOTICE_DAYS = 7  # untouched this long, a worktree with unsaved work goes too (saved as a ref)
+SCRATCH_DAYS = 7  # untouched this long, a scratch project in the agent's home loses its rebuildable folders
+REBUILDABLE = ('node_modules', 'venv', '.venv')
 DRY = bool(os.environ.get('DRY'))
 
 DOCKER_PRUNE = """docker info >/dev/null 2>&1 || exit 0
 docker container prune -f --filter until=72h >/dev/null
 docker image prune -af --filter until=72h | tail -1
 docker builder prune -af --filter until=72h | tail -1
-docker volume prune -f | tail -1"""
+docker volume prune -f | tail -1
+cut=$(( $(date +%s) - 259200 )) n=0
+for v in $(docker volume ls -qf dangling=true); do
+  t=$(date -d "$(docker volume inspect -f '{{.CreatedAt}}' "$v" 2>/dev/null)" +%s 2>/dev/null || echo "$cut")
+  [ "$t" -lt "$cut" ] && docker volume rm "$v" >/dev/null 2>&1 && n=$((n + 1))
+done
+[ "$n" -eq 0 ] || echo "removed $n unused volumes older than 3 days"
+true"""
 
 # Runs as the agent with worktree paths on stdin; unsaved work is kept as refs/agentlab/removed/<name> before removal.
 REMOVE_WORKTREES = r'''removed="" kept="" n=0 now=$(date +%s)
@@ -66,7 +77,10 @@ echo "$([ -n "${DRY}" ] && echo "would remove" || echo removed) ${n} idle worktr
 # install would make full copies again.
 CLEAR_CACHES = """npm cache clean --force 2>/dev/null
 command -v pnpm >/dev/null && (cd /workspace && pnpm store prune >/dev/null 2>&1)
-command -v brew >/dev/null && brew cleanup -s >/dev/null 2>&1; true"""
+command -v brew >/dev/null && brew cleanup -s >/dev/null 2>&1
+command -v pip >/dev/null && pip cache purge >/dev/null 2>&1
+command -v uv >/dev/null && uv cache clean >/dev/null 2>&1
+for b in ~/.cache/puppeteer/*/; do ls -dt "$b"*/ 2>/dev/null | tail -n +2 | xargs -r rm -rf; done; true"""
 
 
 def _epoch(iso):
@@ -128,6 +142,56 @@ def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
             elif since is not None and now - since > hours * 3600:
                 out.append(wt)
     return out
+
+
+def _newest(top, skip=REBUILDABLE):
+    """The newest modification time under `top`, not looking inside rebuildable folders."""
+    newest = os.path.getmtime(top)
+    for d, dirs, files in os.walk(top):
+        dirs[:] = [x for x in dirs if x not in skip and not os.path.islink(f'{d}/{x}')]
+        for name in files:
+            with contextlib.suppress(OSError):
+                newest = max(newest, os.lstat(f'{d}/{name}').st_mtime)
+    return newest
+
+
+def _size(path):
+    total = 0
+    for d, _, files in os.walk(path):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(f'{d}/{name}').st_blocks * 512
+    return total
+
+
+def stale_builds(root, now=None, days=SCRATCH_DAYS, depth=4):
+    """Rebuildable folders (node_modules, venv) in the agent's home scratch projects nobody touched for `days`."""
+    now = now or time.time()
+    home, out = f'{root}/home', []
+    for name in sorted(os.listdir(home)) if os.path.isdir(home) else []:
+        top = f'{home}/{name}'
+        if name.startswith('.') or os.path.islink(top) or not os.path.isdir(top):
+            continue
+        found = []
+        for d, dirs, _ in os.walk(top):
+            if d[len(top) :].count('/') >= depth:
+                dirs[:] = []
+                continue
+            found += [f'{d}/{x}' for x in dirs if x in REBUILDABLE and not os.path.islink(f'{d}/{x}')]
+            dirs[:] = [x for x in dirs if x not in REBUILDABLE and x != '.git']
+        if found and now - _newest(top) > days * 86400:
+            out += found
+    return out
+
+
+def clear_builds(root):
+    """(removed, bytes) for stale_builds; DRY only counts."""
+    paths, freed = stale_builds(root), 0
+    for p in paths:
+        freed += _size(p)
+        if not DRY:
+            shutil.rmtree(p, ignore_errors=True)
+    return paths, freed
 
 
 def _run(cmd, stdin=None):
@@ -193,6 +257,13 @@ def tidy(data, agent):
         stdin=trees,
     )
     lines.append(f'{agent_id}: {out.splitlines()[-1] if out else "no worktrees"}')
+    gone, freed = clear_builds(root)
+    if gone:
+        folders = sorted({os.path.relpath(g, f'{root}/home').split('/')[0] for g in gone})
+        lines.append(
+            f'{agent_id}: {"would remove" if DRY else "removed"} {len(gone)} node_modules/venv folders'
+            f' ({freed / 1e9:.1f} GB) in scratch folders untouched {SCRATCH_DAYS} days: {", ".join(folders)}'
+        )
     n, saved = dedupe(f'{root}/workspace', dry=DRY)
     if n:
         lines.append(
@@ -201,7 +272,9 @@ def tidy(data, agent):
     u, size = used(unit)
     if not DRY and size and 100 * u / size >= CACHES_AT:
         _run(['docker', 'exec', '-u', 'agent', cid, 'bash', '-lc', CLEAR_CACHES])
-        lines.append(f'{agent_id}: package caches cleared (its storage at {CACHES_AT} % or more)')
+        lines.append(
+            f'{agent_id}: package caches cleared, pip and old browsers too (its storage at {CACHES_AT} % or more)'
+        )
     return lines, max(0, before - used(unit)[0])
 
 

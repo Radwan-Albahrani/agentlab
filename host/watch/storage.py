@@ -1,5 +1,6 @@
 """Disk usage, fill alerts and per-folder breakdown for the hub's Storage screen."""
 
+import json
 import os
 import sys
 import time
@@ -10,6 +11,7 @@ from . import host, store
 from .settings import ALERT_LEVELS, DATA, REARM_BELOW, SCAN_EVERY_S, SCAN_MIN_BYTES
 
 SCAN_UNIT = 'agentlab-watch-scan'
+SCAN_DEPTH = 4  # deep enough to name what fills a folder (home/.local/share/docker)
 PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -79,8 +81,28 @@ def check(state):
         if use:
             _alert(state, unit, f'{os.path.basename(unit)} disk', use)
     _alert(state, '_server', 'Server disk', host_usage(DATA))
-    if time.time() - (snapshot.get('scan') or {}).get('at', 0) > SCAN_EVERY_S:
+    scanned = (snapshot.get('scan') or {}).get('at', 0)
+    if time.time() - scanned > SCAN_EVERY_S or cleaned_since(scanned):
         start_scan()
+
+
+def cleaned_since(at):
+    """Whether a cleanup finished after `at` (the janitor's closing event), so the breakdown is out of date."""
+    try:
+        with open(store.path('events.jsonl')) as f:
+            tail = f.readlines()[-200:]
+    except OSError:
+        return False
+    for line in reversed(tail):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get('at', 0) <= at:
+            return False
+        if e.get('kind') == 'cleanup' and str(e.get('title', '')).startswith(('Cleanup freed', 'Cleanup: ')):
+            return True
+    return False
 
 
 def start_scan():
@@ -102,7 +124,7 @@ def start_scan():
 
 
 def breakdown(du_output, agent, base):
-    """Breakdown rows from `du -xb --max-depth=2 <base>`; the agent's total has path ''."""
+    """Breakdown rows from `du -x -B1 --max-depth=N <base>` (space on disk); the agent's total has path ''."""
     rows = []
     for line in du_output.splitlines():
         size, _, folder = line.partition('\t')
@@ -119,10 +141,14 @@ def scan():
     items = []
     for a in agents():
         if os.path.isdir(a['path']):
-            _, out = host.run(['du', '-xb', '--max-depth=2', a['path']], timeout=1800)
+            _, out = host.run(['du', '-x', '-B1', f'--max-depth={SCAN_DEPTH}', a['path']], timeout=1800)
             items += breakdown(out, a['id'], a['path'])
     took = round(time.time() - started)
     snapshot = store.load('usage.json', {})
-    snapshot['scan'] = {'at': time.time(), 'took': took, 'items': items}
+    # what each disk had in use as the scan ended, so the hub can tell growth since from the disk's own overhead
+    units = {
+        u: use['used'] for u, use in ((u, usage(u)) for u in {a.get('storage_unit') for a in agents()} if u) if use
+    }
+    snapshot['scan'] = {'at': time.time(), 'took': took, 'items': items, 'units': units}
     store.dump('usage.json', snapshot)
     store.event('scan', 'Storage breakdown updated', f'took {took} s')

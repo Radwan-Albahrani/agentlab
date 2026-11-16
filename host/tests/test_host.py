@@ -192,6 +192,17 @@ class Watch(unittest.TestCase):
         self.assertEqual(storage.alert_change(96, 80), ('up', 95))
         self.assertEqual(storage.alert_change(74, 80), ('down', 0))
 
+    def test_a_finished_cleanup_makes_the_breakdown_stale(self):
+        scanned = time.time() - 60
+        os.makedirs(store.path(), exist_ok=True)
+        with open(store.path('events.jsonl'), 'a') as f:
+            f.write(json.dumps({'at': time.time(), 'kind': 'cleanup', 'title': 'Cleanup started from the hub'}) + '\n')
+        self.assertFalse(storage.cleaned_since(scanned))  # started is not finished
+        with open(store.path('events.jsonl'), 'a') as f:
+            f.write(json.dumps({'at': time.time(), 'kind': 'cleanup', 'title': 'Cleanup freed 3.1 GB'}) + '\n')
+        self.assertTrue(storage.cleaned_since(scanned))
+        self.assertFalse(storage.cleaned_since(time.time() + 1))
+
     def test_breakdown(self):
         du = '300000000\t/p/sara/workspace\n5000\t/p/sara/tmp\n900000000\t/p/sara'
         rows = storage.breakdown(du, 'sara', '/p/sara')
@@ -631,6 +642,61 @@ class Trim(unittest.TestCase):
         ):
             self.assertEqual(janitor.trim(cfg), ['/p/sara: 3 GiB trimmed'])
         ran.assert_called_once_with(['fstrim', '-v', '/p/sara'])
+
+
+class ScratchBuilds(unittest.TestCase):
+    def test_only_projects_left_alone_for_a_week_lose_their_rebuildable_folders(self):
+        root = tempfile.mkdtemp(dir=TMP)
+        old = time.time() - 10 * 86400
+        for project, when in (('old-work', old), ('new-work', time.time())):
+            for sub in ('app/node_modules/x', 'venv/lib', 'src'):
+                os.makedirs(f'{root}/home/{project}/{sub}')
+            _write(f'{root}/home/{project}/app/node_modules/x/big.js', 'x' * 5000)
+            _write(f'{root}/home/{project}/src/main.py', 'print(1)')
+            for d, dirs, files in os.walk(f'{root}/home/{project}'):
+                for n in dirs + files:
+                    os.utime(f'{d}/{n}', (when, when))
+            os.utime(f'{root}/home/{project}', (when, when))
+        os.makedirs(f'{root}/home/.cache/node_modules')  # tool folders are not scratch projects
+        with mock.patch.object(janitor, 'DRY', True):
+            dry, size = janitor.clear_builds(root)
+        self.assertEqual(
+            sorted(os.path.relpath(p, root) for p in dry),
+            ['home/old-work/app/node_modules', 'home/old-work/venv'],
+        )
+        self.assertGreater(size, 0)
+        self.assertTrue(os.path.exists(f'{root}/home/old-work/venv'))
+        with mock.patch.object(janitor, 'DRY', False):
+            janitor.clear_builds(root)
+        self.assertFalse(os.path.exists(f'{root}/home/old-work/venv'))
+        self.assertTrue(os.path.exists(f'{root}/home/old-work/src/main.py'))
+        self.assertTrue(os.path.exists(f'{root}/home/new-work/venv'))
+
+    def test_old_unused_docker_volumes_go_but_new_and_unreadable_ones_stay(self):
+        tmp = tempfile.mkdtemp(dir=TMP)
+        removed = f'{tmp}/removed'
+        old = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - 5 * 86400))
+        new = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        _write(
+            f'{tmp}/docker',
+            '#!/bin/sh\n'
+            'case "$1 $2" in\n'
+            '  "volume ls") printf "old_db\\nnew_db\\nodd_db\\n" ;;\n'
+            f'  "volume inspect") case "$5" in old_db) echo {old} ;; new_db) echo {new} ;; *) exit 1 ;; esac ;;\n'
+            f'  "volume rm") echo "$3" >> {removed} ;;\n'
+            'esac\n',
+        )
+        os.chmod(f'{tmp}/docker', 0o755)
+        out = subprocess.run(
+            ['sh', '-c', janitor.DOCKER_PRUNE],
+            env={**os.environ, 'PATH': f'{tmp}:{os.environ["PATH"]}'},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with open(removed) as f:
+            self.assertEqual(f.read().split(), ['old_db'])
+        self.assertIn('removed 1 unused volumes older than 3 days', out)
 
 
 class WorktreeNotice(unittest.TestCase):

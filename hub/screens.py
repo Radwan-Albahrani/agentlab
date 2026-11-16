@@ -448,14 +448,76 @@ def storage():
                             ),
                             key=lambda i: -i['bytes'],
                         ),
-                        'biggest': sorted(
-                            ({'path': i['path'], 'bytes': i['bytes']} for i in mine if i['path'].count('/') == 1),
-                            key=lambda i: -i['bytes'],
-                        )[:6],
+                        'biggest': biggest(mine),
                     }
                 )
         out['scan'] = {'at': scan.get('at'), 'took': scan.get('took', 0), 'profiles': profs}
+        if out['pool'] and see('storage.manage'):
+            out['scan']['reconcile'] = reconcile(out['pool'], scan)
     return out
+
+
+FOLDER_HINTS = {
+    'home/.local/share/docker': "Docker inside the agent: images, containers and volumes (cleanup prunes what's unused)",
+    'home/.local/share': 'Tool data, including Docker inside the agent',
+    'home/.cache': 'Tool and package caches; they rebuild themselves',
+    'home/.bun': "Bun's package store, shared by every node_modules",
+    'home/.t3': 'T3: chats, attachments and its runtime',
+    'home/.codex': 'Codex sessions and history',
+    'home/.npm': 'npm cache',
+    'home/.claude': 'Claude Code sessions and settings',
+    'workspace/worktrees': 'Worktrees for agent chats; idle ones are removed',
+    'linuxbrew': 'Homebrew tools',
+}
+
+
+def folder_hint(path):
+    """One line on what a folder is, for the Storage screen."""
+    for prefix, hint in FOLDER_HINTS.items():
+        if path == prefix or path.startswith(prefix + '/'):
+            return hint
+    parts = path.split('/')
+    if parts[0] == 'home' and len(parts) > 1 and not parts[1].startswith('.'):
+        return "A scratch folder in the agent's home; node_modules and venvs go after a week untouched"
+    if parts[0] == 'workspace' and len(parts) == 2:
+        return 'A repository the agent works in'
+    return ''
+
+
+def biggest(rows, n=6, dominant=0.6):
+    """The largest second-level folders, each named by the subfolder holding most of it (home/.local becomes
+    home/.local/share/docker when that is 13 of its 14 GB)."""
+    sizes = {i['path']: i['bytes'] for i in rows if i['path']}
+    out = []
+    for path, size in sizes.items():
+        if path.count('/') != 1:
+            continue
+        name = path
+        while True:
+            kids = [
+                (p, b) for p, b in sizes.items() if p.startswith(name + '/') and p.count('/') == name.count('/') + 1
+            ]
+            big = max(kids, key=lambda k: k[1], default=None)
+            if not big or big[1] < dominant * size:
+                break
+            name = big[0]
+        out.append({'path': name, 'bytes': sizes[name], 'hint': folder_hint(name)})
+    return sorted(out, key=lambda i: -i['bytes'])[:n]
+
+
+def reconcile(pool, scan):
+    """Why the pool's used figure is bigger than the folders: growth since the scan, and the disk's own overhead."""
+    at_scan = sum((scan.get('units') or {}).values())
+    folders = sum(i['bytes'] for i in scan.get('items') or [] if i.get('path') == '')
+    if not at_scan or not folders:
+        return None
+    return {
+        'now': pool['used'],
+        'atScan': at_scan,
+        'folders': folders,
+        'overhead': max(0, at_scan - folders),
+        'since': pool['used'] - at_scan,
+    }
 
 
 def manage():

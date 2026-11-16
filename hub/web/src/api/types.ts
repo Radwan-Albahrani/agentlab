@@ -386,6 +386,19 @@ export interface ConfigFile {
 export interface FolderSize {
   path: string;
   bytes: number;
+  /** What the folder is, for the biggest ones. */
+  hint?: string;
+}
+
+/** Why the pool's used figure is bigger than the folders it holds. */
+export interface Reconcile {
+  now: number;
+  atScan: number;
+  folders: number;
+  /** The disk's own bookkeeping: file tables, the journal. */
+  overhead: number;
+  /** Change since the scan (negative after a cleanup). */
+  since: number;
 }
 
 export interface ProfileUsage {
@@ -399,6 +412,7 @@ export interface DiskScan {
   at: number;
   took: number;
   profiles: ProfileUsage[];
+  reconcile?: Reconcile | null;
 }
 
 /** No numbers while the disk is not mounted. */
