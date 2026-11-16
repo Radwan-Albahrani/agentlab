@@ -52,7 +52,7 @@ def task(ask, owner, where, lines, files, folder, channel, channels, open_polls,
 def guest_rules(folder, guest, owner):
     """A colleague's task: work for them, but sensitive steps wait for the owner."""
     return (
-        f"\n\n{guest} is a colleague {owner} gave access to {NAME}: you work for {guest} here, with {owner}'s tools"
+        f"\n\n{guest} is a colleague {owner} lets use {NAME}: you work for {guest} here, with {owner}'s tools"
         f" and logins. Sensitive things need {owner}'s explicit approval first: permissions or access, money,"
         ' deleting anything, changing settings or data in a live service, sharing anything confidential'
         f' (contracts, HR, salaries, customer data, credentials), and anything going outside {org()}. Code changes'

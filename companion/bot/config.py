@@ -154,6 +154,16 @@ SCHEMA = [
         'default': os.environ.get('COMPANION_PUBLISH_CHANNEL', ''),
         'help': 'Slack channel id that approved product-update drafts are posted to.',
     },
+    {
+        'key': 'requests_channel',
+        'label': 'Requests channel',
+        'type': 'text',
+        'source': 'channels',
+        'default': '',
+        'when': {'mode': ['tag', 'team']},
+        'help': f'Anyone on the team can post an ask in this channel (invite @{NAME} to it). Each one comes to your DM '
+        'to approve or decline; an approved ask runs for them in its thread, a declined one is told so.',
+    },
 ]
 
 COMP = Companion(ID, AGENT, DATA, SCHEMA)
@@ -178,6 +188,10 @@ def org():
 
 def default_project():
     return (COMP.setting('default_project') or '').strip() or '/workspace'
+
+
+def requests_channel():
+    return (COMP.setting('requests_channel') or '').strip()
 
 
 def publish_channel():

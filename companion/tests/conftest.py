@@ -157,6 +157,7 @@ def fresh_bot(monkeypatch):
     state.state['drafts'].clear()
     state.state['polls'].clear()
     state.state.pop('awaiting_invite', None)
+    state.state.pop('inbox', None)
     requests._pending.clear()
     requests._known.clear()
     routing._seen.clear()

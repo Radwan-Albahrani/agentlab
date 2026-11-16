@@ -1,7 +1,7 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
-from . import drafts, jobs, requests, reviews, slack, tasks
-from .config import COMP, OWNER, has_access, log, mode
+from . import drafts, inbox, jobs, requests, reviews, slack, tasks
+from .config import COMP, OWNER, has_access, log, mode, requests_channel
 from .state import key, save, state
 
 _seen = []
@@ -49,6 +49,8 @@ def route(ev, mentioned):
     tts = thr or ts
     if not _once(ts):
         return
+    if ch == requests_channel() and inbox.route(ev, mentioned):
+        return
     owner_tag = mentioned and user == OWNER and slack.USER
     if owner_tag and ev.get('channel_type') in ('im', 'mpim') and not requests.own_dm(ch):
         jobs.run_later(requests.tagged_in_dm, ev)
@@ -87,6 +89,10 @@ def route(ev, mentioned):
             jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
         elif mentioned or not thr:
             jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''), None, user)
+        return
+    card = in_dm and thr and inbox.card_of(ch, thr)
+    if card:
+        jobs.run_later(inbox.relay, card, ev.get('text', ''), ts)
         return
     dkey, draft = drafts.for_thread(ch, tts)
     if draft and thr:
