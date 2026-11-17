@@ -27,6 +27,10 @@ def test_catalog_has_axiom_and_every_entry_is_https():
     assert all(c['url'].startswith('https://') for c in connectors.CATALOG.values())
 
 
+def test_catalog_has_posthog_on_its_region_routing_endpoint():
+    assert connectors.CATALOG['posthog']['url'] == 'https://mcp.posthog.com/mcp'
+
+
 def test_shared_and_token_servers_render_valid_codex_config(home):
     (home / '.codex' / 'config.toml').write_text('model = "gpt"\n\n[mcp_servers.playwright]\ncommand = "x"\n')
     connectors.add_shared('linear', connectors.CATALOG['linear']['url'])
@@ -77,3 +81,14 @@ def test_signed_in_follows_the_shared_token_file(home):
     assert connectors.signed_in('axiom')
     connectors.remove('axiom')
     assert not os.listdir(folder)
+
+
+def test_login_link_is_the_authorize_url_not_the_auth_server(home, monkeypatch):
+    connectors.add_shared('posthog', connectors.CATALOG['posthog']['url'])
+    link = 'https://oauth.posthog.com/oauth/authorize/?response_type=code&client_id=x'
+    printed = (
+        f'Discovered authorization server: https://oauth.posthog.com\nPlease authorize this client by visiting:\n{link}'
+    )
+    monkeypatch.setattr(connectors, 'active', lambda flow: True)
+    monkeypatch.setattr(connectors, 'screen', lambda flow: printed)
+    assert connectors.login_state('posthog')['url'] == link

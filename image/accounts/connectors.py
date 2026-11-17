@@ -22,6 +22,11 @@ CATALOG = {
     'atlassian': {'name': 'Atlassian', 'url': 'https://mcp.atlassian.com/v1/mcp', 'what': 'Jira and Confluence'},
     'vercel': {'name': 'Vercel', 'url': 'https://mcp.vercel.com', 'what': 'Projects, deployments, logs'},
     'axiom': {'name': 'Axiom', 'url': 'https://mcp.axiom.co/mcp', 'what': 'Logs, traces, datasets (APL queries)'},
+    'posthog': {
+        'name': 'PostHog',
+        'url': 'https://mcp.posthog.com/mcp',
+        'what': 'Product analytics, flags, experiments (US or EU, by account)',
+    },
 }
 NAME_RE = re.compile(r'^[a-z][a-z0-9-]{1,30}$')
 RESERVED = {'playwright', 'github'}
@@ -137,7 +142,9 @@ def start_login(name):
 
 def login_state(name):
     scr = screen(flow(name)) if active(flow(name)) else ''
-    urls = [u.rstrip('.,)') for u in URL_RE.findall(scr) if 'authorize' in u or 'oauth' in u]
+    found = [u.rstrip('.,)') for u in URL_RE.findall(scr)]
+    # the sign-in link itself, not the auth server mcp-remote names first (https://oauth.posthog.com is empty)
+    urls = [u for u in found if 'response_type=' in u] or [u for u in found if 'authorize' in u or 'oauth' in u]
     ok = signed_in(name) and bool(scr)
     finished = ok or '[login finished]' in scr
     url = urls[0] if urls else ''

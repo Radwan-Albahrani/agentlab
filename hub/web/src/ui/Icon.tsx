@@ -121,6 +121,11 @@ const BRANDS: Record<string, ReactElement> = {
       d="M12 3.5 2.8 20h4.4L12 11.4 16.8 20h4.4zM9.4 16.2h5.2"
     />
   ),
+  posthog: (
+    <g fill="#f9bd2b">
+      <path d="M2 17.5 7.5 23H2zM2 11l12 12H8.5L2 16.5zM2 4.5 18.5 21l-2 2h-2L2 10.5zM8.5 11l6.5 6.5-2 2-6.5-6.5zM8.5 4.5 15 11l-2 2-6.5-6.5z" />
+    </g>
+  ),
   linear: (
     <path
       fill="#5e6ad2"
