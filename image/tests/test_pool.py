@@ -146,3 +146,22 @@ def test_every_teamclaude_call_goes_through_the_wrapper():
     assert 'exec agent-teamclaude server' in program
     with open(pool.__file__) as f:
         assert "f'teamclaude " not in f.read()
+
+
+def test_the_sign_in_steps_reach_the_pool_sign_in(monkeypatch):
+    """The hub's shared sign-in steps send plain send / stop / key with the pool flow's key."""
+    import page
+
+    calls = []
+    monkeypatch.setattr(pool, 'type_into', lambda flow, text: calls.append(('type', flow, text)))
+    monkeypatch.setattr(pool, 'stop_session', lambda flow: calls.append(('stop', flow)))
+    monkeypatch.setattr(pool, 'tmux', lambda *a: calls.append(('tmux', *a)))
+    monkeypatch.setattr(pool, 'sync', lambda: None)
+    assert page.act({'action': 'send', 'p': 'pool-claude', 'text': 'abc#xyz'}) == ''
+    assert page.act({'action': 'key', 'p': 'pool-codex', 'key': 'Enter'}) == ''
+    assert page.act({'action': 'stop', 'p': 'pool-claude'}) == ''
+    assert calls == [
+        ('type', 'pool-claude', 'abc#xyz'),
+        ('tmux', 'send-keys', '-t', 'login-pool-codex', 'Enter'),
+        ('stop', 'pool-claude'),
+    ]

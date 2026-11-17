@@ -8,7 +8,7 @@ import subprocess
 import threading
 import tomllib
 
-from util import active, http, run, screen, sh_quote, start_session, stop_session, type_into
+from util import active, http, run, screen, session, sh_quote, start_session, stop_session, tmux, type_into
 
 HOME = os.path.expanduser('~')
 CONFIG = os.path.join(HOME, '.config', 'teamclaude.json')
@@ -279,11 +279,14 @@ def act(action, target, text):
             stop_session(other)
         start_session(target, FLOWS[target]['login'])
         return ''
-    if action in ('pool-send', 'pool-stop'):
+    if action in ('pool-send', 'pool-stop', 'pool-key'):
         if target not in FLOWS:
             raise ValueError('Unknown provider.')
         if action == 'pool-send':
             type_into(target, text('text'))
+        elif action == 'pool-key':
+            if text('key') in ('Enter', 'Up', 'Down', 'Escape'):
+                tmux('send-keys', '-t', session(target), text('key'))
         else:
             stop_session(target)
             sync()

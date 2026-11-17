@@ -64,6 +64,8 @@ def act(body):
         return signin.save_github_token(text('token'))
     if action.startswith('pool-'):
         return pool.act(action, target, text)
+    if target in pool.FLOWS:  # the shared sign-in steps send plain send / stop / key for a pool sign-in too
+        return pool.act(f'pool-{action}', target, text)
     if action.startswith('mcp-'):
         return _connector_action(action, target, text)
     return _signin_action(action, target, text)
