@@ -1,10 +1,12 @@
 """Calls T3's own MCP tools with a short-lived token for what `t3 thread` can't do (answer, interrupt, archive)."""
 
 import json
+import os
 import subprocess
 import urllib.request
 
 T3_MCP = 'http://127.0.0.1:3773/mcp'
+T3_HOME = os.path.join(os.path.expanduser('~'), '.t3')
 PROTOCOL = '2025-06-18'
 
 
@@ -63,8 +65,19 @@ class Client:
         return res.get('result', {})
 
 
+def binary(home=T3_HOME):
+    """The running server's own t3: a newer installed CLI refuses its database until the server restarts onto it."""
+    try:
+        with open(os.path.join(home, 'userdata', 'server-runtime.json')) as f:
+            v = json.load(f).get('serverVersion', '')
+    except (OSError, ValueError):
+        return 't3'
+    path = os.path.join(home, 'runtime', 'versions', v, 't3')
+    return path if v and '/' not in v and os.access(path, os.X_OK) else 't3'
+
+
 def _t3(*args):
-    return subprocess.run(['t3', *args], capture_output=True, text=True, timeout=30, cwd='/workspace', check=False)
+    return subprocess.run([binary(), *args], capture_output=True, text=True, timeout=30, cwd='/workspace', check=False)
 
 
 def with_tools(label, work):

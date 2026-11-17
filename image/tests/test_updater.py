@@ -43,7 +43,7 @@ def test_reads_the_running_version_from_the_server_binary_path():
 
 def test_restarts_t3_when_a_newer_one_is_installed_and_nothing_runs(tmp_path):
     run = Runner()
-    db = runs_db(tmp_path / 's.db', 'completed', 'cancelled', 'failed', 'interrupted')
+    db = runs_db(tmp_path / 's.db', 'completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
     assert updater.align_t3(run, PS_015, db) == 'restarted'
     assert run.restarted == [[*updater.SUPERVISOR, 'restart', 't3']]
 

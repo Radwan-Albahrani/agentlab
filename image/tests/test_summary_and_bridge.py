@@ -35,6 +35,18 @@ def test_unlimited_and_unreadable(cgroup, monkeypatch):
     assert summary.memory() == (None, None)
 
 
+def test_bridge_runs_the_t3_of_the_running_server(tmp_path):
+    assert bridge.t3tools.binary(str(tmp_path)) == 't3'
+    (tmp_path / 'userdata').mkdir()
+    (tmp_path / 'userdata' / 'server-runtime.json').write_text(json.dumps({'serverVersion': '0.1.9'}))
+    assert bridge.t3tools.binary(str(tmp_path)) == 't3'  # that version's binary is gone
+    old = tmp_path / 'runtime' / 'versions' / '0.1.9'
+    old.mkdir(parents=True)
+    (old / 't3').write_text('#!/bin/sh\n')
+    (old / 't3').chmod(0o755)
+    assert bridge.t3tools.binary(str(tmp_path)) == str(old / 't3')
+
+
 def test_bridge_key(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge, 'KEY_FILE', str(tmp_path / 'bridge-key'))
     assert bridge.authorized('anything') == (False, 'bridge disabled')

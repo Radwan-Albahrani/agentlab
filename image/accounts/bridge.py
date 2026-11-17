@@ -44,7 +44,7 @@ def _result(ok, out):
 def _thread_cli(args, body):
     try:
         p = subprocess.run(
-            ['t3', 'thread', *args],
+            [t3tools.binary(), 'thread', *args],
             input=str(body.get('message', '')),
             capture_output=True,
             text=True,

@@ -127,7 +127,7 @@ def _when(stamp):
     return datetime.datetime.fromisoformat(f'{head}.{(frac or "0")[:6].ljust(6, "0")}{zone}')
 
 
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
 
 
 def agent_busy(agent):

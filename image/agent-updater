@@ -16,7 +16,7 @@ WAIT_HOURS = float(os.environ.get('AGENTLAB_UPDATE_WAIT_HOURS') or 4)
 ON_BUSY = os.environ.get('AGENTLAB_ON_BUSY') or 'defer'
 FIRST_CHECK_S = 120
 RETRY_S = 300
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted')
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
 
 
 def log(msg):
