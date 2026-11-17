@@ -3,13 +3,12 @@
 import re
 import time
 
-from . import errands, limits, polls, posts, projects, prompts, slack, t3
+from . import cases, errands, jobs, limits, polls, posts, projects, prompts, slack, t3
 from .config import (
     AGENT,
     AGENT_DOWN_LIMIT,
     COMP,
     HISTORY_DAYS,
-    NAME,
     OWNER,
     RESUME_GRACE,
     SETTLE,
@@ -19,7 +18,7 @@ from .config import (
     slack_for_github,
 )
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save, state
-from .text import first_sentence, hour, mins, no_emoji, quote
+from .text import first_sentence, hour, mins, no_emoji
 
 THINKING = ':seedling: thinking…'
 
@@ -104,7 +103,10 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
         via or ('in a DM' if channel.startswith('D') else f'in #{chan}' if chan else 'in a channel'),
         OWNER if approved else None,
     )
-    new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **extra)
+    task = new_task(channel, thread_ts, tid, title, folder, trigger_ts, status, project, **extra)
+    if guest:
+        cases.open_case(task, ask, f'in {elsewhere[0]}' if elsewhere else extra['audit']['via'], card=approved or None)
+        save()
     log('started', k, tid, 'for', guest or 'owner')
     COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))
 
@@ -149,11 +151,16 @@ def follow_up(task, text, files, ts, by=None):
     elif is_status_ask(msg) and not files and t3.busy(task['thread']):
         status_reply(task, ts)
         return
+    colleague = bool(by) and by != OWNER and by == task.get('guest')
+    if colleague:
+        cases.colleague_said(task, text, files or ())
+        if task.get('active') and cases.owners_turn(task):  # the owner is talking to the agent: theirs comes next
+            cases.queue(task, {'by': by, 'text': text, 'files': files, 'ts': ts})
+            return
     if task.get('guest') or (by and by != OWNER):
         msg = f'{slack.name(by or OWNER)}: {msg}'
-    if task.get('approved') and by == task.get('guest'):
+    if task.get('approved') and colleague:
         msg += prompts.follow_up_reminder(slack.name(OWNER))
-        loop_in(task, f'**{slack.name(by)}** followed up:\n' + quote(slack.ask(text).strip() or '(files)'))
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
     between, more = ([], []) if quiet(task) else since_last(task, ts, folder)  # a batch thread mixes reviews
@@ -275,15 +282,10 @@ def reply(task, md, note=None, outcome='answered below'):
         slack.update(ch, task['status_ts'], no_emoji(line), note=line)
     slack.post(ch, tts, first_sentence(no_emoji(md), 300) or 'Reply', md=md, note=note)
     task['status_ts'] = None
-    if task.get('guest') and not task.get('answer_to'):  # an answer to the owner alone is not mirrored
-        loop_in(task, f'**{NAME} replied to {slack.name(task["guest"])}:**\n{_clip(md, 1500)}')
-
-
-def loop_in(task, md):
-    """Mirror an approved ask's thread under the owner's approval card, so they follow it from their DM."""
-    card = task.get('approved')
-    if isinstance(card, str) and card:
-        slack.post(slack.dm_owner(), card, first_sentence(no_emoji(md), 150) or 'Update', md=md)
+    if task.get('guest') and not task.get('answer_to'):  # an answer to the owner alone stays in the case
+        cases.answered(task, _clip(md, 2900))
+    elif task.get('guest'):
+        cases.answered_owner(task, _clip(md, 2900))
 
 
 def _clip(md, limit):
@@ -442,6 +444,8 @@ def resume_if_running(task):
         status_ts=None,
         ended='',
     )
+    cases.make_private(task)  # nobody in Slack started it: the owner, in T3 directly
+    cases.status(task, 'working')
     log('following a turn started outside Slack', task['thread'])
     return True
 
@@ -632,3 +636,10 @@ def _finish_turn(task, s):
     )
     task.pop('answer_to', None)
     task.update(active=False, quiet_since=0, last_status='', last_status_at=0, outcome=outcome, ended=now_iso())
+    a = task.get('approval') or {}
+    cases.status(task, 'waiting' if a and not a.get('decided') else 'failed' if outcome == 'failed' else 'answered')
+    waiting = cases.next_in_line(task)
+    if waiting and waiting['by'] == OWNER:
+        jobs.run_later(cases.ask, task, waiting['text'], waiting['files'], waiting['ts'])
+    elif waiting:
+        jobs.run_later(follow_up, task, waiting['text'], waiting['files'], waiting['ts'], waiting['by'])

@@ -1,6 +1,6 @@
 import pytest
-from bot import errands, jobs, routing, slack, state, t3, tasks
-from conftest import OWNER, set_settings
+from bot import slack, state, t3, tasks
+from conftest import set_settings
 
 
 def task(**extra):
@@ -140,41 +140,6 @@ def test_nothing_is_concluded_while_the_agent_is_down(monkeypatch, t3_quiet):
     t['down_since'] -= tasks.AGENT_DOWN_LIMIT + 1  # down for too long: decide as before
     tasks.tick(t)
     assert not t['active'] and t['outcome'] == 'answered'
-
-
-def guest_task_waiting_for_approval():
-    """Salah's task in his DM with the bot, its approval card in the owner's DM (D_OWNER, card 70.1)."""
-    t = task(channel='D_U_SALAH', thread_ts='60.1', guest='U_SALAH', active=False, outcome='answered')
-    t['approval'] = {'action': 'Merge the stack', 'ts': '70.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''}
-    return t
-
-
-def test_the_owners_reply_under_an_approval_card_is_a_private_question(monkeypatch, t3_quiet, fresh_bot):
-    sent = []
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
-    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
-    t = guest_task_waiting_for_approval()
-    routing.route(
-        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '71.1', 'thread_ts': '70.1', 'user': OWNER, 'text': 'why?'},
-        False,
-    )
-    assert sent and 'privately' in sent[0] and 'do not make the change' in sent[0] and sent[0].endswith('why?')
-    assert t['active'] and t['answer_to'] == {'ch': 'D_OWNER', 'tts': '70.1'}
-    # its answer goes under the card, not to Salah
-    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Because ENG-6050 says do not merge yet.'))
-    tasks.tick(t)
-    answer = [m for m in fresh_bot.messages if 'ENG-6050' in str(m)]
-    assert answer and all(m['channel'] == 'D_OWNER' and m.get('thread_ts') == '70.1' for m in answer)
-    assert 'answer_to' not in t and not t['active']
-
-
-def test_a_question_while_the_task_still_runs_is_asked_again_later(monkeypatch, t3_quiet, fresh_bot):
-    sent = []
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
-    t = guest_task_waiting_for_approval()
-    t['active'] = True
-    errands.ask_about(t, 'why?', None, '71.1')
-    assert not sent and 'Still working' in fresh_bot.text() and 'answer_to' not in t
 
 
 def test_history_lists_what_was_done_with_the_person_lately(monkeypatch):

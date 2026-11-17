@@ -1,9 +1,8 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
-import time
 from datetime import datetime
 
-from . import jobs, prompts, slack, t3, tasks
+from . import cases, jobs, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, default_project, log, mode
 from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
@@ -131,14 +130,43 @@ def _approval_blocks(md, note, task_key='', buttons=True):
 
 
 def approver(task):
-    """Where the owner decides: their DM for a colleague's task, else the task's own thread."""
+    """Where the owner decides: a colleague's task's case thread (their DM before cases), else the task's thread."""
+    if cases.of(task):
+        return cases.of(task)
     return (slack.dm_owner(), None) if task.get('guest') else (task['channel'], task['thread_ts'])
 
 
+def _close_card(task, line):
+    """Take the buttons off the approval still waiting, with `line` saying why; '' when there is none."""
+    old = task.get('approval') or {}
+    if not old or old.get('decided'):
+        return ''
+    old['decided'] = 'replaced'
+    slack.app.client.chat_update(
+        channel=old.get('ch') or task['channel'],
+        ts=old['ts'],
+        text=line,
+        blocks=_approval_blocks(old['md'], line, buttons=False),
+    )
+    if old.get('note'):
+        slack.update(task['channel'], old['note'], line, note=line)
+    return old['action']
+
+
 def ask_approval(task, a):
-    """approval.json -> owner-only Approve / Reject, in the owner's DM when a colleague asked."""
+    """approval.json -> owner-only Approve / Reject, in the case thread when a colleague asked. A newer one replaces
+    the one waiting; {"withdraw": why} takes it back."""
     who = slack.name(task.get('requester') or task.get('guest') or OWNER)
     k = key_of(task)
+    if a.get('withdraw'):
+        why = str(a['withdraw'])[:300]
+        took = _close_card(task, f':leftwards_arrow_with_hook: Withdrawn by {NAME}: {why}')
+        if took:
+            COMP.event('withdrawn', f'Withdrew the approval request: {took}'[:200], task=k, detail=why)
+            cases.status(task, 'answered')
+        save()
+        return
+    _close_card(task, ':arrows_counterclockwise: Replaced by a newer request below')
     action = a.get('action', '')
     link = slack.permalink(task['channel'], task['thread_ts']) if task.get('guest') else ''
     md = (
@@ -169,11 +197,13 @@ def ask_approval(task, a):
         'files': a.get('files') or [],
     }
     COMP.event('approval', f'Asked you to approve: {a.get("action", "")}'[:200], task=k, detail=f'for {who}')
+    cases.status(task, 'waiting')
 
 
-def decide(task, k, approved):
+def decide(task, k, approved, card=None):
+    """card: the pressed card's ts; a card other than the one waiting (replaced, withdrawn) decides nothing."""
     a = task.get('approval')
-    if not a or a.get('decided'):
+    if not a or a.get('decided') or (card and card != a['ts']):
         return
     a['decided'] = 'approved' if approved else 'rejected'
     when = datetime.now().strftime('%H:%M')
@@ -193,64 +223,16 @@ def decide(task, k, approved):
         slack.update(task['channel'], a['note'], line, note=line)
     if approved:
         task['reply_pending'] = a.get('reply') or ''
-        msg = f'APPROVED by {owner}: {a["action"]}. Make the change now, check it worked, and confirm in one line.'
+        msg = f'APPROVED by {owner}: {a["action"]}. Make the change now, check it worked, and confirm in one line' + (
+            f' (it goes to {who}).' if task.get('guest') else '.'
+        )
+        cases.status(task, 'working')
     else:
         msg = f'REJECTED by {owner}: do not make this change. Nothing is sent to {who}. Stop here.'
         close_head(task, ':x: Rejected · nothing changed', 'x')
     COMP.event('approved' if approved else 'rejected', f'You {a["decided"]}: {a["action"]}'[:200], task=k)
     save()
     jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'])
-
-
-def approval_at(ch, ts):
-    """The task whose approval card is the message `ts` in `ch` (the owner's DM), if any."""
-    for task in state['tasks'].values():
-        a = task.get('approval') or {}
-        if a.get('ts') == ts and a.get('ch') == ch:
-            return task
-    return None
-
-
-def ask_about(task, text, files, ts):
-    """The owner's reply under an approval card: a private question about it, answered under the card only."""
-    a = task['approval']
-    owner, who = slack.name(OWNER), slack.name(task.get('requester') or task.get('guest') or OWNER)
-    if task.get('active'):
-        line = f":hourglass_flowing_sand: Still working on {who}'s request; ask again once it is done."
-        slack.post(a['ch'], a['ts'], 'Still working', md=line)
-        return
-    pending = '' if a.get('decided') else ' It still waits for their Approve or Reject: do not make the change.'
-    msg = (
-        f'{owner} asks you privately about the approval you asked for ({a["action"]}). Only {owner} sees your answer,'
-        f' not {who}, and it is posted to them word for word.{pending}\n\n{owner}: {slack.ask(text).strip()}'
-    )
-    paths = slack.download(files, f'{task["channel"]}-{task["thread_ts"].replace(".", "")}')
-    if paths:
-        msg += '\n\nFiles (saved for you):\n' + '\n'.join(f'- {p}' for p in paths)
-    res = t3.send(task['thread'], msg)
-    if not res.get('ok'):
-        slack.post(a['ch'], a['ts'], 'Could not ask', md=f":warning: I couldn't pass that on: {t3.error_text(res)}")
-        return
-    slack.react(a['ch'], ts, 'eyes')
-    with lock:
-        now = tasks.now_iso()
-        task.update(
-            answer_to={'ch': a['ch'], 'tts': a['ts']},
-            active=True,
-            burst_start=now,
-            step_from=now,
-            ended='',
-            trigger_ts=ts,
-            seen_ts=ts,
-            quiet_since=0,
-            options={},
-            question=False,
-            last_status='',
-            last_status_at=0,
-            status_ts=slack.note_only(a['ch'], a['ts'], tasks.THINKING),
-            line_start=time.time(),
-        )
-    save()
 
 
 def stop(task, k):
@@ -450,8 +432,9 @@ def decide_credential(task, k, send):
     save()
 
 
-def owner_action(handler, locked=True):
-    """Wrap a button handler: ack, owner only, resolve the task, run under the state lock if `locked`."""
+def owner_action(handler, locked=True, card=False):
+    """Wrap a button handler: ack, owner only, resolve the task, run under the state lock if `locked`; `card`: also
+    pass the pressed message's ts."""
 
     def run(ack, body):
         ack()
@@ -463,17 +446,18 @@ def owner_action(handler, locked=True):
         task = state['tasks'].get(k)
         if not task:
             return
+        args = (task, k, body['message']['ts']) if card else (task, k)
         if locked:
             with lock:
-                handler(task, k)
+                handler(*args)
         else:
-            handler(task, k)
+            handler(*args)
 
     return run
 
 
-slack.app.action('errand_approve')(owner_action(lambda t, k: decide(t, k, True)))
-slack.app.action('errand_reject')(owner_action(lambda t, k: decide(t, k, False)))
+slack.app.action('errand_approve')(owner_action(lambda t, k, ts: decide(t, k, True, ts), card=True))
+slack.app.action('errand_reject')(owner_action(lambda t, k, ts: decide(t, k, False, ts), card=True))
 slack.app.action('errand_stop')(owner_action(stop, locked=False))
 slack.app.action('reply_send')(owner_action(lambda t, k: decide_reply(t, k, True)))
 slack.app.action('reply_skip')(owner_action(lambda t, k: decide_reply(t, k, False)))

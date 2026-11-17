@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from . import errands, polls, posts, reviews, slack
+from . import cases, errands, polls, posts, reviews, slack
 from .config import COMP, FILES, OWNER, log
 from .state import key_of, review_of, save
 
@@ -56,6 +56,10 @@ def tick(task):
     if c is not None:
         os.remove(os.path.join(box, 'credential.json'))  # the password must not stay on disk
         errands.ask_credential(task, c)
+    m = _take(os.path.join(box, 'send.json'))
+    if m is not None:
+        os.replace(os.path.join(box, 'send.json'), os.path.join(box, f'send-{int(time.time())}.json'))
+        cases.send(task, m, *gate(box, m.get('files') or []))
     p = _take(os.path.join(box, 'post.json'))
     if p is not None:
         os.replace(os.path.join(box, 'post.json'), os.path.join(box, f'post-{int(time.time())}.json'))

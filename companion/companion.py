@@ -203,7 +203,7 @@ class Companion:
         with self._lock:
             self.db.execute(
                 'insert into events (at, kind, title, task, "to", detail, ok) values (?,?,?,?,?,?,?)',
-                (time.time(), kind, str(title)[:200], task, to, str(detail or '')[:500], int(bool(ok))),
+                (time.time(), kind, str(title)[:200], task, to, str(detail or '')[:4000], int(bool(ok))),
             )
 
     def store_all(self):

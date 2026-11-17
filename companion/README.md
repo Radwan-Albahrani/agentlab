@@ -10,6 +10,13 @@ What it does:
   as context. Reply in the thread to continue. It shows live progress, retries when the model is busy, and splits
   big work into T3 child threads. Replies and files (screenshots, documents) go into that thread. Settings →
   "People who can tag it" lets colleagues give it work too; their sensitive steps wait for your Approve.
+- **Cases.** Every conversation a colleague has with it (a DM, a tag, the requests channel) is a case you follow from
+  one message in your DM: what they wrote and everything it sent them land in that thread, full text. Whoever starts a
+  turn gets its answer: theirs are answered in their thread, yours (a reply in the case thread, or a message in the T3
+  chat directly) only in the case thread, never to them. Tell it to send them something and it does (`send.json`),
+  and the case shows exactly what went. Their messages wait while you talk to it. Approvals sit in the case thread; a
+  newer one replaces the one waiting and the agent can withdraw one, so a stale card can't be approved. The hub's
+  Cases tab shows the same conversations.
 - **Errands.** Tag it bare on someone else's message and it handles their request as you (find a document, give
   access, look something up). Anything sensitive (access, money, deleting, sharing) waits for your Approve; replies to
   them wait for your Send. Team mode also notices colleagues asking you directly; dry-run mode lets you rehearse.
@@ -17,8 +24,8 @@ What it does:
   with an ask there (untagged messages are left alone); it comes to your DM with Approve and Decline. Approved, it runs
   for them in its thread (a PR link is a review they follow) and their tagged replies there steer it (one that leaves what you approved, or wants sensitive
   information, comes back to you first); declined, they
-  are told. Replies under the card in your DM are passed on to their thread, and anything they add (tagged) while it
-  waits joins the ask.
+  are told. The card is the ask's case: while it waits, your replies under it go to them; once taken on, you are
+  talking to the agent about it (see Cases). Anything they add (tagged) while it waits joins the ask.
 - **Posts, DMs and polls.** The agent never posts itself: it writes a file and the companion previews it for you,
   then posts it, DMs the people you named, or runs a poll (buttons, live count, closing on time, the winner).
 - **Product-update drafts.** Drafts the agent prepares are previewed in your DM; reply to revise, tap to post, and a
@@ -157,7 +164,8 @@ Where things are:
 | The company name, the default project | settings `org` and `default_project`: `companion settings <name> '{"org": "..."}'` or the hub |
 | Which Slack message goes where (tags, DMs, threads) | `bot/routing.py`, then `bot/requests.py` for the owner's tags on other people's messages |
 | A task: Slack thread <-> T3 chat, progress lines, retries | `bot/tasks.py` (T3 access in `bot/t3.py`) |
-| What you hand back through files (posts, polls, approvals, logins) | `bot/outbox.py`, `bot/posts.py`, `bot/polls.py`, `bot/errands.py` |
+| What you hand back through files (posts, polls, approvals, logins, send.json) | `bot/outbox.py`, `bot/posts.py`, `bot/polls.py`, `bot/errands.py` |
+| A colleague's conversation followed from the owner's DM (cases) | `bot/cases.py` |
 | Buttons | `slack.app.action('<id>')` handlers next to the feature (e.g. the end of `bot/errands.py`) |
 | Settings the owner sees on the hub | `SCHEMA` in `bot/config.py`, read with `COMP.setting('<key>')` |
 | Pull request review and QA | `bot/reviews.py` (Slack and hub side), `reviewer/` (GitHub side, the review brief in `reviewer/prompt.py`) |

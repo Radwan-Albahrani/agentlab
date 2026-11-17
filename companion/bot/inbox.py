@@ -1,7 +1,8 @@
 """The requests channel (a hub setting): colleagues post asks there, the owner approves or declines each in their DM.
 
 An approved ask runs as the colleague's task in its thread (a pull request link: a review they follow); a declined one
-is told so. The owner's replies under an ask's card in their DM are passed on to the colleague's thread."""
+is told so. The card is the ask's case (see cases.py): while it is pending the owner's replies under it go to the
+colleague; once taken on they are the owner talking to the companion, privately."""
 
 from . import jobs, requests, reviews, slack, tasks
 from .config import COMP, OWNER, log, mode
@@ -75,7 +76,8 @@ def _show(a):
             'approved': ':white_check_mark: Approved: working on it in their thread',
             'declined': ':no_entry_sign: Declined',
         }[a['status']]
-        blocks = slack.blocks(head, note + ' · replies here still reach them')
+        tail = ' · reply here to talk to me about it; they see nothing of it' if a['status'] == 'approved' else ''
+        blocks = slack.blocks(head, note + tail)
     slack.app.client.chat_update(channel=slack.dm_owner(), ts=a['card'], text=f'{a["name"]} asked', blocks=blocks)
 
 

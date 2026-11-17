@@ -108,7 +108,34 @@ def guest_rules(folder, guest, owner):
         f' changing anything, then write {outbox(folder)}/approval.json: {{"action": "<one line: exactly what will'
         ' change>", "details": "<where, who, current vs new>"} and end your turn with one line saying you are'
         f' waiting for {owner}\'s approval. The decision arrives as your next message: only after "APPROVED" make'
-        ' the change, check it worked and confirm in one line; after "REJECTED" change nothing.'
+        ' the change, check it worked and confirm in one line; after "REJECTED" change nothing. A newer'
+        ' approval.json replaces the one waiting; if you drop the plan (you learned more, or were told to hold),'
+        f' write approval.json as {{"withdraw": "<one line: why>"}} so {owner} cannot approve a stale one.'
+        + case_rules(folder, guest, owner)
+    )
+
+
+def case_rules(folder, guest, owner):
+    """The colleague's conversation is a case the owner follows and can talk to the companion about privately."""
+    return (
+        f'\n\n{owner} follows this conversation: everything {guest} says and everything you send them is copied to'
+        f' {owner}. Messages from {guest} here start with "{guest}:". A message without that prefix is {owner}'
+        f' talking to you privately (here or in this chat directly): answer {owner}, and that answer reaches only'
+        f' them, never {guest}. Send {guest} something during such a turn only when {owner} tells you to: write'
+        f' {outbox(folder)}/send.json: {{"text": "<the message, written to {guest}, readable on its own>", "files":'
+        f' ["<names in that folder>", ...]}}. It goes to {guest}\'s thread at once and {owner} sees exactly what'
+        f' went; then end with one short line to {owner} (e.g. "Sent."). Anything for someone else still goes'
+        ' through post.json for approval.'
+    )
+
+
+def owner_private(owner, guest, box, said, pending=''):
+    """The owner's message in a case thread, for the agent."""
+    hold = f' Your approval request ({pending}) still waits for their Approve or Reject: do not make that change.'
+    return (
+        f"{owner} (private, not {guest}): {said}\n\n---\n{owner} is talking to you privately about {guest}'s"
+        f' conversation. Your final message goes only to {owner}; {guest} sees none of this. Send {guest} something'
+        f' only if {owner} tells you to, with {box}/send.json as your instructions say.' + (hold if pending else '')
     )
 
 
