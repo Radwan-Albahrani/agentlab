@@ -69,10 +69,14 @@ install_missing_tools() {
     attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
       || log "Claude Code install FAILED"
   fi
-  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null \n    || ! command -v teamclaude >/dev/null; then
+  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null; then
     log "installing Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude"
     attempt "npm install" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
       || log "npm install failed (see ~/logs/npm-update.log)"
+  elif ! command -v teamclaude >/dev/null; then # added after the others: install it alone
+    log "installing TeamClaude"
+    attempt "TeamClaude install" 600 bash -c 'npm install -g @karpeleslab/teamclaude@latest >>"${HOME}/logs/npm-update.log" 2>&1' \
+      || log "TeamClaude install failed (see ~/logs/npm-update.log)"
   fi
   command -v t3 >/dev/null || install_t3
   command -v herdr >/dev/null || install_herdr

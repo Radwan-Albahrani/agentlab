@@ -106,3 +106,30 @@ def test_the_entrypoint_waits_for_the_network_before_installing():
     with open(os.path.join(IMAGE, 'entrypoint.sh')) as f:
         text = f.read()
     assert text.index('wait_for_final_network') < text.index('install_missing_tools\n')
+
+
+INSTALLED = ('claude', 'codex', 'mcp-remote', 'eas', 't3', 'herdr')
+
+
+def npm_calls(tmp_path, have):
+    """install_missing_tools with exactly `have` on PATH -> what it asked npm to do."""
+    bin_ = tmp_path / 'bin'
+    bin_.mkdir()
+    for name in have:
+        (bin_ / name).write_text('#!/bin/sh\n')
+        (bin_ / name).chmod(0o755)
+    (bin_ / 'npm').write_text(f'#!/bin/sh\necho "$*" >> {tmp_path}/npm-calls\n')
+    (bin_ / 'npm').chmod(0o755)
+    (tmp_path / 'logs').mkdir()
+    env = {'PATH': f'{bin_}:/usr/bin:/bin'}
+    run(tmp_path, 'mkdir -p /tmp/no-brew; install_missing_tools', env)
+    calls = tmp_path / 'npm-calls'
+    return calls.read_text().strip() if calls.exists() else ''
+
+
+def test_a_start_with_every_tool_installs_nothing(tmp_path):
+    assert npm_calls(tmp_path, (*INSTALLED, 'teamclaude')) == ''
+
+
+def test_a_tool_added_later_is_installed_alone(tmp_path):
+    assert npm_calls(tmp_path, INSTALLED) == 'install -g @karpeleslab/teamclaude@latest'
