@@ -9,6 +9,7 @@ const SCREENS = [
   '/agents/admin/accounts',
   '/agents/sara/onboarding',
   '/agents/admin/scout',
+  '/agents/admin/scout#cases',
   '/agents/sara/helper',
   '/services',
   '/config',
@@ -111,6 +112,20 @@ test('tell the companion: pick a channel by typing, write, send (intercepted)', 
   await toast.hover(); // hovering holds it open
   await toast.getByRole('button', { name: 'Dismiss' }).click();
   await expect(toast).toHaveCount(0);
+});
+
+test('cases: a colleague conversation with the private exchange and what went on your word', async ({ page }) => {
+  await guard(page);
+  await page.goto('/agents/admin/scout#cases');
+  await settled(page);
+  const cases = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Cases' }) });
+  await expect(cases.getByText('Can you summarise the incident thread for the postmortem?')).toBeVisible();
+  await cases.locator('[aria-expanded="false"]').first().click();
+  await expect(cases.getByRole('article', { name: 'Sara to Scout' })).toBeVisible();
+  await expect(cases.getByRole('article', { name: 'You to Scout' })).toContainText('private');
+  await expect(cases.getByRole('article', { name: 'Scout to you' })).toContainText('09:31');
+  await expect(cases.getByText('on your word')).toBeVisible();
+  await expect(cases.getByText(/Asked you to approve: post the summary/)).toBeVisible();
 });
 
 test('companion polls: results with voters, and the open ones can be changed (intercepted)', async ({ page }) => {

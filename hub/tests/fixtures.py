@@ -204,6 +204,29 @@ create table pulls (id text primary key, repo text, number integer, updated text
         (NOW - 2500, 'sent', 'Review of example/app#12: 2 findings · QA verified', 't4', 'example/app#12', '', 1),
         (NOW - 2400, 'sent', 'Review result for app#12', None, 'Omar', 'Slack refused the DM: not_in_channel', 0),
         (NOW - 120, 'task', 'New task from Sara', 't2', '', '', 1),
+        # t2 is a case: Sara's conversation, the owner's private exchange about it, a message sent on their word
+        (
+            NOW - 290,
+            'received',
+            'Sara wrote',
+            't2',
+            None,
+            'Can you summarise the incident thread for the postmortem?',
+            1,
+        ),
+        (
+            NOW - 240,
+            'sent',
+            'Reply to Sara',
+            't2',
+            'Sara',
+            'Here is the summary:\n- 09:12 alerts fired\n- 09:40 fixed',
+            1,
+        ),
+        (NOW - 200, 'private', 'You asked Leafy', 't2', None, 'Did you check the on-call notes too?', 1),
+        (NOW - 180, 'private', 'Leafy answered you', 't2', None, 'Not yet: they add one more step at 09:31.', 1),
+        (NOW - 150, 'sent', 'Message to Sara (on your word)', 't2', 'Sara', 'One more step at 09:31, from on-call.', 1),
+        (NOW - 100, 'approval', 'Asked you to approve: post the summary in #incidents', 't2', None, 'for Sara', 1),
     ]
     con.executemany('insert into events (at, kind, title, task, "to", detail, ok) values (?,?,?,?,?,?,?)', events)
     poll = {

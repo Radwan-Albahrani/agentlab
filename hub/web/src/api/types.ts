@@ -259,6 +259,18 @@ export interface Task {
   slack: string;
   t3: string;
   poll: string | null;
+  /** A colleague's case: what they wrote, what went to them, the owner's private exchange, approvals (oldest first). */
+  timeline?: CaseEntry[];
+}
+
+export interface CaseEntry {
+  at: number;
+  /** received: from the colleague; sent: to them; private: between the owner and the companion; else approvals */
+  kind: 'received' | 'sent' | 'private' | 'approval' | 'approved' | 'rejected' | 'withdrawn';
+  title: string;
+  to?: string | null;
+  detail?: string;
+  ok?: boolean;
 }
 
 export interface Poll {

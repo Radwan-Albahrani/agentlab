@@ -19,6 +19,7 @@ import { Crumb, Section, Stat } from '../../ui/page';
 import { CompanionAvatar, Pill } from '../../ui/status';
 import { type TabItem, Tabs } from '../../ui/Tabs';
 import { AskBox } from './AskBox';
+import { Cases, casesOf } from './Cases';
 import { CompanionSettings } from './CompanionSettings';
 import { Delivered } from './Delivered';
 import { Blink, Notice } from './parts';
@@ -179,6 +180,15 @@ function CompanionView({ d }: { d: Data }) {
       icon: 'pr',
       count: d.pulls.items.length,
       content: <PullRequests name={d.name} pulls={d.pulls} />,
+    });
+  const cases = casesOf(d.tasks);
+  if (cases.length)
+    tabs.push({
+      value: 'cases',
+      label: 'Cases',
+      icon: 'chat',
+      count: cases.filter((t) => t.status === 'working' || t.status === 'waiting').length,
+      content: <Cases tasks={d.tasks} me={d.display} />,
     });
   tabs.push({
     value: 'tasks',

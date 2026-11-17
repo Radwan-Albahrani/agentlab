@@ -1,11 +1,11 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import type { Event } from '../../api/types';
-import { SENT_FILTERS, dayLabel, delivery, sentTo, type SentTo } from '../../lib/companion';
+import { SENT_FILTERS, dayLabel, delivery, sentTo, slackPlain, type SentTo } from '../../lib/companion';
 import { usePages } from '../../lib/usePages';
 import { colors, font, media, space, text } from '../../theme/tokens.stylex';
 import { Card } from '../../ui/Card';
-import { Segments } from '../../ui/controls';
+import { Disclosure, Segments } from '../../ui/controls';
 import { Icon } from '../../ui/Icon';
 import { Inline } from '../../ui/layout';
 import { Empty, Section } from '../../ui/page';
@@ -83,9 +83,41 @@ const styles = stylex.create({
     whiteSpace: 'nowrap',
   },
   bad: { color: colors.bad },
+  // the whole message, under its row
+  full: {
+    paddingBottom: space.md,
+    paddingInline: { default: space.xxl, [media.phone]: space.lg },
+    borderBottomWidth: 1,
+    borderBottomStyle: 'solid',
+    borderBottomColor: colors.line,
+  },
+  fullText: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: colors.fg, fontSize: text.md, lineHeight: 1.5 },
 });
 
+/** A message longer than its one-line note: the full text, for a Disclosure under the row. */
+function fullText(e: Event, note: string) {
+  const all = slackPlain(e.detail ?? '').trim();
+  return all && all !== note.trim() ? all : '';
+}
+
 function Item({ e }: { e: Event }) {
+  const d = delivery(e);
+  const full = fullText(e, d.note);
+  return full ? (
+    <div>
+      <Row e={e} />
+      <div {...stylex.props(styles.full)}>
+        <Disclosure label="Full message">
+          <div {...stylex.props(styles.fullText)}>{full}</div>
+        </Disclosure>
+      </div>
+    </div>
+  ) : (
+    <Row e={e} />
+  );
+}
+
+function Row({ e }: { e: Event }) {
   const d = delivery(e);
   const failed = e.ok === false;
   return (

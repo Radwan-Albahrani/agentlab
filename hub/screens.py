@@ -262,6 +262,9 @@ def accounts(host, prof, page):
     return page
 
 
+CASE_KINDS = ('received', 'sent', 'private', 'approval', 'approved', 'rejected', 'withdrawn')
+
+
 def companion(name):
     c = store.companions.companion(name)
     settings = store.companions.settings(name)
@@ -276,7 +279,12 @@ def companion(name):
         for t in c['tasks']
     ]
     poll_of = {p['task']: p['id'] for p in c['polls']}
+    convo = {}  # a colleague's case: what they wrote, what went to them, the owner's private exchange, approvals
+    for e in reversed(c['events']):
+        if e.get('task') and e['kind'] in CASE_KINDS:
+            convo.setdefault(e['task'], []).append({k: e.get(k) for k in ('at', 'kind', 'title', 'to', 'detail', 'ok')})
     for t in tasks:
+        t['timeline'] = convo.get(t['id'], [])
         t.pop('started', None), t.pop('ended', None), t.pop('resumes_at', None)
         # the audit (from a companion new enough to record it): who started it, how, who approved it
         t['startedBy'], t['via'], t['approvedBy'] = (t.pop(k, None) or '' for k in ('started_by', 'via', 'approved_by'))
