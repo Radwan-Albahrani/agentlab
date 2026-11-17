@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { AccountPool, AccountsPage, PoolAccount, PoolWindow } from '../../api/types';
-import { duration } from '../../lib/format';
+import { span } from '../../lib/format';
 import { useNow } from '../../lib/useNow';
 import { colors, font, media, space, text } from '../../theme/tokens.stylex';
 import { Button } from '../../ui/Button';
@@ -76,7 +76,7 @@ function Window({ w }: { w: PoolWindow }) {
         <span {...stylex.props(styles.windowLabel)}>{w.label}</span>
         <span {...stylex.props(styles.windowNote)}>
           {`${Math.round(w.used)}% used`}
-          {left > 0 && ` · resets in ${duration(left)}`}
+          {left > 0 && ` · resets in ${span(left)}`}
         </span>
       </div>
       <Meter pct={w.used} label={`${w.label} used`} />

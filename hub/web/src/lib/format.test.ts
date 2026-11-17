@@ -1,4 +1,4 @@
-import { ago, containerLabel, duration, gb, toneFor, versionLabel } from './format';
+import { ago, containerLabel, duration, gb, span, toneFor, versionLabel } from './format';
 
 describe('format', () => {
   const now = 1_800_000_000;
@@ -18,6 +18,17 @@ describe('format', () => {
     expect(duration(3 * 3600 + 5 * 60)).toBe('3 h 05 m');
     expect(gb(2 ** 30 * 1.5)).toBe('1.5 GB');
     expect(gb(null)).toBe('0.0 GB');
+  });
+
+  it('says a longer stretch in weeks, days and hours', () => {
+    expect(span(68 * 3600 + 9 * 60)).toBe('2 d 20 h');
+    expect(span(3 * 3600 + 49 * 60)).toBe('3 h 49 m');
+    expect(span(9 * 86_400 + 5 * 3600)).toBe('1 w 2 d');
+    expect(span(14 * 86_400)).toBe('2 w');
+    expect(span(2 * 86_400)).toBe('2 d');
+    expect(span(5 * 3600)).toBe('5 h');
+    expect(span(720)).toBe('12 min');
+    expect(span(20)).toBe('1 min');
   });
 
   it('picks a tone by fill level', () => {

@@ -25,6 +25,21 @@ export function duration(sec: number): string {
   return `${Math.floor(s / 3600)} h ${pad(Math.floor((s % 3600) / 60))} m`;
 }
 
+/** A longer stretch in its two largest units: 1 w 2 d, 2 d 20 h, 3 h 49 m, 12 min. */
+export function span(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const [w, d, h, m] = [
+    Math.floor(s / 604_800),
+    Math.floor((s % 604_800) / 86_400),
+    Math.floor((s % 86_400) / 3600),
+    Math.floor((s % 3600) / 60),
+  ];
+  if (w) return d ? `${w} w ${d} d` : `${w} w`;
+  if (d) return h ? `${d} d ${h} h` : `${d} d`;
+  if (h) return m ? `${h} h ${m} m` : `${h} h`;
+  return `${Math.max(1, m)} min`;
+}
+
 /** A stopwatch: 4:07, or 1:04:07 past an hour. */
 export function elapsed(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
