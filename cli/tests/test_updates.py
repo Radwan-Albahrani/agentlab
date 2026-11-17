@@ -46,10 +46,11 @@ def runs_db(agent, rows):
     db = os.path.join(folder, 'statev2.sqlite')
     with sqlite3.connect(db) as c:
         c.execute(
-            'create table if not exists orchestration_v2_projection_runs (run_id text, thread_id text, status text)'
+            'create table if not exists orchestration_v2_projection_runs '
+            '(run_id text, thread_id text, status text, completed_at text)'
         )
         c.execute('delete from orchestration_v2_projection_runs')
-        c.executemany('insert into orchestration_v2_projection_runs values (?, ?, ?)', rows)
+        c.executemany('insert into orchestration_v2_projection_runs (run_id, thread_id, status) values (?, ?, ?)', rows)
     return db
 
 

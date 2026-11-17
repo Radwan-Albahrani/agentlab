@@ -131,7 +131,7 @@ SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
 
 
 def agent_busy(agent):
-    """Whether a T3 turn is in progress in this agent; an unreadable database counts as busy."""
+    """Whether a T3 turn is in progress (no end time and no finished status); an unreadable database counts as busy."""
     import sqlite3  # noqa: PLC0415 - only apply needs it
 
     db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
@@ -140,7 +140,7 @@ def agent_busy(agent):
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
             marks = ','.join('?' * len(SETTLED))
-            q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks})'
+            q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks}) and completed_at is null'
             return c.execute(q, SETTLED).fetchone()[0] > 0
     except sqlite3.Error:
         return True

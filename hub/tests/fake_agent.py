@@ -91,6 +91,9 @@ def summary(agent):
         'onboarded': agent in ONBOARDED,
         'resources': {'usedMB': 3100, 'limitMB': 12288, 'running': ['bun test'], 'waiting': [], 'paused': 0},
         'browserUp': browser,
+        't3Update': {'installed': '0.1.10', 'running': '0.1.9', 'since': time.time() - 7 * 3600}
+        if agent == 'lab'
+        else None,
     }
 
 

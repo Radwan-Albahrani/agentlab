@@ -546,6 +546,13 @@ class Screens(unittest.TestCase):
             with self.subTest(name), self.assertRaises(ValueError):
                 store.secrets.value(name)
 
+    def test_a_t3_update_stuck_for_hours_is_flagged(self):
+        needs = {n['title']: n for n in screens.overview()['needs']}
+        stuck = needs['lab: T3 0.1.10 is waiting to start']
+        self.assertEqual(stuck['tone'], 'warn')
+        self.assertIn('still runs 0.1.9 after 7 h', stuck['detail'])
+        self.assertFalse([t for t in needs if t.startswith(('admin:', 'sara:'))])
+
     def test_companion_not_set_up(self):
         c = screens.companion('helper')
         self.assertEqual(c['state'], 'unconfigured')

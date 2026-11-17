@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import subprocess
@@ -11,11 +12,18 @@ updater = load_script('agent-updater')
 PS_015 = 'bash -lc exec t3 serve\n/home/agent/.t3/runtime/versions/0.1.5/t3 serve --host 0.0.0.0 --port 3773\n'
 
 
+@pytest.fixture(autouse=True)
+def waiting_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(updater, 'WAITING', str(tmp_path / 'cfg' / 't3-update.json'))
+    return tmp_path / 'cfg' / 't3-update.json'
+
+
 def runs_db(path, *statuses):
     with sqlite3.connect(path) as c:
-        c.execute('create table orchestration_v2_projection_runs (run_id text, status text)')
+        c.execute('create table orchestration_v2_projection_runs (run_id text, status text, completed_at text)')
         c.executemany(
-            'insert into orchestration_v2_projection_runs values (?, ?)', [(str(i), s) for i, s in enumerate(statuses)]
+            'insert into orchestration_v2_projection_runs (run_id, status) values (?, ?)',
+            [(str(i), s) for i, s in enumerate(statuses)],
         )
     return str(path)
 
@@ -55,6 +63,27 @@ def test_never_restarts_mid_turn(tmp_path):
     assert run.restarted == []
 
 
+def test_a_run_with_an_end_time_is_over_whatever_its_status(tmp_path):
+    db = runs_db(tmp_path / 's.db', 'completed', 'some_new_status')
+    assert updater.align_t3(Runner(), PS_015, db) == 'busy'
+    with sqlite3.connect(db) as c:
+        c.execute("update orchestration_v2_projection_runs set completed_at = '2026-11-04T11:48:15.816Z'")
+    assert updater.align_t3(Runner(), PS_015, db) == 'restarted'
+
+
+def test_a_long_wait_is_written_down_for_the_hub_and_cleared_on_restart(tmp_path, waiting_file):
+    db = runs_db(tmp_path / 's.db', 'running')
+    updater.align_t3(Runner(), PS_015, db)
+    first = json.loads(waiting_file.read_text())
+    assert (first['installed'], first['running']) == ('0.1.6', '0.1.5')
+    updater.align_t3(Runner(), PS_015, db)
+    assert json.loads(waiting_file.read_text())['since'] == first['since']  # waiting since the first check
+    with sqlite3.connect(db) as c:
+        c.execute("update orchestration_v2_projection_runs set status = 'completed'")
+    assert updater.align_t3(Runner(), PS_015, db) == 'restarted'
+    assert not waiting_file.exists()
+
+
 def test_an_unreadable_db_counts_as_busy(tmp_path):
     run = Runner()
     assert updater.align_t3(run, PS_015, str(tmp_path / 'missing.db')) == 'busy'
@@ -91,8 +120,8 @@ def test_version_parsing(text, want):
 
 def runs_with_threads(path, rows):
     with sqlite3.connect(path) as c:
-        c.execute('create table orchestration_v2_projection_runs (run_id text, thread_id text, status text)')
-        c.executemany('insert into orchestration_v2_projection_runs values (?, ?, ?)', rows)
+        c.execute('create table orchestration_v2_projection_runs (run_id text, thread_id text, status text, completed_at text)')
+        c.executemany('insert into orchestration_v2_projection_runs (run_id, thread_id, status) values (?, ?, ?)', rows)
     return str(path)
 
 

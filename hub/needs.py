@@ -10,6 +10,7 @@ import store
 from shapes import epoch, link, post
 
 DAY = 86400
+T3_WAIT_WARN_H = 6  # past the updater's own wait (wait_hours, 4 by default), after which it restarts T3 anyway
 TONE_ORDER = {'bad': 0, 'warn': 1, 'info': 2}
 WAITING_LABEL = {
     'approval': 'Approve a change',
@@ -138,12 +139,36 @@ def _accounts(summaries):
             yield _item(f'profile.{name}', 'info', 'github', f'{name} is not signed in to GitHub', why, open_accounts)
 
 
+def _t3_updates(summaries):
+    for name, s in summaries.items():
+        w = (s or {}).get('t3Update')
+        if not w or time.time() - w['since'] < T3_WAIT_WARN_H * 3600:
+            continue
+        hours = (time.time() - w['since']) / 3600
+        why = (
+            f'It still runs {w["running"]} after {hours:.0f} h, past the automatic restart, so the updater '
+            "may be down. Restarting the agent's container from Services also restarts T3."
+        )
+        title = f'{name}: T3 {w["installed"]} is waiting to start'
+        yield _item(
+            f'profile.{name}', 'warn', 'clock', title, why, [link('Services', '/services', 'arrow')], w['since']
+        )
+
+
 def _shown(about):
     return display.visible(about) and scope.current().sees(about)
 
 
 def needs(summaries, comps):
-    items = [*_companions(comps), *_storage(), *_watcher(), *_secrets(), *_containers(), *_accounts(summaries)]
+    items = [
+        *_companions(comps),
+        *_storage(),
+        *_watcher(),
+        *_secrets(),
+        *_containers(),
+        *_accounts(summaries),
+        *_t3_updates(summaries),
+    ]
     return sorted((i for about, i in items if _shown(about)), key=lambda i: TONE_ORDER[i['tone']])
 
 

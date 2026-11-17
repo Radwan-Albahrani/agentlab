@@ -11,6 +11,7 @@ from util import AGENT_ID, AGENT_OWNER, active, browser_up
 
 CGROUP = '/sys/fs/cgroup'
 THROTTLE_STATUS = '/home/agent/.local/state/agent-throttle/status.json'  # written by the host throttle broker
+T3_UPDATE = '/home/agent/.config/agent/t3-update.json'  # written by agent-updater while a new T3 waits
 MB = 2**20
 
 
@@ -45,6 +46,16 @@ def resources():
     return {'usedMB': used, 'limitMB': limit, 'running': running, 'waiting': waiting, 'paused': 0}
 
 
+def t3_update():
+    """{installed, running, since} while a newer T3 waits for a restart, else None."""
+    try:
+        with open(T3_UPDATE) as f:
+            w = json.load(f)
+        return {'installed': str(w['installed']), 'running': str(w['running']), 'since': float(w['since'])}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def summary():
     accounts = {}
     for flow in signin.FLOWS:
@@ -63,4 +74,5 @@ def summary():
         'onboarded': onboarding.state()['done'],
         'resources': resources(),
         'browserUp': browser_up(),
+        't3Update': t3_update(),
     }
