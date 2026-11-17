@@ -230,7 +230,9 @@ def save_secret(name, file, value):
 
 
 def _drop(name, ask):
-    write_json(os.path.join(_folder(name), 'asks', f'{time.time_ns()}-{uuid.uuid4().hex[:6]}.json'), ask)
+    folder = os.path.join(_folder(name), 'asks')
+    os.makedirs(folder, exist_ok=True)  # a companion that never got an ask has no folder yet
+    write_json(os.path.join(folder, f'{time.time_ns()}-{uuid.uuid4().hex[:6]}.json'), ask)
 
 
 def pulls_refresh(name):
