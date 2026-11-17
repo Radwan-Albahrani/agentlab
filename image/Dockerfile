@@ -60,7 +60,7 @@ RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
 
 COPY --chmod=755 entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY --chmod=755 agent-config agent-terminal agent-janitor browser-idle-reaper browser-mcp-lazy chrome-on-demand \
-     docker-on-demand agent-dockerd android-emulator adb companion agent-updater /usr/local/bin/
+     docker-on-demand agent-dockerd android-emulator adb companion agent-updater agent-teamclaude /usr/local/bin/
 COPY --chmod=755 agent-dockerd-root /usr/local/sbin/
 # T3 chats delegate to T3 child threads (tracked and shown in T3), not built-in subagents
 COPY --chmod=755 use-t3-threads /usr/local/bin/

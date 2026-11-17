@@ -120,7 +120,9 @@ def test_version_parsing(text, want):
 
 def runs_with_threads(path, rows):
     with sqlite3.connect(path) as c:
-        c.execute('create table orchestration_v2_projection_runs (run_id text, thread_id text, status text, completed_at text)')
+        c.execute(
+            'create table orchestration_v2_projection_runs (run_id text, thread_id text, status text, completed_at text)'
+        )
         c.executemany('insert into orchestration_v2_projection_runs (run_id, thread_id, status) values (?, ?, ?)', rows)
     return str(path)
 

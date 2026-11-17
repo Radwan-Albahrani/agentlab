@@ -1,0 +1,6 @@
+#!/bin/bash
+# TeamClaude for the account pool (accounts/pool.py, the `pool` program). Its own calls must reach Anthropic and OpenAI
+# directly: through a proxy variable pointing back at the pool, every profile lookup would carry the active pool
+# account's token, all accounts would read as one person and TeamClaude would merge them as duplicates.
+exec env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN teamclaude "$@"

@@ -33,13 +33,13 @@ FLOWS = {
     'pool-claude': {
         'name': 'Claude',
         'provider': 'claude',
-        'login': 'teamclaude login --token',
+        'login': 'agent-teamclaude login --token',
         'hint': 'Sign in with the Claude account to add. The page then shows a code: paste it below.',
     },
     'pool-codex': {
         'name': 'Codex',
         'provider': 'codex',
-        'login': 'teamclaude login --codex --no-browser',
+        'login': 'agent-teamclaude login --codex --no-browser',
         'hint': 'Sign in with the ChatGPT account to add.',
     },
 }
@@ -217,10 +217,7 @@ def _row(a, current):
         _window('Fable week', q.get('unified7dFable'), q.get('unified7dFableReset')),
     ]
     err = a.get('errorReason') or {}
-    if a.get('status') == 'error':
-        problem = err.get('detail') or 'Needs a new sign-in.'
-    else:
-        problem = ''
+    problem = (err.get('detail') or 'Needs a new sign-in.') if a.get('status') == 'error' else ''
     return {
         'name': a.get('name', ''),
         'provider': provider(a),
@@ -265,7 +262,12 @@ def state():
     else:
         rows = [{**a, 'current': False, 'problem': '', 'resting': '', 'windows': []} for a in accounts()]
     claude_on, codex_on = wanted(rows)
-    return {'running': bool(status), 'routes': {'claude': claude_on, 'codex': codex_on}, 'accounts': rows, 'flows': flows}
+    return {
+        'running': bool(status),
+        'routes': {'claude': claude_on, 'codex': codex_on},
+        'accounts': rows,
+        'flows': flows,
+    }
 
 
 def act(action, target, text):
@@ -290,10 +292,10 @@ def act(action, target, text):
     if target not in names:
         raise ValueError('Unknown account.')
     commands = {
-        'pool-remove': f'teamclaude remove {sh_quote(target)}',
-        'pool-disable': f'teamclaude disable {sh_quote(target)}',
-        'pool-enable': f'teamclaude enable {sh_quote(target)}',
-        'pool-first': f'teamclaude priority {sh_quote(target)} --first',
+        'pool-remove': f'agent-teamclaude remove {sh_quote(target)}',
+        'pool-disable': f'agent-teamclaude disable {sh_quote(target)}',
+        'pool-enable': f'agent-teamclaude enable {sh_quote(target)}',
+        'pool-first': f'agent-teamclaude priority {sh_quote(target)} --first',
     }
     if action not in commands:
         raise ValueError('Unknown action.')

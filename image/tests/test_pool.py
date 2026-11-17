@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tomllib
 
 import pool
@@ -82,7 +83,13 @@ def test_rows_carry_quota_and_problems():
                 'status': 'active',
                 'quota': {'unified5h': 0.42, 'unified5hReset': 1_800_000_000_000, 'unified7d': 0.1},
             },
-            {'name': 'old@x', 'type': 'oauth', 'provider': 'anthropic', 'status': 'error', 'errorReason': {'detail': 'gone'}},
+            {
+                'name': 'old@x',
+                'type': 'oauth',
+                'provider': 'anthropic',
+                'status': 'error',
+                'errorReason': {'detail': 'gone'},
+            },
         ],
     }
     rows = [pool._row(a, status['currentAccounts']) for a in status['accounts']]
@@ -104,3 +111,38 @@ def test_sync_leaves_an_unreadable_claude_settings_file_alone(monkeypatch, tmp_p
     assert not os.path.exists(tmp_path / 'codex_config')  # no Codex account: nothing to route
     assert json.loads((tmp_path / 'config').read_text())['proxy']['port'] == 3456
     assert not os.path.exists(tmp_path / 'no-t3')  # T3 not installed (no userdata folder)
+
+
+def test_teamclaude_never_sees_a_proxy_or_base_url(tmp_path):
+    """Through a proxy pointing back at the pool, every account would read as the active one and be merged."""
+    fake = tmp_path / 'teamclaude'
+    fake.write_text('#!/bin/sh\nenv\n')
+    fake.chmod(0o755)
+    leaked = {
+        'HTTPS_PROXY': 'http://127.0.0.1:3456',
+        'https_proxy': 'http://127.0.0.1:3456',
+        'ALL_PROXY': 'socks5://127.0.0.1:3456',
+        'ANTHROPIC_BASE_URL': pool.URL,
+        'ANTHROPIC_API_KEY': 'x',
+    }
+    wrapper = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'agent-teamclaude')
+    out = subprocess.run(
+        ['bash', wrapper, 'status'],
+        env={'PATH': f'{tmp_path}:/usr/bin:/bin', 'KEEP': 'me', **leaked},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    seen = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
+    assert seen['KEEP'] == 'me'
+    assert not set(leaked) & set(seen)
+
+
+def test_every_teamclaude_call_goes_through_the_wrapper():
+    commands = [f['login'] for f in pool.FLOWS.values()]
+    assert all(c.startswith('agent-teamclaude ') for c in commands)
+    with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'supervisord.conf')) as f:
+        program = f.read().split('[program:pool]')[1].split('[program:')[0]
+    assert 'exec agent-teamclaude server' in program
+    with open(pool.__file__) as f:
+        assert "f'teamclaude " not in f.read()

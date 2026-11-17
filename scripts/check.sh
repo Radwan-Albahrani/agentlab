@@ -42,7 +42,7 @@ part_image() {  # gcc for the emulator's non-dumpable preload
 part_shell() {
   docker run --rm -v "$REPO:/repo:ro" -w /repo "$SHELLCHECK" sh -c \
     'shellcheck -x -P SCRIPTDIR host/install/*.sh scripts/check.sh hub/test.sh image/build.sh image/entrypoint.sh image/tools.sh image/adb \
-       image/agent-terminal image/agent-dockerd image/agent-dockerd-root image/android-emulator image/browser-idle-reaper image/chrome-on-demand image/throttle/shim \
+       image/agent-terminal image/agent-dockerd image/agent-dockerd-root image/android-emulator image/browser-idle-reaper image/chrome-on-demand image/agent-teamclaude image/throttle/shim \
      && echo "shellcheck ok"' || failed+=(shell)
 }
 part_hub() { "$REPO/hub/test.sh" check || failed+=(hub); }
