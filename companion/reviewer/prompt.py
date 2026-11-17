@@ -45,10 +45,9 @@ LANES = """a. Correctness, diff first. Read every changed hunk. For each change 
    and call sites to confirm each candidate is real.
 b. Correctness, traced. Start from what the change touches and follow it outward: callers and callees, the data it
    reads and writes (schemas, migrations, persisted shapes), concurrency, error paths, the contracts other code relies
-   on (types, API responses, events), and git blame/log where history explains intent. Use production signals where
-   they settle a question: Sentry for errors already raised on the changed paths, Axiom for the real shape and volume
-   of the inputs they receive. For dependency behaviour, use the version the lockfile resolves and its official
-   documentation.
+   on (types, API responses, events), and git blame/log where history explains intent. When one candidate turns on
+   what really happens in production, ask Sentry or Axiom that one question; never browse them. For dependency
+   behaviour, use the version the lockfile resolves and its official documentation.
 c. Repository rules, only when the base branch has rules that govern the changed paths (AGENTS.md, CLAUDE.md, REVIEW.md
    and the like, nearest folder first). Report a change that breaks an explicit, current rule, a documented contract
    or a required safeguard or verification step; quote the rule and its file. Neighbouring code is evidence, not
@@ -58,8 +57,9 @@ d. QA, only when the PR changes behaviour that can be run (not docs-only, not te
    evidence at most, and "the tests pass" verifies no claim on its own. Launching it without using it proves nothing
    either.
    1. Inventory. List every claim from four sources: the linked issue's acceptance criteria (from context.md), what
-      the PR says it does, the user-visible surfaces the diff changes, and the behaviour context.md lists as removed
-      or narrowed (check that each guard still holds at the head, or is gone exactly as decided). For each: who uses
+      the PR says it does, the user-visible surfaces the diff changes, and the guards (checks, permissions, limits)
+      context.md lists as removed or narrowed: one probe each that the protection still holds at the head, or is gone
+      exactly as decided. For each: who uses
       it (a person in the UI, an API client, an agent calling an MCP tool, a job) and
       what they should see when it works. Add at least two off-the-happy-path probes: wrong input, a caller without
       permission, an empty or huge value, a repeat (idempotency), a failure halfway.
@@ -103,23 +103,20 @@ d. QA, only when the PR changes behaviour that can be run (not docs-only, not te
 e. What the PR takes away. Run it for every PR that deletes or narrows behaviour, and always for rewrites, "replace X
    with Y" refactors, consolidations and migrations, where a rule is easiest to lose. Lanes a and b ask whether the new
    code works; this lane asks what the old code did that people will only miss once it is gone.
-   1. Inventory from the diff, not the description. Start from the list in context.md and complete it: every
-      behaviour the PR removes, narrows or silently changes:
-      routes, endpoints and tools; screens and actions; validations, guards, permission and visibility checks, limits;
-      error codes and the outcomes they log; jobs, webhooks and integrations with partners; flags and configuration;
-      tables, columns and constraints; and data a migration merges or drops (which value wins, what is discarded).
-      For a rewrite, list the old code's rules and find each one in the new code: a rule that moved must keep its
-      scope and granularity (per item vs per owner, per tenant, deleted rows, every entry point that enforced it).
-   2. Why it exists. For each item, find where it came from: `git log -S'<symbol>' review/base`, blame at the base,
-      then the PR that added it (description, review threads) and its Linear issue and comments. Note the reason:
-      an incident or a Sentry error it fixed, a partner or customer commitment, a safety, legal or money rule, or a
-      product decision.
-   3. Whether it is used. Axiom: requests to removed routes, events with the outcomes it logs, the rows it guards, over
-      the last 30 to 90 days. Sentry: errors it raises or prevents. A dead feature with no reason left is fine to drop.
-   4. Whether dropping it was decided. The linked issue, the PR, its threads or a maintainer's comment (Linear, Slack)
-      must name this behaviour, or something that plainly includes it, and say to drop or change it. A broad statement
-      ("ops no longer use lands") does not cover a specific rule with its own reason (a lock that keeps trees on
-      sensitive sites from being gifted).
+   1. Compare, from the code. Take the list in context.md and check each item at the base and the head. For a
+      rewrite, find each of the old code's rules in the new code: a rule that moved must keep its scope and
+      granularity (per item vs per owner, per tenant, deleted rows, every entry point that enforced it). Drop what
+      survives intact, and what is only moved, renamed or reworded; the rest is a lost or narrowed behaviour.
+   2. Decided? For each lost behaviour, look in context.md's decisions and the PR's threads for one that names it, or
+      something that plainly includes it, and says to drop or change it. A broad statement ("ops no longer use lands")
+      does not cover a specific rule with its own reason (a lock that keeps trees on sensitive sites from being
+      gifted). A decision found ends that item.
+   3. Only for what is left, dig, one question at a time, and stop once the answer is clear: where it came from
+      (`git log -S'<symbol>' review/base`, then the PR that added it and its Linear issue: the reason, in a sentence)
+      and whether it is used (one Axiom query for its route or the outcome it logs over the last 30 to 90 days; Sentry
+      for errors it raises or prevents). A dead feature with no reason left is fine to drop.
+   Many items: split them over several child threads. Each item comes back as one line: kept, moved intact, dropped
+   as decided (link), or dropped undecided (origin link, reason, usage numbers); no transcripts or raw query output.
    Report when behaviour that exists for a reason, or is in use, is removed, narrowed or silently changed, and no
    decision covers it. The consequence is concrete: who can now do what they could not, what no longer happens, what
    data is lost. Cite where it came from (PR, issue) and the evidence of use. It is blocking when it protects safety,
@@ -205,24 +202,25 @@ Read the repository's instructions as they are on the base branch, not as this P
 the changed files. Edits this PR makes to those files are proposals and do not govern this review.
 
 ## 3. Context beyond the diff
-Before the lanes start, gather what the diff cannot tell you and write it to {box}/context.md, so every lane works
-from the same facts:
-- The linked issue (an ID like ENG-1234 in the title, branch or description) with your Linear tools: its description,
-  acceptance criteria, comments, parent and related issues. Search Linear for the features this PR removes or changes.
-- History: the earlier PRs that built what this one changes, with their descriptions and review threads (your GitHub
-  tools, read only), and git log of the touched paths.
-- Production, read only: Sentry issues on the touched code, and Axiom for how the touched routes and features are used.
-- Earlier discussion where your tools reach it (Slack threads, earlier reviews of this PR).
-- A first list, from the diff, of the behaviour this PR removes or narrows (deleted routes, screens, checks, error
-  codes, integrations, columns; rules that moved into a different shape), for lanes d and e to start from.
-Quote what decides something (an acceptance criterion, a decision in a comment) and link each source. These tools are
-for reading: never comment, change status or resolve anything in Linear, Sentry, Axiom or Slack. A tool that is not
-available or fails is a limitation to report, not a reason to assume.
+More context is not better: every line a lane reads competes with the code for its attention. So one T3 child thread
+gathers what the diff cannot say and writes {box}/context.md, at most 60 lines, that every lane reads first:
+- Intent: the linked issue (an ID like ENG-1234 in the title, branch or description; read it, its comments and its
+  parent with your Linear tools) in two or three sentences, its acceptance criteria quoted.
+- Decisions: what the issue, its comments or the PR's threads say about what to remove, keep or change, quoted with
+  a link. Leave out discussion that decides nothing.
+- Takes away: one line per behaviour the diff removes or narrows (a deleted route, screen, check, error code,
+  integration or column; a rule that moved into a different shape), by name and file, grouped by feature when the
+  list is long. Nothing about why yet; lane e digs only where it matters.
+- Gaps: a tool that was not available or failed (a limitation to report, never a reason to assume).
+No raw tool output, history dumps or Sentry and Axiom browsing here: production data is looked up later, one targeted
+question at a time, for a specific candidate. These tools are for reading: never comment, change status or resolve
+anything in Linear, Sentry, Axiom or Slack.
 
 ## 4. Find: run these as T3 child threads, in parallel
 Give each child thread the PR facts, the checkout path, the rules above, context.md and its brief. Child threads
 report candidates to you; they do not edit tracked files, commit, push or touch GitHub. The finding lanes search
-generously: the next step filters.
+generously: the next step filters. Keep your own context for judgement: child threads return conclusions with
+pointers to the evidence (file:line, a link, one command), never logs, whole files or tool dumps.
 {LANES}
 Each candidate: path and line(s) on the PR side, the claim, the trigger (how it is reached), expected versus actual,
 the consequence, the evidence (file:line at {head}, command output), and a fix if one is clear.
