@@ -1,9 +1,11 @@
 """This agent's own account pool: a TeamClaude proxy on loopback that rotates Claude Code and Codex across the owner's
 accounts. Claude and Codex are pointed at it only while it holds an account for them; otherwise they go direct."""
 
+import base64
 import json
 import os
 import re
+import secrets
 import subprocess
 import threading
 import tomllib
@@ -15,6 +17,7 @@ CONFIG = os.path.join(HOME, '.config', 'teamclaude.json')
 CLAUDE_SETTINGS = os.path.join(HOME, '.claude', 'settings.json')
 CODEX_CONFIG = os.path.join(os.environ.get('CODEX_HOME') or os.path.join(HOME, '.codex'), 'config.toml')
 T3_SETTINGS = os.path.join(HOME, '.t3', 'userdata', 'settings.json')
+T3_SECRETS = os.path.join(HOME, '.t3', 'userdata', 'secrets')
 SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
 
 PORT = 3456
@@ -106,6 +109,8 @@ def seed_config(config):
     for key, value in SETTINGS.items():
         if proxy.get(key) != value:
             proxy[key], changed = value, True
+    if not proxy.get('apiKey'):  # T3's usage source needs a key; TeamClaude only makes one in a config it creates
+        proxy['apiKey'], changed = f'tc-{secrets.token_urlsafe(24)}', True
     for key, value in TOP.items():
         if key not in config:
             config[key], changed = value, True
@@ -151,12 +156,26 @@ def codex_config(text, on):
     return new
 
 
-def t3_settings(settings, on, key=''):
-    """T3's settings with the pool as a usage source (its quota bars) or without it -> new or None."""
+def t3_stored_key():
+    """The management key T3 keeps for our source: it moves it to its secret store and masks it in settings.json."""
+    name = base64.urlsafe_b64encode(T3_SOURCE.encode()).decode().rstrip('=')
+    try:
+        with open(os.path.join(T3_SECRETS, f'usage-limit-source-{name}.bin'), encoding='utf-8') as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return ''
+
+
+def t3_settings(settings, on, key='', stored=''):
+    """T3's settings with the pool as a usage source (its quota bars) or without it -> new or None.
+    `stored`: the key T3 already holds for it (then its masked copy in settings.json counts as this key)."""
     settings = dict(settings or {})
     sources = dict(settings.get('usageLimitSources') or {})
     source = {'kind': 'cliproxy', 'label': 'Account pool', 'url': URL, 'managementKey': key, 'enabled': True}
-    if on and sources.get(T3_SOURCE) != source:
+    current = dict(sources.get(T3_SOURCE) or {})
+    if current and stored and stored == key:
+        current['managementKey'] = key
+    if on and current != source:
         sources[T3_SOURCE] = source
     elif not on and T3_SOURCE in sources:
         del sources[T3_SOURCE]
@@ -189,7 +208,7 @@ def sync():
             pass  # Codex's config is broken already; agent-config reports that at start
         if os.path.isdir(os.path.dirname(T3_SETTINGS)) and _readable(T3_SETTINGS):
             key = (config.get('proxy') or {}).get('apiKey', '')
-            if (new := t3_settings(_load(T3_SETTINGS), bool(accts), key)) is not None:
+            if (new := t3_settings(_load(T3_SETTINGS), bool(accts), key, t3_stored_key())) is not None:
                 _write_json(T3_SETTINGS, new)
 
 

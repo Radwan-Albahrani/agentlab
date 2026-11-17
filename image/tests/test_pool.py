@@ -3,6 +3,7 @@ import os
 import subprocess
 import tomllib
 
+import page
 import pool
 
 CODEX = """cli_auth_credentials_store = "file"
@@ -150,8 +151,6 @@ def test_every_teamclaude_call_goes_through_the_wrapper():
 
 def test_the_sign_in_steps_reach_the_pool_sign_in(monkeypatch):
     """The hub's shared sign-in steps send plain send / stop / key with the pool flow's key."""
-    import page
-
     calls = []
     monkeypatch.setattr(pool, 'type_into', lambda flow, text: calls.append(('type', flow, text)))
     monkeypatch.setattr(pool, 'stop_session', lambda flow: calls.append(('stop', flow)))
@@ -165,3 +164,24 @@ def test_the_sign_in_steps_reach_the_pool_sign_in(monkeypatch):
         ('tmux', 'send-keys', '-t', 'login-pool-codex', 'Enter'),
         ('stop', 'pool-claude'),
     ]
+
+
+def test_a_config_without_a_key_gets_one_for_t3():
+    seeded, changed = pool.seed_config({'proxy': {}, 'accounts': []})
+    key = seeded['proxy']['apiKey']
+    assert changed and key.startswith('tc-') and len(key) > 20
+    assert pool.seed_config(seeded) == (seeded, False)  # kept once made
+
+
+def test_a_key_t3_moved_to_its_secret_store_is_not_written_again():
+    on = pool.t3_settings({}, True, 'tc-x')
+    on['usageLimitSources'][pool.T3_SOURCE]['managementKey'] = '••••••'  # what T3 leaves in settings.json
+    assert pool.t3_settings(on, True, 'tc-x', stored='tc-x') is None
+    rotated = pool.t3_settings(on, True, 'tc-new', stored='tc-x')
+    assert rotated['usageLimitSources'][pool.T3_SOURCE]['managementKey'] == 'tc-new'
+
+
+def test_the_t3_secret_file_is_named_after_the_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(pool, 'T3_SECRETS', str(tmp_path))
+    (tmp_path / 'usage-limit-source-YWdlbnRsYWItcG9vbA.bin').write_text('tc-x')
+    assert pool.t3_stored_key() == 'tc-x'
