@@ -1,5 +1,6 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
+import time
 from datetime import datetime
 
 from . import jobs, prompts, slack, t3, tasks
@@ -199,6 +200,57 @@ def decide(task, k, approved):
     COMP.event('approved' if approved else 'rejected', f'You {a["decided"]}: {a["action"]}'[:200], task=k)
     save()
     jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'])
+
+
+def approval_at(ch, ts):
+    """The task whose approval card is the message `ts` in `ch` (the owner's DM), if any."""
+    for task in state['tasks'].values():
+        a = task.get('approval') or {}
+        if a.get('ts') == ts and a.get('ch') == ch:
+            return task
+    return None
+
+
+def ask_about(task, text, files, ts):
+    """The owner's reply under an approval card: a private question about it, answered under the card only."""
+    a = task['approval']
+    owner, who = slack.name(OWNER), slack.name(task.get('requester') or task.get('guest') or OWNER)
+    if task.get('active'):
+        line = f":hourglass_flowing_sand: Still working on {who}'s request; ask again once it is done."
+        slack.post(a['ch'], a['ts'], 'Still working', md=line)
+        return
+    pending = '' if a.get('decided') else ' It still waits for their Approve or Reject: do not make the change.'
+    msg = (
+        f'{owner} asks you privately about the approval you asked for ({a["action"]}). Only {owner} sees your answer,'
+        f' not {who}, and it is posted to them word for word.{pending}\n\n{owner}: {slack.ask(text).strip()}'
+    )
+    paths = slack.download(files, f'{task["channel"]}-{task["thread_ts"].replace(".", "")}')
+    if paths:
+        msg += '\n\nFiles (saved for you):\n' + '\n'.join(f'- {p}' for p in paths)
+    res = t3.send(task['thread'], msg)
+    if not res.get('ok'):
+        slack.post(a['ch'], a['ts'], 'Could not ask', md=f":warning: I couldn't pass that on: {t3.error_text(res)}")
+        return
+    slack.react(a['ch'], ts, 'eyes')
+    with lock:
+        now = tasks.now_iso()
+        task.update(
+            answer_to={'ch': a['ch'], 'tts': a['ts']},
+            active=True,
+            burst_start=now,
+            step_from=now,
+            ended='',
+            trigger_ts=ts,
+            seen_ts=ts,
+            quiet_since=0,
+            options={},
+            question=False,
+            last_status='',
+            last_status_at=0,
+            status_ts=slack.note_only(a['ch'], a['ts'], tasks.THINKING),
+            line_start=time.time(),
+        )
+    save()
 
 
 def stop(task, k):

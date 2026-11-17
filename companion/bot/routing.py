@@ -1,6 +1,6 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
-from . import drafts, inbox, jobs, requests, reviews, slack, tasks
+from . import drafts, errands, inbox, jobs, requests, reviews, slack, tasks
 from .config import COMP, OWNER, has_access, log, mode, requests_channel
 from .state import key, save, state
 
@@ -93,6 +93,10 @@ def route(ev, mentioned):
     card = in_dm and thr and inbox.card_of(ch, thr)
     if card:
         jobs.run_later(inbox.relay, card, ev.get('text', ''), ts)
+        return
+    asked = in_dm and thr and key(ch, thr) not in state['tasks'] and errands.approval_at(ch, thr)
+    if asked:
+        jobs.run_later(errands.ask_about, asked, ev.get('text', ''), ev.get('files'), ts)
         return
     dkey, draft = drafts.for_thread(ch, tts)
     if draft and thr:

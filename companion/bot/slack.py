@@ -9,7 +9,7 @@ from datetime import datetime
 
 from slack_bolt import App
 
-from .config import AGENT_FILES, FILES, OWNER, RECENT, log, secret
+from .config import AGENT_FILES, DM_LINES, FILES, OWNER, RECENT, RECENT_DM, log, secret
 from .text import to_slack, without_mention
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
@@ -353,13 +353,15 @@ def transcript(msgs, folder=None):
 
 
 def thread_messages(channel, thread_ts, trigger_ts):
-    """The whole thread, or for a new message the ones just before it (older ones are other conversations)."""
+    """The whole thread, or for a new message the ones before it: in a channel the last minutes (older ones are other
+    conversations), in a DM the last days, since "I fixed them" there usually answers what was said hours ago."""
     try:
         if thread_ts != trigger_ts:
             return app.client.conversations_replies(channel=channel, ts=thread_ts, limit=200)['messages']
-        oldest = f'{float(trigger_ts) - RECENT:.6f}'
+        dm = channel.startswith('D')
+        oldest = f'{float(trigger_ts) - (RECENT_DM if dm else RECENT):.6f}'
         msgs = app.client.conversations_history(
-            channel=channel, latest=trigger_ts, oldest=oldest, inclusive=True, limit=12
+            channel=channel, latest=trigger_ts, oldest=oldest, inclusive=True, limit=DM_LINES if dm else 12
         )['messages']
         return list(reversed(msgs))
     except Exception as e:

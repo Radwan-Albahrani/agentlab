@@ -40,7 +40,10 @@ RESUME_GRACE = 5 * 60  # T3 resumes runs a restart interrupted; this long it get
 AGENT_DOWN_LIMIT = 30 * 60  # while the agent is unreachable nothing is concluded, for at most this long
 STATUS_EVERY = 8  # minimum between live edits of a "thinking" line
 REQ_SETTLE = 20  # wait for a burst of messages to the owner to finish
-RECENT = 15 * 60  # a new (non-thread) message's context: the messages this long before it
+RECENT = 15 * 60  # a new (non-thread) message's context in a channel: the messages this long before it
+RECENT_DM = 3 * 86400  # ...and in a DM, one conversation with one person (up to DM_LINES messages)
+DM_LINES = 20
+HISTORY_DAYS = 3  # what the companion did with the asker lately, from its own records
 
 MODES = [
     {

@@ -1,6 +1,6 @@
 import pytest
-from bot import state, t3, tasks
-from conftest import set_settings
+from bot import errands, jobs, routing, slack, state, t3, tasks
+from conftest import OWNER, set_settings
 
 
 def task(**extra):
@@ -140,3 +140,69 @@ def test_nothing_is_concluded_while_the_agent_is_down(monkeypatch, t3_quiet):
     t['down_since'] -= tasks.AGENT_DOWN_LIMIT + 1  # down for too long: decide as before
     tasks.tick(t)
     assert not t['active'] and t['outcome'] == 'answered'
+
+
+def guest_task_waiting_for_approval():
+    """Salah's task in his DM with the bot, its approval card in the owner's DM (D_OWNER, card 70.1)."""
+    t = task(channel='D_U_SALAH', thread_ts='60.1', guest='U_SALAH', active=False, outcome='answered')
+    t['approval'] = {'action': 'Merge the stack', 'ts': '70.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''}
+    return t
+
+
+def test_the_owners_reply_under_an_approval_card_is_a_private_question(monkeypatch, t3_quiet, fresh_bot):
+    sent = []
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
+    t = guest_task_waiting_for_approval()
+    routing.route(
+        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '71.1', 'thread_ts': '70.1', 'user': OWNER, 'text': 'why?'},
+        False,
+    )
+    assert sent and 'privately' in sent[0] and 'do not make the change' in sent[0] and sent[0].endswith('why?')
+    assert t['active'] and t['answer_to'] == {'ch': 'D_OWNER', 'tts': '70.1'}
+    # its answer goes under the card, not to Salah
+    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Because ENG-6050 says do not merge yet.'))
+    tasks.tick(t)
+    answer = [m for m in fresh_bot.messages if 'ENG-6050' in str(m)]
+    assert answer and all(m['channel'] == 'D_OWNER' and m.get('thread_ts') == '70.1' for m in answer)
+    assert 'answer_to' not in t and not t['active']
+
+
+def test_a_question_while_the_task_still_runs_is_asked_again_later(monkeypatch, t3_quiet, fresh_bot):
+    sent = []
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    t = guest_task_waiting_for_approval()
+    t['active'] = True
+    errands.ask_about(t, 'why?', None, '71.1')
+    assert not sent and 'Still working' in fresh_bot.text() and 'answer_to' not in t
+
+
+def test_history_lists_what_was_done_with_the_person_lately(monkeypatch):
+    set_settings({'github_people': [{'github': 'salah-gh', 'slack': 'U_SALAH'}]})
+    now = state.parse_iso(state.now_iso())
+    review = {'id': 'org/platform#6257', 'title': 'group trees', 'author': 'Salah-GH', 'asked_by': []}
+    task(channel='C1', thread_ts='1.1', thread='T_R', review=review, outcome='posted')
+    task(channel='C1', thread_ts='2.1', thread='T_G', guest='U_SALAH', title='Fix the export', outcome='answered')
+    task(channel='C1', thread_ts='3.1', thread='T_OTHER', guest='U_ALI', title='Not Salah', outcome='answered')
+    task(channel='C1', thread_ts='4.1', thread='T_OLD', guest='U_SALAH', title='Old', start='2026-01-01T00:00:00Z')
+    lines = tasks.history_with('U_SALAH', now)
+    assert len(lines) == 2
+    assert 'Reviewed org/platform#6257 (group trees): posted · T3 chat T_R' in lines[0]
+    assert 'Task "Fix the export": answered · T3 chat T_G' in lines[1]
+
+
+def test_a_new_message_in_a_dm_sees_the_last_days_and_its_history(monkeypatch, t3_quiet):
+    calls, prompts_sent = [], []
+
+    def history(**kw):
+        calls.append(kw)
+        return {'messages': [{'ts': '80.1', 'user': 'U_SALAH', 'text': 'I fixed them'}]}
+
+    monkeypatch.setattr(slack.app.client, 'conversations_history', history)
+    monkeypatch.setattr(
+        t3, 'start_thread', lambda project, title, message: prompts_sent.append(message) or ('T_NEW', '')
+    )
+    monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: ['- [9:58 AM] Reviewed org/p#6257: posted'])
+    tasks.start('D_U_SALAH', '80.1', '80.1', 'I fixed them', guest='U_SALAH')
+    assert float(calls[0]['latest']) - float(calls[0]['oldest']) == 3 * 86400 and calls[0]['limit'] == 20
+    assert 'the 3 days before it' in prompts_sent[0] and 'Reviewed org/p#6257' in prompts_sent[0]

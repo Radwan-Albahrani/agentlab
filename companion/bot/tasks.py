@@ -4,8 +4,21 @@ import re
 import time
 
 from . import errands, limits, polls, posts, projects, prompts, slack, t3
-from .config import AGENT, AGENT_DOWN_LIMIT, COMP, NAME, OWNER, RESUME_GRACE, SETTLE, STATUS_EVERY, auto_retry, log
-from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
+from .config import (
+    AGENT,
+    AGENT_DOWN_LIMIT,
+    COMP,
+    HISTORY_DAYS,
+    NAME,
+    OWNER,
+    RESUME_GRACE,
+    SETTLE,
+    STATUS_EVERY,
+    auto_retry,
+    log,
+    slack_for_github,
+)
+from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save, state
 from .text import first_sentence, hour, mins, no_emoji, quote
 
 THINKING = ':seedling: thinking…'
@@ -14,6 +27,27 @@ THINKING = ':seedling: thinking…'
 def quiet(task):
     """A PR review: its progress shows on the batch card (reviews.py), so its thread gets only questions."""
     return bool(review_of(task))
+
+
+def history_with(uid, now=None):
+    """What the companion did with this person in the last HISTORY_DAYS: their tasks, and reviews of pull requests
+    they wrote or asked for (one line each, oldest first, at most 12)."""
+    since = (now or time.time()) - HISTORY_DAYS * 86400
+    rows = []
+    for t in state['tasks'].values():
+        at = parse_iso(t.get('start'))
+        if at < since:
+            continue
+        r = review_of(t)
+        outcome = t.get('outcome') or ('in progress' if t.get('active') else 'ended')
+        if r and (uid in (r.get('asked_by') or []) or slack_for_github(r.get('author')) == uid):
+            what = f'Reviewed {r["id"]} ({r.get("title", "")[:70]}): {outcome}'
+        elif not r and (t.get('guest') or OWNER) == uid:
+            what = f'Task "{t.get("title", "")[:80]}": {outcome}'
+        else:
+            continue
+        rows.append((at, f'- [{hour(at)}] {no_emoji(what)[:300]} · T3 chat {t["thread"]}'))
+    return [line for _, line in sorted(rows)[-12:]]
 
 
 def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, approved=False, via=None):
@@ -39,8 +73,21 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
     open_polls = polls.for_prompt(channel, thread_ts)
     asker = slack.name(guest or OWNER)
     fresh = not elsewhere and thread_ts == trigger_ts
+    history = history_with(guest or OWNER) if fresh else []
     prompt = prompts.task(
-        ask, slack.name(OWNER), where, lines, files, folder, here, member, open_polls, guest and asker, fresh, approved
+        ask,
+        slack.name(OWNER),
+        where,
+        lines,
+        files,
+        folder,
+        here,
+        member,
+        open_polls,
+        guest and asker,
+        fresh,
+        approved,
+        history,
     )
     tid, err = t3.start_thread(project, title, prompt)
     if not tid:
@@ -85,6 +132,12 @@ POLL_WORDS = re.compile(r'\b(poll|vote|votes|voting)\b', re.I)
 def is_status_ask(msg):
     """A short "how's it going?", not an instruction mentioning status ("fix the status badge")."""
     return len(msg.split()) <= 8 and not INSTRUCTION.match(msg) and bool(STATUS_ASK.search(msg))
+
+
+def where(task):
+    """(channel, thread) the task talks in: its own thread, or an approval card's while it answers the owner there."""
+    to = task.get('answer_to')
+    return (to['ch'], to['tts']) if to else (task['channel'], task['thread_ts'])
 
 
 def follow_up(task, text, files, ts, by=None):
@@ -205,7 +258,7 @@ def working_line(task, s, now):
 
 def reply(task, md, note=None, outcome='answered below'):
     """Post the answer as a new message (Slack notifies on new messages, not edits) and close the thinking line."""
-    ch, tts = task['channel'], task['thread_ts']
+    ch, tts = where(task)
     r = review_of(task)
     if r:  # reviews of a batch share its thread
         md = f':mag: **<{r["url"]}|{r["id"]}>**\n{md}'
@@ -222,7 +275,7 @@ def reply(task, md, note=None, outcome='answered below'):
         slack.update(ch, task['status_ts'], no_emoji(line), note=line)
     slack.post(ch, tts, first_sentence(no_emoji(md), 300) or 'Reply', md=md, note=note)
     task['status_ts'] = None
-    if task.get('guest'):
+    if task.get('guest') and not task.get('answer_to'):  # an answer to the owner alone is not mirrored
         loop_in(task, f'**{NAME} replied to {slack.name(task["guest"])}:**\n{_clip(md, 1500)}')
 
 
@@ -276,9 +329,9 @@ def retry_transient(task, s, now):
     task['retry_at'] = now + wait
     line = f':hourglass_flowing_sand: The model is busy, so I\'ll say "continue" in {wait} s ({n}/{len(RETRY_WAITS)})'
     if task.get('status_ts'):
-        slack.update(task['channel'], task['status_ts'], 'Retrying soon', note=line)
+        slack.update(where(task)[0], task['status_ts'], 'Retrying soon', note=line)
     elif not quiet(task):
-        task['status_ts'] = slack.note_only(task['channel'], task['thread_ts'], line)
+        task['status_ts'] = slack.note_only(*where(task), line)
     return True
 
 
@@ -313,9 +366,9 @@ def pause(task, resumes_at, run, now):
     task.update(retry_at=None, retries=0)
     line = paused_line(resumes_at)
     if task.get('status_ts') and not quiet(task):
-        slack.update(task['channel'], task['status_ts'], 'Paused for the usage limit', note=line)
+        slack.update(where(task)[0], task['status_ts'], 'Paused for the usage limit', note=line)
     elif not quiet(task):
-        task['status_ts'] = slack.note_only(task['channel'], task['thread_ts'], line)
+        task['status_ts'] = slack.note_only(*where(task), line)
     if first:
         log('paused for the usage limit', task['thread'], resumes_at)
         COMP.event(
@@ -396,7 +449,7 @@ def resume_if_running(task):
 def tick(task):
     if not task['active'] and not resume_if_running(task):
         return
-    ch, tts = task['channel'], task['thread_ts']
+    ch, tts = where(task)
     s = t3.snapshot(task['thread'], task['seen'])
     now = time.time()
     task['question'] = bool(s['requests'] or s.get('asked'))
@@ -468,7 +521,7 @@ def _post_questions(task, s):
 
 def _post_milestones(task, s):
     """Post new workers and pull requests as short lines."""
-    ch, tts = task['channel'], task['thread_ts']
+    ch, tts = where(task)
     if quiet(task):
         task['workers_said'] = len(s['workers'])
         return
@@ -519,7 +572,7 @@ def _finish_turn(task, s):
             task['quiet_since'] = 0
             log('review nudged to finish', r['id'])
             return
-    ch = task['channel']
+    ch = where(task)[0]
     task['retries'] = 0
     final = task.get('latest', '')
     took = parse_iso(s['last_done']) - parse_iso(task['burst_start']) if s['last_done'] else 0
@@ -577,4 +630,5 @@ def _finish_turn(task, s):
         detail=first_sentence(no_emoji(final), 300),
         ok=outcome != 'failed',
     )
+    task.pop('answer_to', None)
     task.update(active=False, quiet_since=0, last_status='', last_status_at=0, outcome=outcome, ended=now_iso())

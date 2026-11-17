@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from .config import AGENT_FILES, NAME, RECENT, org, work_tools
+from .config import AGENT_FILES, NAME, RECENT, RECENT_DM, org, work_tools
 
 
 def outbox(folder):
@@ -10,18 +10,38 @@ def outbox(folder):
 
 
 def task(
-    ask, owner, where, lines, files, folder, channel, channels, open_polls, guest=None, fresh=False, approved=False
+    ask,
+    owner,
+    where,
+    lines,
+    files,
+    folder,
+    channel,
+    channels,
+    open_polls,
+    guest=None,
+    fresh=False,
+    approved=False,
+    history=(),
 ):
     """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM).
     fresh: asked in a new message, not in a thread, so `lines` are only what came just before it.
-    approved: the owner approved this one ask (the requests channel), so follow-ups stay within it."""
+    approved: the owner approved this one ask (the requests channel), so follow-ups stay within it.
+    history: what the companion did with this person lately (its own records), for a message that refers back."""
     who = guest or owner
     if fresh:
+        span = f'{RECENT_DM // 86400} days' if not channel else f'{RECENT // 60} minutes'
         p = ask + f'\n\n---\n{who} asked this in a new message in {where}, not in a thread. For context only,'
-        p += f' the messages there in the {RECENT // 60} minutes before it (the last one is the request):\n'
+        p += f' the messages there in the {span} before it (the last one is the request):\n'
     else:
         p = ask + f'\n\n---\nThe Slack thread this came from ({who} asked in {where}), complete:\n'
     p += '\n'.join(lines[-60:]) or '(no other messages)'
+    if history:
+        p += (
+            f'\n\nWhat {NAME} did with {who} in the last days (its own records, newest last). A short message like'
+            ' "I fixed them" or "done" usually refers to one of these: check them (the T3 chats hold the details)'
+            ' before asking what they mean:\n' + '\n'.join(history)
+        )
     if files:
         p += '\n\nIts attachments, already downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)
     p += (
