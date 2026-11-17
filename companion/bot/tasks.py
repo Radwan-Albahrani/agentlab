@@ -4,7 +4,7 @@ import re
 import time
 
 from . import errands, limits, polls, posts, projects, prompts, slack, t3
-from .config import AGENT, COMP, NAME, OWNER, SETTLE, STATUS_EVERY, auto_retry, log
+from .config import AGENT, AGENT_DOWN_LIMIT, COMP, NAME, OWNER, RESUME_GRACE, SETTLE, STATUS_EVERY, auto_retry, log
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save
 from .text import first_sentence, hour, mins, no_emoji, quote
 
@@ -424,7 +424,7 @@ def tick(task):
         task['quiet_since'] = now
     if task['workers_said'] and now - task['quiet_since'] < SETTLE:  # orchestrators may start more workers
         return
-    if s['last_status'] == 'interrupted' and now - task['quiet_since'] < 30:  # a new turn usually follows
+    if restarting(task, s, now):
         return
     if hold_for_limit(task, s, now) or retry_transient(task, s, now):
         return
@@ -495,6 +495,18 @@ REVIEW_NUDGE = (
     ' ran) and review.json exactly as your brief says, settle this chat (t3_thread_organize, action "settle"), then'
     ' end with the one-line summary.'
 )
+
+
+def restarting(task, s, now):
+    """The agent is restarting or T3 has yet to resume what a restart cut off: nothing is over yet."""
+    if not t3.agent_up():
+        task.setdefault('down_since', now)
+        if now - task['down_since'] < AGENT_DOWN_LIMIT:
+            return True
+    else:
+        task.pop('down_since', None)
+    cut = s.get('interrupted_at')
+    return bool(cut) and now - parse_iso(cut) < RESUME_GRACE
 
 
 def _finish_turn(task, s):

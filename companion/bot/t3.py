@@ -33,6 +33,15 @@ def bridge(path, body):
         return {'ok': False, 'error': str(e)}
 
 
+def agent_up():
+    """The agent answers (it is down while its container restarts)."""
+    try:
+        with urllib.request.urlopen(BRIDGE + '/health', timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def error_text(res):
     return str(res.get('stderr') or res.get('error') or res.get('result') or '')[:300]
 
@@ -148,6 +157,19 @@ def snapshot(tid, since_iso):
             )
         ]
         workers = [(w, title, bool(r) or _subagent_busy(w, updated, reported)) for w, title, r, updated in workers]
+        interrupted = [
+            last[1]
+            for t in [tid, *(w for w, *_ in workers)]
+            if (
+                last := q(
+                    """select status, completed_at from orchestration_v2_projection_runs where thread_id = ?
+                         order by completed_at is null desc, completed_at desc limit 1""",
+                    (t,),
+                ).fetchone()
+            )
+            and last[0] == 'interrupted'
+            and last[1]
+        ]
         row = q('select payload_json from orchestration_v2_projection_threads where thread_id = ?', (tid,)).fetchone()
         prs = list(json.loads(row[0]).get('pullRequests') or []) if row else []
         for w_tid, *_ in workers:
@@ -168,6 +190,8 @@ def snapshot(tid, since_iso):
         'asked': [items.get(rid, {}) for rid, _, by_message in pending if by_message],
         'workers': workers,
         'prs': prs,
+        # the newest run (of the chat or a child) a restart cut off and T3 has not resumed yet
+        'interrupted_at': max(interrupted) if interrupted else None,
     }
 
 

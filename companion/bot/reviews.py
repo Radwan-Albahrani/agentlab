@@ -365,6 +365,8 @@ def tick():
     _recover()
     running = sum(1 for t in state['tasks'].values() if review_of(t) and t.get('active'))
     while queue and running < review_slots():
+        if not t3.agent_up():  # restarting: the queue waits for it rather than failing
+            break
         item = queue.pop(0)
         e = _entry(item['id']) or _join(item)  # queued by a version without a run
         save()

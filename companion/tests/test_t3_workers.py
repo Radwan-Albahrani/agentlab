@@ -64,3 +64,17 @@ def test_a_subagent_silent_for_twenty_minutes_counts_as_gone(chat, monkeypatch):
     later = t3.parse_iso('2026-11-15T23:14:00Z')
     monkeypatch.setattr(t3.time, 'time', lambda: later)
     assert running(chat)['QA'] is False
+
+
+def test_a_child_run_cut_off_by_a_restart_is_reported_until_resumed(chat):
+    chat.execute(
+        "insert into orchestration_v2_projection_runs values (?, 'interrupted', '2026-11-15T22:41:00Z', '2026-11-15T22:52:00Z')",
+        (T3_CHILD,),
+    )
+    chat.commit()
+    assert t3.snapshot(LEAD, '9999')['interrupted_at'] == '2026-11-15T22:52:00Z'
+    chat.execute(  # T3 resumed it
+        "insert into orchestration_v2_projection_runs values (?, 'running', '2026-11-15T22:53:00Z', null)", (T3_CHILD,)
+    )
+    chat.commit()
+    assert t3.snapshot(LEAD, '9999')['interrupted_at'] is None

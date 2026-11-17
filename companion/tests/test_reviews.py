@@ -1076,3 +1076,11 @@ def test_the_hub_says_who_asked_for_a_review(gh, told, fresh_bot, their_dm):
     other = started(gh, told, 5923)
     k2 = next(k for k, t in state.state['tasks'].items() if t is other)
     assert publish.card(k2, other)['requester'] == ''  # the owner's own: "started by you"
+
+
+def test_a_review_waits_in_the_queue_while_the_agent_restarts(gh, told, fresh_bot, their_dm, monkeypatch):
+    routing.route(colleague_dm('76.1', f'review https://github.com/{REPO}/pull/5922'), False)
+    monkeypatch.setattr(t3, 'agent_up', lambda: False)
+    reviews.tick()
+    assert [q['number'] for q in state.state['review_queue']] == [5922]
+    assert not any(t.get('outcome') == 'failed' for t in state.state['tasks'].values())

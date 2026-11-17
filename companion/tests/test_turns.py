@@ -110,3 +110,33 @@ def test_a_turn_with_nothing_new_posts_nothing(monkeypatch, t3_quiet, fresh_bot)
 )
 def test_status_questions_are_told_apart_from_instructions(message, is_status):
     assert tasks.is_status_ask(message) is is_status
+
+
+def test_a_child_cut_off_by_a_restart_holds_the_turn_until_t3_resumes_it(monkeypatch, t3_quiet, fresh_bot):
+    # the lead ended its turn waiting on QA; a restart interrupted QA's run: nothing is over yet
+    cut = state.now_iso()
+    waiting = snapshot('completed', 'Waiting on the QA child thread.')
+    monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**waiting(tid, since), 'interrupted_at': cut})
+    t = task()
+    tasks.tick(t)
+    assert t['active'] and 'Waiting on the QA' not in fresh_bot.text()
+
+
+def test_a_cut_off_run_that_t3_never_resumes_ends_the_turn_after_the_grace(monkeypatch, t3_quiet):
+    cut = '2026-01-01T00:00:00Z'  # long past RESUME_GRACE
+    done = snapshot('completed', 'Waiting on the QA child thread.')
+    monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**done(tid, since), 'interrupted_at': cut})
+    t = task()
+    tasks.tick(t)
+    assert not t['active']
+
+
+def test_nothing_is_concluded_while_the_agent_is_down(monkeypatch, t3_quiet):
+    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Done.'))
+    monkeypatch.setattr(t3, 'agent_up', lambda: False)
+    t = task()
+    tasks.tick(t)
+    assert t['active'] and t['down_since']
+    t['down_since'] -= tasks.AGENT_DOWN_LIMIT + 1  # down for too long: decide as before
+    tasks.tick(t)
+    assert not t['active'] and t['outcome'] == 'answered'

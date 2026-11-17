@@ -147,6 +147,7 @@ def fresh_bot(monkeypatch):
     monkeypatch.setattr(slack, '_bot', [])
     monkeypatch.setattr(slack, '_people', {'at': 0.0, 'list': [], 'by_id': {}})
     monkeypatch.setattr(jobs, 'run_later', lambda fn, *args: fn(*args))
+    monkeypatch.setattr(t3, 'agent_up', lambda: True)
     monkeypatch.setattr(config, 'log', lambda *a: None)
     monkeypatch.setattr(slack, '_channels', {'at': 0.0, 'list': []})
     for module in (errands, outbox, requests, routing, publish, drafts, asks, posts, polls):
