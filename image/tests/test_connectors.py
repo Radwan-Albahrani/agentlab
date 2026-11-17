@@ -92,3 +92,21 @@ def test_login_link_is_the_authorize_url_not_the_auth_server(home, monkeypatch):
     monkeypatch.setattr(connectors, 'active', lambda flow: True)
     monkeypatch.setattr(connectors, 'screen', lambda flow: printed)
     assert connectors.login_state('posthog')['url'] == link
+
+
+def test_shared_connectors_made_with_npms_mcp_remote_move_to_buns(home, monkeypatch):
+    calls = []
+    monkeypatch.setattr(connectors, 'run', lambda cmd, timeout=20: calls.append(cmd) or (0, ''))
+    old = str(home / '.npm-global' / 'bin' / 'mcp-remote')
+    connectors.save(
+        {'linear': {'url': 'https://mcp.linear.app/mcp', 'shared': True}, 'gh': {'url': 'u', 'header': 'h'}}
+    )
+    connectors.migrate()
+    assert connectors.load()['linear']['command'] == connectors.MCP_REMOTE
+    assert '/.bun/bin/mcp-remote' in connectors.MCP_REMOTE
+    assert any('mcp add-json linear' in c and connectors.MCP_REMOTE in c for c in calls)
+    assert old not in codex_config(home)
+    assert not any('logout' in c for c in calls)  # the sign-in in ~/.mcp-auth stays
+    calls.clear()
+    connectors.migrate()
+    assert calls == []  # once

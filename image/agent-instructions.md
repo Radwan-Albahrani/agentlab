@@ -48,7 +48,7 @@ and yours to change. Use the `companion` skill for how (test, commit, restart, l
 <!-- /companions -->
 
 ### Installing tools
-- No sudo. Use `brew install <tool>` (Homebrew; packages persist), `npm i -g`, `pip install --user`,
+- No sudo. Use `brew install <tool>` (Homebrew; packages persist), `bun add -g` (or `npm i -g`), `pip install --user`,
   or a tool's own user-level installer (e.g. `curl -fsSL https://bun.sh/install | bash`).
 - If brew is missing right after a fresh agent start, it's still installing (`~/logs/brew-install.log`).
 

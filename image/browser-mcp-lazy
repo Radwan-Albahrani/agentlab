@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-REAL = [os.path.expanduser('~/.npm-global/bin/playwright-mcp'), '--config', '/etc/agent/playwright-mcp.json']
+REAL = [os.path.expanduser('~/.bun/bin/playwright-mcp'), '--config', '/etc/agent/playwright-mcp.json']
 PROFILE = os.path.expanduser('~/.chrome-profile')
 CACHE_DIR = os.path.expanduser('~/.cache/agent-browser-mcp')
 CACHE = os.path.join(CACHE_DIR, 'handshake.json')

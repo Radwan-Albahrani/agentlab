@@ -2,8 +2,14 @@
 # shellcheck disable=SC2016  # the installers run in a child bash (attempt ... bash -c), which expands them
 # Home-volume CLI installers, sourced by the entrypoint (missing only) and agent-updater (everything).
 
-NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest
+# Global CLIs installed and kept on latest with Bun (in ~/.bun, bins in ~/.bun/bin), and the commands they provide.
+BUN_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest
   @karpeleslab/teamclaude@latest)
+BUN_COMMANDS=(codex cyrus playwright-mcp mcp-remote eas teamclaude)
+BUN_BIN="${HOME}/.bun/bin"
+# Their npm copies from before Bun, removed once the Bun ones are in.
+OLD_NPM_PACKAGES=(@openai/codex cyrus-ai @playwright/mcp mcp-remote eas-cli @karpeleslab/teamclaude)
+OLD_NPM_COMMANDS=(codex cyrus playwright-mcp mcp-remote mcp-remote-client eas teamclaude teamrouter)
 
 log() { echo "[tools $(date +%T)] $*"; }
 
@@ -40,6 +46,33 @@ install_herdr() {
     || log "herdr install FAILED"
 }
 
+install_bun() {
+  attempt "Bun install" 600 bash -c 'set -o pipefail; curl -fsSL https://bun.sh/install | bash >"${HOME}/logs/bun-install.log" 2>&1' \
+    || log "Bun install FAILED"
+}
+
+# bun_tools VERB: install or update every Bun tool. Their install scripts (Cyrus's cloudflared download) are trusted,
+# as npm would run them: we picked these packages.
+bun_tools() {
+  attempt "bun ${1}" 1200 bash -c '
+    "${0}" add -g "$@" >"${HOME}/logs/bun-tools.log" 2>&1 || exit
+    "${0}" pm -g trust --all >>"${HOME}/logs/bun-tools.log" 2>&1 || true' "${BUN_BIN}/bun" "${BUN_TOOLS[@]}" \
+    || log "bun ${1} failed (see ~/logs/bun-tools.log)"
+}
+
+missing_bun_tools() {
+  local cmd
+  for cmd in "${BUN_COMMANDS[@]}"; do [ -x "${BUN_BIN}/${cmd}" ] || return 0; done
+  return 1
+}
+
+drop_old_npm_copies() {
+  local root="${HOME}/.npm-global" pkg cmd
+  for pkg in "${OLD_NPM_PACKAGES[@]}"; do [ -d "${root}/lib/node_modules/${pkg}" ] && rm -rf "${root}/lib/node_modules/${pkg}"; done
+  for cmd in "${OLD_NPM_COMMANDS[@]}"; do [ -L "${root}/bin/${cmd}" ] && rm -f "${root}/bin/${cmd}"; done
+  return 0
+}
+
 # Coolify briefly attaches its own network (#18): wait until AGENTLAB_WAIT_NETWORK is our only address.
 container_addresses() { ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | sort; }
 
@@ -69,15 +102,12 @@ install_missing_tools() {
     attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
       || log "Claude Code install FAILED"
   fi
-  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null; then
+  [ -x "${BUN_BIN}/bun" ] || install_bun
+  if missing_bun_tools; then
     log "installing Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude"
-    attempt "npm install" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
-      || log "npm install failed (see ~/logs/npm-update.log)"
-  elif ! command -v teamclaude >/dev/null; then # added after the others: install it alone
-    log "installing TeamClaude"
-    attempt "TeamClaude install" 600 bash -c 'npm install -g @karpeleslab/teamclaude@latest >>"${HOME}/logs/npm-update.log" 2>&1' \
-      || log "TeamClaude install failed (see ~/logs/npm-update.log)"
+    bun_tools install
   fi
+  missing_bun_tools || drop_old_npm_copies
   command -v t3 >/dev/null || install_t3
   command -v herdr >/dev/null || install_herdr
   if [[ ! -x /home/linuxbrew/.linuxbrew/bin/brew && -w /home/linuxbrew ]]; then
@@ -90,13 +120,19 @@ install_missing_tools() {
 # Everything to latest in place; a running T3 keeps its version until agent-updater restarts it.
 update_tools() {
   write_curlrc
-  log "updating Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude, T3 Code, herdr, Claude Code"
-  attempt "npm update" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
-    || log "npm update failed (see ~/logs/npm-update.log); keeping installed versions"
+  log "updating Bun, Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude, T3 Code, herdr, Claude Code"
+  if [ -x "${BUN_BIN}/bun" ]; then
+    attempt "bun upgrade" 600 bash -c '"${HOME}/.bun/bin/bun" upgrade >"${HOME}/logs/bun-upgrade.log" 2>&1' || log "bun upgrade failed"
+  else
+    install_bun
+  fi
+  bun_tools update
+  missing_bun_tools || drop_old_npm_copies
   install_t3
   install_herdr
   command -v claude >/dev/null \
     && { attempt "claude update" 600 bash -c 'claude update >"${HOME}/logs/claude-update.log" 2>&1' || log "claude update failed"; }
   log "claude $(claude --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)" \
-      "| t3 $(t3 --version 2>/dev/null | head -1) | herdr $(herdr --version 2>/dev/null | head -1) | eas $(eas --version 2>/dev/null | head -1)"
+      "| t3 $(t3 --version 2>/dev/null | head -1) | herdr $(herdr --version 2>/dev/null | head -1) | eas $(eas --version 2>/dev/null | head -1)" \
+      "| teamclaude $(teamclaude --version 2>/dev/null | head -1) | bun $("${BUN_BIN}/bun" --version 2>/dev/null)"
 }

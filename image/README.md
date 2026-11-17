@@ -34,9 +34,10 @@ Accounts API (the hub draws the UI): sign-ins and connectors (`/api/page`, `/api
 `POST /api/pair {kind: browser|app, label}` (one-time T3 pairing link), `GET /api/devices`, `POST /api/devices/revoke
 {id}`, `/api/summary`, and the companion bridge.
 
-Claude Code, Codex, T3, herdr, Playwright MCP, mcp-remote and the EAS CLI are installed into the home volume on first
-start and updated daily in the background, so the image itself rarely changes. Homebrew installs into
-`/home/linuxbrew`.
+Claude Code, Codex, T3, herdr, Playwright MCP, mcp-remote, the EAS CLI, Cyrus and TeamClaude are installed into the home
+volume on first start and kept on their latest versions by `updater` (`tools.sh`), so the image itself rarely changes.
+The npm-published ones come from Bun (`bun add -g`, in `~/.bun`; Bun itself is updated with them); `~/.npm-global`
+stays for the agents' own `npm i -g`. Homebrew installs into `/home/linuxbrew`.
 
 The Accounts page has no login of its own: the edge's gate checks every request (Cloudflare Access JWT + the agent's
 owner) and each agent sits alone on its own Docker network, so nothing else can reach it. The companion bridge

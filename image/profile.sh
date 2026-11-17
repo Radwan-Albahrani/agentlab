@@ -2,7 +2,8 @@
 # /etc/profile.d/zz-agent.sh: puts the agent's tools and env back after login shells rebuild PATH.
 export NPM_CONFIG_PREFIX=${HOME}/.npm-global
 export BUN_INSTALL_CACHE_DIR=/workspace/.cache/bun-install NPM_CONFIG_STORE_DIR=/workspace/.cache/pnpm-store
-export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${PATH}"
+export BUN_INSTALL=${HOME}/.bun
+export PATH="${HOME}/.local/bin:${HOME}/.bun/bin:${HOME}/.npm-global/bin:${PATH}"
 export DISPLAY=:99
 export XDG_RUNTIME_DIR=/run/user/1000
 export DOCKER_HOST=unix:///run/user/1000/docker.sock

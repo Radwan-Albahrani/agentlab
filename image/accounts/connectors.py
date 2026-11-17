@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 from util import HOME, active, http, run, screen, sh_quote, start_session, stop_session
 
 STORE = os.path.join(HOME, '.config', 'agent', 'mcp.json')
-MCP_REMOTE = os.path.join(HOME, '.npm-global', 'bin', 'mcp-remote')
-MCP_REMOTE_CLIENT = os.path.join(HOME, '.npm-global', 'bin', 'mcp-remote-client')
+MCP_REMOTE = os.path.join(HOME, '.bun', 'bin', 'mcp-remote')
+MCP_REMOTE_CLIENT = os.path.join(HOME, '.bun', 'bin', 'mcp-remote-client')
 MCP_AUTH = os.path.join(HOME, '.mcp-auth')
 GITHUB_MCP = 'https://api.githubcopilot.com/mcp/'
 CATALOG = {
@@ -96,7 +96,7 @@ def unregister(name):
 
 def add_shared(name, url):
     d = load()
-    d[name] = {'url': url, 'shared': True}
+    d[name] = {'url': url, 'shared': True, 'command': MCP_REMOTE}
     save(d)
     return _claude_add(name, {'type': 'stdio', 'command': MCP_REMOTE, 'args': [url]})
 
@@ -182,9 +182,12 @@ def add_custom(name, url):
 
 
 def migrate():
-    """Converts connectors from before the shared sign-in to shared ones."""
+    """Converts connectors from before the shared sign-in to shared ones, and re-registers shared ones made with another
+    mcp-remote (npm's, before Bun); their sign-ins in ~/.mcp-auth stay."""
     for name, s in list(load().items()):
         if s.get('oauth') and not s.get('shared'):
             run(f'claude mcp logout {name}')
             run(f'codex mcp logout {name}')
+            add_shared(name, s['url'])
+        elif s.get('shared') and s.get('command') != MCP_REMOTE:
             add_shared(name, s['url'])

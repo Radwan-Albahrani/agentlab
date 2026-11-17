@@ -89,6 +89,8 @@ ENV HOME=/home/agent \
     TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/dockerd.sock \
     # the engine publishes container ports on this container's localhost
     TESTCONTAINERS_HOST_OVERRIDE=localhost \
+    # our CLIs live in ~/.bun (tools.sh); ~/.npm-global is for the agents' own `npm i -g`
+    BUN_INSTALL=/home/agent/.bun \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     # on the projects' own mount, so installs hardlink from the cache instead of copying into every worktree
     BUN_INSTALL_CACHE_DIR=/workspace/.cache/bun-install \
@@ -96,7 +98,7 @@ ENV HOME=/home/agent \
     ANDROID_SDK_ROOT=/opt/android-sdk \
     ANDROID_HOME=/opt/android-sdk \
     ANDROID_AVD_HOME=/home/agent/.android/avd \
-    PATH=/usr/local/lib/agent-shims:/home/agent/.local/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/android-sdk/emulator
+    PATH=/usr/local/lib/agent-shims:/home/agent/.local/bin:/home/agent/.bun/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/android-sdk/emulator
 WORKDIR /workspace
 # T3 can take minutes to install on a fresh home, hence the long start period.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=600s --start-interval=5s \
