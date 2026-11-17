@@ -31,8 +31,11 @@ def task(
         ' Slack, use your Slack tools with the channel and thread above.'
     )
     p += (
-        '\nYour replies are posted back to that Slack thread, so make your final message readable on its own;'
-        ' never use post.json to answer here.'
+        '\nYour final message is posted word for word to that Slack thread, for everyone in it to read: write it to'
+        ' them, readable on its own, with the answer and not how you got there (never "I sent an edit", tool or'
+        ' character counts, or what is left in your own work). If there is nothing new for them, because you'
+        ' edited or already posted the answer, end with exactly one line `NO_REPLY: <short reason>`: nothing is'
+        ' posted. Never use post.json to answer here.'
         ' Gather whatever else you need (issue tracker, GitHub, error monitoring, the code) before you start.'
     )
     default = (

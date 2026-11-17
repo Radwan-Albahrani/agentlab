@@ -90,6 +90,14 @@ def test_an_errand_that_needs_nothing_closes_quietly(monkeypatch, t3_quiet, fres
     assert not fresh_bot.messages
 
 
+def test_a_turn_with_nothing_new_posts_nothing(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'NO_REPLY: edited the earlier reply to add #6291'))
+    t = task()
+    tasks.tick(t)
+    assert not t['active'] and t['outcome'] == 'nothing new to post'
+    assert 'NO_REPLY' not in fresh_bot.text() and '6291' not in fresh_bot.text()
+
+
 @pytest.mark.parametrize(
     'message, is_status',
     [

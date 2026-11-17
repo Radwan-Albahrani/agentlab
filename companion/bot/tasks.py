@@ -515,6 +515,7 @@ def _finish_turn(task, s):
         x for x in (AGENT, (task.get('project') or '').rsplit('/', 1)[-1], took >= 60 and mins(took)) if x
     )
     no_action = re.match(r'\s*`?NO_ACTION:?\s*(.*?)`?\s*$', final or '', re.S)
+    no_reply = re.match(r'\s*`?NO_REPLY:?\s*(.*?)`?\s*$', final or '', re.S)
     status = s['last_status']
     posted = task.pop('posted', False)
     if posted and status == 'completed':
@@ -522,6 +523,12 @@ def _finish_turn(task, s):
             slack.update(ch, task['status_ts'], 'Posted', note=':seedling: Picked this up · posted ↓')
         task['status_ts'] = None
         outcome = 'posted'
+    elif no_reply and status == 'completed':  # the answer is already in the thread (edited or posted)
+        if task.get('status_ts'):
+            slack.update(ch, task['status_ts'], 'Done', note=':seedling: Picked this up · done')
+        task['status_ts'] = None
+        outcome = 'nothing new to post'
+        final = no_reply.group(1).strip() or 'Nothing new to post.'
     elif task.get('requester') and no_action:
         if task.get('status_ts'):
             slack.update(
