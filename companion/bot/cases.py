@@ -118,6 +118,9 @@ def answered(task, md):
 
 def ask(task, text, files, ts, msg_for_agent=None):
     """The owner talks to the companion about a case: privately, answered in the case thread only."""
+    a = task.get('approval') or {}
+    if not of(task) and task.get('guest') and a.get('ts'):  # a colleague's task from before cases: its card is one
+        task['case'] = {'ch': a['ch'], 'ts': a['ts'], 'own': False}
     c = of(task)
     if not c:
         return

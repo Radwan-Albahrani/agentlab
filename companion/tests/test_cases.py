@@ -148,3 +148,17 @@ def test_the_agent_can_withdraw_its_approval_request(case, fresh_bot):
     assert t['approval']['decided'] == 'replaced' and 'Withdrawn by' in fresh_bot.text()
     errands.decide(t, 'k', True)
     assert t['approval']['decided'] == 'replaced'  # nothing left to approve
+
+
+def test_a_colleagues_task_from_before_cases_takes_its_approval_card_as_its_case(monkeypatch, t3_quiet, fresh_bot):
+    sent = []
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
+    t = state.new_task(SALAH_DM, '61.1', 'T_OLD', 'I fixed them', 'old-box', '61.1', None, guest='U_SALAH')
+    t.update(active=False, approval={'action': 'Merge', 'ts': '70.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''})
+    routing.route(
+        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '71.1', 'thread_ts': '70.1', 'user': OWNER, 'text': 'why?'},
+        False,
+    )
+    assert sent and 'why?' in sent[-1] and t['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'own': False}
+    assert t['answer_to'] == {'ch': 'D_OWNER', 'tts': '70.1'}
