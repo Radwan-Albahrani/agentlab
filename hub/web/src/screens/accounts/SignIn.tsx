@@ -170,7 +170,13 @@ export function SignIn({ agent, f, keys, next }: { agent: string; f: Flow; keys:
 
 function SecondStep({ f, send }: { f: Flow; send: (text: string) => unknown }) {
   const now = !!f.url && !f.done;
-  if (f.key === 'codex' && f.mode === 'browser')
+  if (f.key === 'pool-claude')
+    return (
+      <Step n={2} done={f.done} now={now} title="Paste the code" sub="Claude shows it after you approve.">
+        <SubmitField placeholder="Paste code" button="Submit" onSubmit={send} />
+      </Step>
+    );
+  if ((f.key === 'codex' && f.mode === 'browser') || f.key === 'pool-codex')
     return (
       <Step
         n={2}
@@ -216,7 +222,7 @@ function SecondStep({ f, send }: { f: Flow; send: (text: string) => unknown }) {
   );
 }
 
-function SignInSteps({ agent, f, keys }: { agent: string; f: Flow; keys: Keys }) {
+export function SignInSteps({ agent, f, keys }: { agent: string; f: Flow; keys: Keys }) {
   const run = useAccountAct(agent);
   return (
     <FlowBox>

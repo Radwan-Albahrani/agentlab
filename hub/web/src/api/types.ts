@@ -191,6 +191,35 @@ export interface Connector {
   flow?: ConnectorFlow;
 }
 
+export interface PoolWindow {
+  label: string;
+  /** 0-100 */
+  used: number;
+  /** epoch seconds; null when unknown */
+  resetsAt: number | null;
+}
+
+export interface PoolAccount {
+  name: string;
+  provider: 'claude' | 'codex';
+  disabled: boolean;
+  /** the account new requests go to */
+  current: boolean;
+  /** why it can't serve until signed in again ('' = fine) */
+  problem: string;
+  /** why rotation skips it for now (near its limit, rate limited) */
+  resting: string;
+  windows: PoolWindow[];
+}
+
+/** This agent's own account pool (TeamClaude) and its two sign-ins. */
+export interface AccountPool {
+  running: boolean;
+  routes: { claude: boolean; codex: boolean };
+  accounts: PoolAccount[];
+  flows: Flow[];
+}
+
 export interface AccountsPage {
   agent: string;
   owner: string;
@@ -200,6 +229,7 @@ export interface AccountsPage {
   github: Flow;
   tools?: Flow[]; // absent on older agents
   connectors: Connector[];
+  pool?: AccountPool; // absent on older agents
   devices: Device[];
   onboarding: Onboarding;
   env?: Record<string, { masked: string; length: number }>;

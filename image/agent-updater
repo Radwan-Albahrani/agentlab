@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Supervisord program `updater`: re-runs tools.sh installers and restarts t3 onto a new version only while idle."""
+"""Supervisord program `updater`: re-runs tools.sh installers and restarts t3 (and the account pool) onto a new
+version only while idle."""
 
 import json
 import os
@@ -13,6 +14,7 @@ HOURS = float(os.environ.get('AGENTLAB_UPDATE_HOURS') or 6)
 STAMP = os.path.join(HOME, '.config', 'agent', 'tools-updated')
 T3_DB = os.path.join(HOME, '.t3', 'userdata', 'statev2.sqlite')
 WAITING = os.path.join(HOME, '.config', 'agent', 't3-update.json')  # read by the hub (via /api/summary)
+POOL_VERSION = '/tmp/pool-version'  # written by the pool program as it starts
 SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
 WAIT_HOURS = float(os.environ.get('AGENTLAB_UPDATE_WAIT_HOURS') or 4)
 ON_BUSY = os.environ.get('AGENTLAB_ON_BUSY') or 'defer'
@@ -116,6 +118,24 @@ def resume_t3(run=subprocess.run):
     note_waiting('', '')
 
 
+def align_pool(run=subprocess.run, db=T3_DB, started=POOL_VERSION):
+    """Restart a running account pool onto a newer TeamClaude while idle (a restart cuts requests in flight)."""
+    try:
+        with open(started) as f:
+            have = version(f.read())
+    except OSError:
+        return 'unknown'  # not running
+    p = run(['bash', '-lc', 'teamclaude --version'], capture_output=True, text=True, check=False)
+    want = version(p.stdout) if p.returncode == 0 else ''
+    if not have or not want or have == want:
+        return 'current' if have and have == want else 'unknown'
+    if not idle(db):
+        return 'busy'
+    log(f'restarting the account pool {have} -> {want} (idle)')
+    run([*SUPERVISOR, 'restart', 'pool'], check=False)
+    return 'restarted'
+
+
 class Waiter:
     def __init__(self, clock=time.time):
         self.clock, self.since, self.until = clock, None, 0
@@ -147,6 +167,7 @@ def main():
         if due():
             update_tools()
         state = waiter.step()
+        align_pool()
         time.sleep(RETRY_S if state == 'busy' else 600)
 
 

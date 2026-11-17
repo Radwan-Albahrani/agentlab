@@ -119,7 +119,8 @@ export const useDisplay = () => useQuery({ queryKey: ['display'], queryFn: api.d
 export const useConfigFile = (id: string) =>
   useQuery({ queryKey: ['config', id], queryFn: () => api.config(id), refetchInterval: false });
 
-const signingIn = (p: AccountsPage) => [...p.ai, p.github].some((f) => f.active) || p.connectors.some((c) => c.flow?.active);
+const signingIn = (p: AccountsPage) =>
+  [...p.ai, p.github, ...(p.pool?.flows ?? [])].some((f) => f.active) || p.connectors.some((c) => c.flow?.active);
 
 export const useAccounts = (name: string) =>
   useQuery({

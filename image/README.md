@@ -19,6 +19,7 @@ Build: `image/build.sh` (or `TAG=agentlab/agent:test image/build.sh`).
 | `updater` | | refreshes T3, Claude Code, Codex and the other CLIs every `AGENTLAB_UPDATE_HOURS` (`agent-updater`, installers in `tools.sh`); restarts only `t3`, only while idle (`AGENTLAB_UPDATE_WAIT_HOURS`, `AGENTLAB_ON_BUSY`) |
 | `janitor` | | stops orphaned processes that sat idle (forgotten dev servers, browsers) |
 | `shim-sync` | | keeps the throttle shims in front of the heavy tools that are installed |
+| `pool` | 3456 (loopback) | this agent's account pool ([TeamClaude](https://github.com/KarpelesLab/teamclaude)); started by the Accounts app once it holds an account, see below |
 | `herdr`, `cyrus` | | terminal multiplexer; Linear agent (off until configured) |
 
 Skills: `skills/companion` is installed on every start into `~/.claude/skills/` and `$CODEX_HOME/skills/` (default
@@ -40,6 +41,26 @@ start and updated daily in the background, so the image itself rarely changes. H
 The Accounts page has no login of its own: the edge's gate checks every request (Cloudflare Access JWT + the agent's
 owner) and each agent sits alone on its own Docker network, so nothing else can reach it. The companion bridge
 (`POST /api/t3/*`) additionally needs the key in `~/.config/agent/bridge-key` (header `X-Agent-Key`).
+
+## Account pool
+
+Each agent can hold several of its owner's Claude and Codex accounts and move to the next before one runs out. The
+hub's Sign-ins page adds them (`teamclaude login --token`, `login --codex --no-browser`, driven in tmux like the other
+sign-ins), signs them out, pauses them and shows each one's 5-hour and weekly use. The pool is per agent: its config
+and tokens live in this agent's `~/.config/teamclaude.json`, and the proxy listens on `127.0.0.1` only.
+
+`accounts/pool.py` keeps everything in line with that config, on start and after every change:
+
+- `pool` runs only while there is an account (TeamClaude refuses to start without one).
+- Claude Code: `env.ANTHROPIC_BASE_URL` in `~/.claude/settings.json` while an enabled Claude account is in the pool.
+  T3 starts Claude with the user settings, so new T3 chats and the terminal use it without a T3 restart. Claude Code
+  still starts on the agent's own sign-in, which therefore stays.
+- Codex: `model_provider` + `[model_providers.agentlab_pool]` in `config.toml` while an enabled Codex account is in it.
+- T3: a `cliproxy` usage source on the pool (TeamClaude's `cliproxyApi: "read"`), so T3's Usage tab lists every account.
+- `poolQuotaHeaders` hides one account's limit from Claude Code and T3 while another can still take over.
+
+A base URL or Codex provider the owner set themselves is left alone. `agent-updater` restarts the pool onto a new
+TeamClaude while T3 is idle.
 
 Heavy commands (installs, builds, tests) pass through the throttle shim (`throttle/`), which waits for the host's
 broker to admit them; the spool lives in `~/.local/state/agent-throttle/`.

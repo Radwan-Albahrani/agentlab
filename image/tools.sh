@@ -2,7 +2,8 @@
 # shellcheck disable=SC2016  # the installers run in a child bash (attempt ... bash -c), which expands them
 # Home-volume CLI installers, sourced by the entrypoint (missing only) and agent-updater (everything).
 
-NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest)
+NPM_TOOLS=(@openai/codex@latest cyrus-ai@latest @playwright/mcp@latest mcp-remote@latest eas-cli@latest
+  @karpeleslab/teamclaude@latest)
 
 log() { echo "[tools $(date +%T)] $*"; }
 
@@ -68,8 +69,8 @@ install_missing_tools() {
     attempt "Claude Code install" 900 bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
       || log "Claude Code install FAILED"
   fi
-  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null; then
-    log "installing Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI"
+  if ! command -v codex >/dev/null || ! command -v mcp-remote >/dev/null || ! command -v eas >/dev/null \n    || ! command -v teamclaude >/dev/null; then
+    log "installing Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude"
     attempt "npm install" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
       || log "npm install failed (see ~/logs/npm-update.log)"
   fi
@@ -85,7 +86,7 @@ install_missing_tools() {
 # Everything to latest in place; a running T3 keeps its version until agent-updater restarts it.
 update_tools() {
   write_curlrc
-  log "updating Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, T3 Code, herdr, Claude Code"
+  log "updating Codex, Cyrus, Playwright MCP, mcp-remote, EAS CLI, TeamClaude, T3 Code, herdr, Claude Code"
   attempt "npm update" 1200 bash -c 'npm install -g "$@" >"${HOME}/logs/npm-update.log" 2>&1' _ "${NPM_TOOLS[@]}" \
     || log "npm update failed (see ~/logs/npm-update.log); keeping installed versions"
   install_t3

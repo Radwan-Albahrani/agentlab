@@ -12,6 +12,7 @@ import envfile
 import onboarding
 import page
 import pairing
+import pool
 import signin
 import summary
 from util import AGENT_ID, browser_up, public_url
@@ -128,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=connectors.migrate, daemon=True).start()
+    threading.Thread(target=pool.sync, daemon=True).start()
     for flow in signin.FLOWS:
         threading.Thread(target=signin.refresh, args=(flow,), daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', PORT), Handler).serve_forever()

@@ -4,6 +4,7 @@ import connectors
 import envfile
 import onboarding
 import pairing
+import pool
 import signin
 from util import AGENT_ID, AGENT_OWNER, browser_up, flash, open_callback
 
@@ -44,6 +45,7 @@ def page():
         'github': github,
         'tools': [_flow(f) for f in signin.TOOL_FLOWS],
         'connectors': [_connector(k, s) for k, s in connectors.servers().items()],
+        'pool': pool.state(),
         'devices': pairing.devices(),
         'onboarding': onboarding.state(),
         'env': envfile.masked(),
@@ -60,6 +62,8 @@ def act(body):
 
     if action == 'token' and target == 'github':
         return signin.save_github_token(text('token'))
+    if action.startswith('pool-'):
+        return pool.act(action, target, text)
     if action.startswith('mcp-'):
         return _connector_action(action, target, text)
     return _signin_action(action, target, text)

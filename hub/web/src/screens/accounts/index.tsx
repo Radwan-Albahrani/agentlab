@@ -12,6 +12,7 @@ import { Badge, Pill } from '../../ui/status';
 import { AddConnector, ConnectorGrid, ConnectorTile } from './Connectors';
 import { EnvVars } from './EnvVars';
 import { Callout } from './flow';
+import { PoolSection, poolSummary } from './Pool';
 import { ProviderGrid, SignIn } from './SignIn';
 
 const styles = stylex.create({
@@ -99,6 +100,17 @@ function AccountsView({ agent, d }: { agent: string; d: AccountsPage }) {
           ))}
         </ProviderGrid>
       </Section>
+      {d.pool && (
+        <Section
+          id="pool"
+          icon="refresh"
+          title="Account pool"
+          sub="More accounts for this agent, used in turn as each nears its limit."
+          right={poolSummary(d.pool) && <Pill tone={d.pool.running ? 'ok' : 'warn'}>{poolSummary(d.pool)}</Pill>}
+        >
+          <PoolSection agent={agent} pool={d.pool} keys={d.keys} />
+        </Section>
+      )}
       <Section id="tools" icon="github" title="GitHub & developer tools" sub="Command-line tools the agent uses as you.">
         <ProviderGrid>
           {tools.map((f) => (

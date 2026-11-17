@@ -97,6 +97,52 @@ def summary(agent):
     }
 
 
+def pool(agent):
+    """admin: two Claude accounts (one in use, one near its limit) and a Codex one needing a new sign-in."""
+    soon = time.time() + 2 * 3600
+    accounts = [
+        {
+            'name': 'work@example.com',
+            'provider': 'claude',
+            'disabled': False,
+            'current': True,
+            'problem': '',
+            'resting': '',
+            'windows': [
+                {'label': '5 hours', 'used': 42.0, 'resetsAt': soon},
+                {'label': 'Week', 'used': 61.5, 'resetsAt': soon + 3 * 86400},
+            ],
+        },
+        {
+            'name': 'side@example.com',
+            'provider': 'claude',
+            'disabled': False,
+            'current': False,
+            'problem': '',
+            'resting': 'near its 5-hour limit',
+            'windows': [{'label': '5 hours', 'used': 98.0, 'resetsAt': soon}],
+        },
+        {
+            'name': 'me@example.com',
+            'provider': 'codex',
+            'disabled': False,
+            'current': False,
+            'problem': 'Upstream rejected its refresh token. Sign in again.',
+            'resting': '',
+            'windows': [],
+        },
+    ]
+    flows = [flow('pool-claude', 'Claude'), flow('pool-codex', 'Codex')]
+    for f in flows:
+        f['signedIn'] = False
+    return {
+        'running': agent == 'admin',
+        'routes': {'claude': agent == 'admin', 'codex': False},
+        'accounts': accounts if agent == 'admin' else [],
+        'flows': flows,
+    }
+
+
 def page(agent):
     github = flow('github', 'GitHub', agent == 'admin')
     github['mcpReady'] = True
@@ -111,6 +157,7 @@ def page(agent):
             {'key': 'linear', 'name': 'Linear', 'what': 'Issues', 'added': True, 'custom': False, 'ready': True},
             {'key': 'notion', 'name': 'Notion', 'what': 'Docs', 'added': False, 'custom': False, 'ready': False},
         ],
+        'pool': pool(agent),
         'devices': DEVICES.get(agent, []),
         'onboarding': onboarding(agent),
         'env': {'EXAMPLE_TOKEN': {'masked': 'exa…', 'length': 20}},
