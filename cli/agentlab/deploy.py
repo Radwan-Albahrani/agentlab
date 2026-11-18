@@ -368,7 +368,7 @@ def revive(cfg, plan, only=None):
     """Start agentlab's long-running containers that are stopped (a deploy only follows compose changes, so a container
     stopped by hand or by a disk shrink that couldn't restart it stayed down through every apply)."""
     for stack in render.stacks(cfg):
-        if only is not None and stack not in only:
+        if (only is not None and stack not in only) or deployed_this_run(stack):  # Coolify is starting those itself
             continue
         up = set(containers(cfg, stack))
         for cid in containers(cfg, stack, all_states=True):

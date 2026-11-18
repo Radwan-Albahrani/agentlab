@@ -1371,6 +1371,16 @@ class Revive(unittest.TestCase):
             [c.args for c in do.call_args_list], [('start hub-x (it was stopped)', ['docker', 'start', 'hub1'])]
         )
 
+    def test_a_stack_deployed_in_this_run_is_left_to_its_deploy(self):
+        plan = util.Plan(True)
+        with (
+            mock.patch.object(deploy, 'DEPLOYED', {'agentlab-core'}),
+            mock.patch.object(deploy, 'containers', side_effect=AssertionError('looked at a stack being deployed')),
+            mock.patch.object(plan, 'do') as do,
+        ):
+            deploy.revive(resolve(), plan, only=['agentlab-core'])
+        do.assert_not_called()
+
 
 class DiskSizes(unittest.TestCase):
     GIB = 2**30
