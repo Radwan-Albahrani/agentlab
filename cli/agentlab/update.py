@@ -1,5 +1,6 @@
 """`agentctl update`: fast-forward pull, images, apply, then wait for busy agents ([updates] on_busy)."""
 
+import contextlib
 import datetime
 import json
 import os
@@ -57,7 +58,7 @@ def inflight(agent):
     """[(run id, thread id)] of T3 turns in progress, read on the host."""
     db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
     try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
+        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5)) as c:
             marks = ','.join('?' * len(deploy.SETTLED))
             q = f'select run_id, thread_id from orchestration_v2_projection_runs where status not in ({marks})'
             return [tuple(r) for r in c.execute(q, deploy.SETTLED)]

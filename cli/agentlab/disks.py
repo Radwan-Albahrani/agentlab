@@ -2,6 +2,7 @@
 shrunk offline (its agents stop for the minute it takes) to the size the config asks for."""
 
 import os
+import re
 import shutil
 import time
 
@@ -229,9 +230,30 @@ def _who_holds(mnt):
     inside = [m for m in mounts.split() if m.startswith(mnt + '/')]
     if not shutil.which('fuser'):
         run(['apt-get', 'install', '-y', '-q', 'psmisc'], check=False, timeout=180)
-    rc, who = run(['fuser', '-vm', mnt], check=False)
-    procs = who.strip() if rc != 127 else 'unknown (fuser could not be installed)'
-    return f'mounts inside it: {", ".join(inside) or "none"}; processes using it: {procs[-400:] or "none"}'
+    rc, who = run(['fuser', '-m', mnt], check=False)
+    if rc == 127:
+        procs = 'unknown (fuser could not be installed)'
+    else:
+        procs = '; '.join(_process(int(p)) for p in re.findall(r'\b(\d+)', who.split(':', 1)[-1])) or 'none'
+    return f'mounts inside it: {", ".join(inside) or "none"}; processes using it: {procs[-600:]}'
+
+
+def _process(pid):
+    """`pid` as someone can recognise it: its command line and container, or this very agentctl."""
+    if pid == os.getpid():
+        return f'{pid} (this agentctl)'
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            cmd = f.read().replace(b'\0', b' ').decode(errors='replace').strip()[:120]
+        with open(f'/proc/{pid}/cgroup') as f:
+            ids = re.findall(r'[0-9a-f]{64}', f.read())
+    except OSError:
+        return f'{pid} (gone)'
+    where = ''
+    if ids:
+        _, name = run(['docker', 'inspect', '-f', '{{.Name}}', ids[-1]], check=False)
+        where = f' in container {name.strip().lstrip("/") or ids[-1][:12]}'
+    return f'{pid} {cmd}{where}'
 
 
 def _shrink(cfg, u, want, sleep=time.sleep):

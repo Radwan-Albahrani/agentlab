@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -28,6 +29,7 @@ from agentlab import (
     privileges,
     render,
     tomledit,
+    update,
     util,
     wslhost,
     yaml,
@@ -1455,6 +1457,27 @@ class DiskSizes(unittest.TestCase):
         calls, size, _, _, warned = self.run_shrink(holder=True)
         self.assertEqual(calls[1:5], ['docker ps', 'docker inspect', 'docker stop', 'umount'])
         self.assertEqual((calls[-1], size, warned), ('docker start', 4 << 20, []))
+
+    def test_reading_an_agents_t3_database_leaves_nothing_open_on_its_disk(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        folder = f'{tmp}/home/.t3/userdata'
+        os.makedirs(folder)
+        db = sqlite3.connect(f'{folder}/statev2.sqlite')
+        db.execute('pragma journal_mode=wal')
+        db.execute('create table orchestration_v2_projection_runs (run_id, thread_id, status, completed_at)')
+        db.commit()
+        db.close()
+        self.assertFalse(deploy.agent_busy({'path': tmp}))
+        self.assertEqual(update.inflight({'path': tmp}), [])
+        held = [
+            os.readlink(f'/proc/self/fd/{fd}')
+            for fd in os.listdir('/proc/self/fd')
+            if os.path.exists(f'/proc/self/fd/{fd}')
+        ]
+        self.assertFalse([p for p in held if p.startswith(tmp)])  # an open one keeps the disk from unmounting
+
+    def test_a_holder_that_is_this_agentctl_says_so(self):
+        self.assertEqual(disks._process(os.getpid()), f'{os.getpid()} (this agentctl)')
 
     def test_a_busy_disk_says_what_holds_it(self):
         _, size, mounted, _, warned = self.run_shrink(rcs={'umount': 32})

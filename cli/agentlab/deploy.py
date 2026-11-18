@@ -1,5 +1,6 @@
 """Networks and stack deploys (plain Compose or Coolify)."""
 
+import contextlib
 import datetime
 import hashlib
 import json
@@ -138,7 +139,8 @@ def agent_busy(agent):
     if not os.path.exists(db):
         return False
     try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
+        # closing(): `with` alone only commits, and an open connection (its -shm mapped) keeps the disk from unmounting
+        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5)) as c:
             marks = ','.join('?' * len(SETTLED))
             q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks}) and completed_at is null'
             return c.execute(q, SETTLED).fetchone()[0] > 0
