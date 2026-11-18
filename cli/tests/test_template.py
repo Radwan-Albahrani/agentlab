@@ -242,3 +242,19 @@ class Template(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AskAgentTest(unittest.TestCase):
+    def test_the_merge_chat_starts_in_the_checkout_made_a_project(self):
+        calls = []
+        comp = {'name': 'leafy'}
+        with (
+            mock.patch.object(template.render, 'agent_of', return_value={'id': 'netzero'}),
+            mock.patch.object(template.deploy, 'containers', return_value=['c1']),
+            mock.patch.object(template, 'run', side_effect=lambda cmd, **kw: calls.append(cmd) or (0, '{}')),
+        ):
+            self.assertTrue(template.ask_agent({}, comp, 'bot/prompts.py'))
+        add, start = calls
+        self.assertEqual(add[-5:], ['project', 'add', '--title', 'leafy companion', '/workspace/companions/leafy'])
+        self.assertEqual(start[-2:], ['/workspace/companions/leafy', '-'])
+        self.assertIn('thread', start)

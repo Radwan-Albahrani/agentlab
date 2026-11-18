@@ -279,10 +279,14 @@ def ask_agent(cfg, comp, files):
     ids = deploy.containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
     if not ids:
         return False
+    where = f'/workspace/companions/{comp["name"]}'
+    t3 = ('docker', 'exec', '-i', '-u', 'agent', '-w', where, ids[0], 't3')
+    # a chat starts in a T3 project, and /workspace itself is none: the checkout is one (already added is fine)
+    run([*t3, 'project', 'add', '--title', f'{comp["name"]} companion', where], check=False, timeout=60)
     rc, out = run(
         [
-            *('docker', 'exec', '-i', '-u', 'agent', '-w', '/workspace', ids[0], 't3', 'thread', 'start', '--json'),
-            *('--title', f'Merge the {comp["name"]} template update', '/workspace', '-'),
+            *t3,
+            *('thread', 'start', '--json', '--title', f'Merge the {comp["name"]} template update', where, '-'),
         ],
         input_text=MERGE_ASK.format(name=comp['name'], files=files),
         check=False,
