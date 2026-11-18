@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router';
 import { api } from '../../api/client';
 import { useDevices } from '../../api/queries';
 import type { Device, PairLink } from '../../api/types';
@@ -146,9 +147,17 @@ export function Devices({ agent }: { agent: string }) {
     }
   };
   const list = devices.data?.devices;
+  const here = useRef<HTMLDivElement>(null);
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash !== '#devices' || !here.current) return;
+    here.current.scrollIntoView({ block: 'start' });
+    here.current.querySelector('input')?.focus({ preventScroll: true });
+  }, [hash]);
   return (
-    <div {...stylex.props(hueTheme(agent), styles.hue)}>
+    <div ref={here} {...stylex.props(hueTheme(agent), styles.hue)}>
       <Section
+        id="devices"
         title="Devices"
         icon="phone"
         sub="The T3 app on your phone or computer, and the browsers signed in to this agent's chat."

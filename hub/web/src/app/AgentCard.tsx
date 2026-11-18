@@ -70,6 +70,8 @@ const styles = stylex.create({
     outlineOffset: -2,
   },
   tileOff: { color: { default: colors.faint, ':hover': colors.faint }, cursor: 'not-allowed' },
+  // what most people come for: the T3 app on their phone or computer
+  pairTile: { gridColumnStart: 1, gridColumnEnd: -1, minHeight: 40, fontWeight: 600 },
 });
 
 function readiness(a: Data): string {
@@ -94,11 +96,16 @@ function Tile({ to, icon, label }: { to: string | null; icon: string; label: str
   );
 }
 
-/** The ways into an agent: chat, terminal, files and the live browser view. */
-export function Launch({ links }: { links: NonNullable<Data['links']> }) {
+/** The ways into an agent: pairing the T3 app first (what most people want), then the web chat, terminal, files and
+ *  the live browser view. */
+export function Launch({ agent, links }: { agent: string; links: NonNullable<Data['links']> }) {
   return (
     <div {...stylex.props(styles.launch)}>
-      <Tile to={links.chat} icon="chat" label="Chat" />
+      <Link to={`/agents/${agent}#devices`} {...stylex.props(styles.tile, styles.pairTile)}>
+        <Icon name="phone" size={15} />
+        Pair a device
+      </Link>
+      <Tile to={links.chat} icon="chat" label="Web chat" />
       <Tile to={links.terminal} icon="terminal" label="Terminal" />
       <Tile to={links.files} icon="files" label="Files" />
       <Tile to={links.browser} icon="browser" label="Browser" />
@@ -145,7 +152,7 @@ function Details({ a, full }: { a: Data; full: boolean }) {
     : '';
   return (
     <div {...stylex.props(styles.body)}>
-      {full && a.links && <Launch links={a.links} />}
+      {full && a.links && <Launch agent={a.name} links={a.links} />}
       {full && r && (
         <Stack gap="xs">
           <Split>

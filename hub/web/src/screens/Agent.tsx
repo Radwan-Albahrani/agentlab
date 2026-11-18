@@ -73,9 +73,10 @@ function AgentView({ name, d }: { name: string; d: AgentPage }) {
       />
       {d.agent.links && (
         <div {...stylex.props(styles.launch)}>
-          <Launch links={d.agent.links} />
+          <Launch agent={name} links={d.agent.links} />
         </div>
       )}
+      {d.agent.online && <Devices agent={name} />}
       {d.agent.online && d.agent.onboarded === false && (
         <Card accent="info">
           <CardBody>
@@ -150,7 +151,6 @@ function AgentView({ name, d }: { name: string; d: AgentPage }) {
           </Section>
         </div>
       </div>
-      {d.agent.online && <Devices agent={name} />}
       {d.containers && (
         <Section title="Containers">
           <Card>
