@@ -227,18 +227,52 @@ def _steps(con, tid, limit):
     return out[::-1]
 
 
+def _local(iso):
+    """An ISO time from T3 (UTC) as local time, e.g. 1:34 PM."""
+    try:
+        return time.strftime('%I:%M %p', time.localtime(parse_iso(iso))).lstrip('0')
+    except (TypeError, ValueError):
+        return str(iso or '')
+
+
+def _said(con, tid, role, limit):
+    """The chat's latest messages of one role, oldest first: (local time, text on one line)."""
+    rows = con.execute(
+        """select created_at, json_extract(payload_json, '$.text') from orchestration_v2_projection_messages
+             where thread_id = ? and role = ? and streaming = 0 order by created_at desc limit ?""",
+        (tid, role, limit),
+    ).fetchall()
+    return [(_local(at), ' '.join((text or '').split())) for at, text in reversed(rows)]
+
+
 def digest(tid):
-    """A compact record of a chat for a side answer: its state, latest steps, workers, PRs and open question."""
+    """A compact record of a chat for a side answer: what was asked, its progress messages (where the milestones
+    are), its latest steps, workers, PRs and open question. Times are local."""
     s = snapshot(tid, '9999')
     run = open_run_since(tid)
     lines = [
-        f'Running: yes, since {run}'
+        f'Now: {time.strftime("%I:%M %p").lstrip("0")}',
+        f'Running: yes, since {_local(run)}'
         if run
-        else f'Running: no; last run {s["last_status"] or "none"} at {s["last_done"]}',
-        f'Now: {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}',
+        else f'Running: no; last run {s["last_status"] or "none"} at {_local(s["last_done"])}',
     ]
     with db() as con:
-        lines += ['Latest steps of the chat (oldest first):', *(f'- {x}' for x in _steps(con, tid, 14))]
+        first = con.execute(
+            """select json_extract(payload_json, '$.text') from orchestration_v2_projection_messages
+                 where thread_id = ? and role = 'user' order by created_at limit 1""",
+            (tid,),
+        ).fetchone()
+        if first and first[0]:
+            lines.append(f'The request: {" ".join(first[0].split("---")[0].split())[:700]}')
+        lines += [
+            'Messages to it since (oldest first):',
+            *(f'- [{at}] {t[:300]}' for at, t in _said(con, tid, 'user', 6)[1:]),
+        ]
+        lines += [
+            'Its progress messages (oldest first):',
+            *(f'- [{at}] {t[:300]}' for at, t in _said(con, tid, 'assistant', 12)),
+        ]
+        lines += ['Its latest steps (oldest first):', *(f'- {x}' for x in _steps(con, tid, 6))]
         for w, title, running in s['workers']:
             last = _steps(con, w, 2)
             lines.append(
@@ -247,9 +281,6 @@ def digest(tid):
     lines += [f'Pull request: {pr.get("url")}' for pr in s['prs'] if pr.get('url')]
     if s['requests'] or s.get('asked'):
         lines.append('It is waiting on an answer to a question it asked.')
-    last = last_answer(tid)
-    if last:
-        lines.append(f'Its last message: {last[:800]}')
     return '\n'.join(lines)
 
 
