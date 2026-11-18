@@ -150,16 +150,18 @@ def is_side_question(msg):
     return is_status_ask(msg) or bool(BTW.match(msg) and BTW.sub('', msg).strip())
 
 
-def side_reply(task, question, ts, at=None):
+def side_reply(task, question, ts, at=None, lead=''):
     """Answer a side question with the quick model from the chat's record, without messaging the chat; `at`: where
-    to post it (default: where the task talks). Falls back to the plain status summary."""
+    to post it (default: where the task talks); `lead`: a line before the answer. Falls back to the plain status
+    summary (to just `lead`, when there is one)."""
     ch, tts = at or where(task)
     question = BTW.sub('', question).strip() or question
     res = t3.triage(prompts.side_answer(question, t3.digest(task['thread'])))
     text = str(res.get('result') or '').strip() if res.get('ok') else ''
-    if not text:
+    if not text and not lead:
         status_reply(task, ts)
         return
+    text = f'{lead} Right now: {text}' if lead and text else lead or text
     slack.post(ch, tts, first_sentence(no_emoji(text), 150), md=text, note="Side answer · the agent wasn't interrupted")
     if task.get('guest') and not at and not task.get('answer_to'):
         cases.answered(task, text)
@@ -219,6 +221,9 @@ def follow_up(task, text, files, ts, by=None):
         slack.react(ch, ts, 'eyes', remove=True)
         slack.post(ch, task['thread_ts'], f":warning: I couldn't pass that on: {t3.error_text(res)}")
         return
+    if (res.get('result') or {}).get('delivery') == 'queued':  # T3 can't steer for us: say so, and where it is
+        lead = ':inbox_tray: Queued: the agent reads this when its current step ends.'
+        jobs.run_later(side_reply, task, 'What is it doing right now?', ts, None, lead)
     now = now_iso()
     with lock:
         if not task['active']:

@@ -215,3 +215,13 @@ def test_a_colleagues_side_question_and_its_answer_reach_the_owners_case(monkeyp
     in_case = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m.get('thread_ts') == '61.1']
     assert 'any update?' in str(in_case) and 'Reviewing PR 6257.' in str(in_case)
     assert any(m['channel'] == 'D_U_SALAH' and 'Reviewing PR 6257.' in str(m) for m in fresh_bot.messages)
+
+
+@pytest.mark.parametrize('delivery', ['queued', 'started'])
+def test_a_follow_up_that_waits_behind_the_running_turn_says_so(monkeypatch, t3_quiet, fresh_bot, delivery):
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True, 'result': {'delivery': delivery}})
+    monkeypatch.setattr(t3, 'digest', lambda tid: 'r')
+    monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': True, 'result': 'Running the deep reviews.'})
+    tasks.follow_up(task(active=True), 'the table looks broken on mobile', None, '9.7')
+    told = 'Queued: the agent reads this when its current step ends. Right now: Running the deep reviews.'
+    assert (told in fresh_bot.text()) is (delivery == 'queued')
