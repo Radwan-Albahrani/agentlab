@@ -554,7 +554,14 @@ def cluster(cfg, c):
             'agentctl apply',
         )
     for stack in render.stacks(cfg):
-        c.add(f'stack-{stack}', bool(deploy.containers(cfg, stack)), f'{stack} running', 'agentctl apply')
+        up = set(deploy.containers(cfg, stack))
+        down = [cid for cid in deploy.containers(cfg, stack, all_states=True) if cid not in up]
+        names = [run(['docker', 'inspect', '-f', '{{.Name}}', cid], check=False)[1].strip().lstrip('/') for cid in down]
+        if not up:
+            c.add(f'stack-{stack}', False, f'{stack} not running', 'agentctl apply')
+        else:  # one stopped container (the hub after a disk shrink) takes a site down while the rest runs
+            msg = f'{stack} running' if not down else f'{stack}: {", ".join(names)} stopped'
+            c.add(f'stack-{stack}', not down, msg, f'docker start {" ".join(names)}' if down else 'agentctl apply')
 
 
 def prerequisites(cfg, c):

@@ -304,13 +304,33 @@ def _shrink(cfg, u, want, sleep=time.sleep):
         if not intact:
             warn(f'{img} could not be rolled back: it stays unmounted with {undo}; run e2undo {undo} {img} by hand')
     finally:
-        if intact and was_mounted and not os.path.ismount(mnt):
-            run(['mount', '-o', 'loop,noatime', img, mnt])
-        if intact:
-            for s in running:
-                deploy.start(cfg, s, quiet)
-            if held:
-                run(['docker', 'start', *held], check=False)
+        _bring_back(cfg, u, running, held, intact, was_mounted, quiet)
+
+
+def _bring_back(cfg, u, running, held, intact, was_mounted, quiet):
+    """Undo the stops, each step on its own so one failure skips none of the others: the containers that only held
+    the disk (the hub) always restart; the person's stacks only on their mounted disk, never on the bare folder, and
+    not at all after a failed roll back (that disk waits for a person)."""
+    img, mnt = u['image'], u['mount']
+    if intact and was_mounted and not os.path.ismount(mnt):
+        rc, out = run(['mount', '-o', 'loop,noatime', img, mnt], check=False)
+        if rc:
+            warn(f'{u["name"]} disk could not be mounted again: {out[-300:]}')
+    if held:
+        rc, out = run(['docker', 'start', *held], check=False)
+        if rc:
+            warn(f'could not start {", ".join(held)} again: {out[-300:]}; run docker start {" ".join(held)}')
+    if not intact:
+        return
+    if was_mounted and not os.path.ismount(mnt):
+        if running:
+            warn(f'{", ".join(running)} stay stopped: {mnt} is not mounted (agentctl apply mounts it and starts them)')
+        return
+    for s in running:
+        try:
+            deploy.start(cfg, s, quiet)
+        except Failed as e:
+            warn(f'{s} could not be started again: {e}')
 
 
 def _roll_back(img):

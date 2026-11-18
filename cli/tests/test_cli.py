@@ -345,6 +345,10 @@ class Migration(unittest.TestCase):
         'mode = "cloudflare-access"', 'mode = "tailscale"'
     )
 
+    def test_the_python_services_stop_on_sigterm(self):
+        services = render.core(resolve(self.ONE))['services']
+        self.assertTrue(services['hub']['init'] and services['gate']['init'])
+
     def test_published_hub_names_its_one_owner(self):
         cfg = resolve(self.ONE, hub__publish=7190, cluster__publish_address='0.0.0.0')
         hub = render.core(cfg)['services']['hub']
@@ -1401,7 +1405,12 @@ class DiskSizes(unittest.TestCase):
         self.assertEqual(self.plan_shrink(30, 110, 88, free_gib=40)[0], [])  # no host room for the moved blocks
         self.assertEqual(self.plan_shrink(10, 110, 88, mounted=False)[0], [])  # data unmeasured
 
-    def run_shrink(self, rcs=None, fail=None, holder=False):
+    def run_shrink(self, rcs=None, fail=None, holder=False, start_fails=False):
+        def started(calls, fails):
+            calls.append('start')
+            if fails:
+                raise util.Failed('coolify said no')
+
         """`rcs`: {command or 'e2fsck -n': exit code}; `fail`: the command that raises; `holder`: another running
         container (the hub) mounts the disk."""
         tmp = self.enterContext(tempfile.TemporaryDirectory())
@@ -1426,7 +1435,7 @@ class DiskSizes(unittest.TestCase):
                 return 0, '/dev/loop9'
             if name == fail:
                 raise util.Failed(f'{name} failed')
-            if name in ('umount', 'mount'):
+            if name in ('umount', 'mount') and not rcs.get(name):
                 mounted[0] = name == 'mount'
             return rcs.get(name, 0), ''
 
@@ -1438,7 +1447,7 @@ class DiskSizes(unittest.TestCase):
                 disks.deploy, 'stack_containers', side_effect=lambda *a: [{'state': next(states, 'exited')}]
             ),
             mock.patch.object(disks.deploy, 'stop', side_effect=lambda *a: calls.append('stop')),
-            mock.patch.object(disks.deploy, 'start', side_effect=lambda *a: calls.append('start')),
+            mock.patch.object(disks.deploy, 'start', side_effect=lambda *a: started(calls, start_fails)),
             mock.patch.object(disks, 'warn') as warned,
         ):
             disks._shrink(self.per_person(), u, 4 << 20, sleep=lambda s: None)
@@ -1456,7 +1465,7 @@ class DiskSizes(unittest.TestCase):
     def test_other_containers_holding_the_disk_stop_for_the_shrink_and_come_back(self):
         calls, size, _, _, warned = self.run_shrink(holder=True)
         self.assertEqual(calls[1:5], ['docker ps', 'docker inspect', 'docker stop', 'umount'])
-        self.assertEqual((calls[-1], size, warned), ('docker start', 4 << 20, []))
+        self.assertEqual((calls[-2:], size, warned), (['docker start', 'start'], 4 << 20, []))  # the hub first
 
     def test_reading_an_agents_t3_database_leaves_nothing_open_on_its_disk(self):
         tmp = self.enterContext(tempfile.TemporaryDirectory())
@@ -1475,6 +1484,18 @@ class DiskSizes(unittest.TestCase):
             if os.path.exists(f'/proc/self/fd/{fd}')
         ]
         self.assertFalse([p for p in held if p.startswith(tmp)])  # an open one keeps the disk from unmounting
+
+    def test_a_failed_remount_still_brings_back_the_hub_but_not_the_agent(self):
+        calls, _, mounted, _, warned = self.run_shrink(holder=True, rcs={'mount': 32}, fail='resize2fs')
+        self.assertIn('docker start', calls)
+        self.assertNotIn('start', calls)  # never on the bare folder under the mount point
+        self.assertFalse(mounted)
+        self.assertTrue(any('stay stopped' in w for w in warned))
+
+    def test_a_stack_that_fails_to_start_does_not_keep_the_hub_down(self):
+        calls, _, _, _, warned = self.run_shrink(holder=True, start_fails=True)
+        self.assertIn('docker start', calls)
+        self.assertTrue(any('could not be started again' in w for w in warned))
 
     def test_a_holder_that_is_this_agentctl_says_so(self):
         self.assertEqual(disks._process(os.getpid()), f'{os.getpid()} (this agentctl)')

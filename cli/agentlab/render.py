@@ -228,6 +228,7 @@ def core(cfg):
         'gate': {
             **_image(cfg, 'gate'),
             'restart': 'unless-stopped',
+            'init': True,  # Python as PID 1 ignores SIGTERM: without an init, every stop waits 10 s and kills it
             'environment': gate_env,
             'volumes': gate_mounts,
             'networks': {EDGE_NETWORK: {'aliases': ['gate']}},
@@ -236,6 +237,7 @@ def core(cfg):
         'hub': {
             **_image(cfg, 'hub'),
             'restart': 'unless-stopped',
+            'init': True,
             'environment': {
                 'HUB_CONFIG': '/etc/agentlab/cluster.json',
                 'TZ': cfg['timezone'],
