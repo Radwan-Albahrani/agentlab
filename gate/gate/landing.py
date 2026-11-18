@@ -6,7 +6,7 @@ from urllib.parse import quote
 from .config import NONE
 
 TOOLS = (
-    ('/', 'Chats', 'T3: your agent chats'),
+    ('/?t3', 'Chats', 'T3: your agent chats'),
     ('/_agentlab/accounts/browser', 'Browser', "The agent's screen, while it has a browser open"),
     ('/_agentlab/terminal/', 'Terminal', 'A shell in the workspace'),
     ('/_agentlab/files/', 'Files', 'Browse and transfer workspace files'),

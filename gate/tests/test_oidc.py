@@ -126,7 +126,7 @@ class Oidc(Base):
         for flag in ('HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/'):
             self.assertIn(flag, session)
         self.assertIn(f'{PENDING}=;', ' '.join(cookies))
-        status, headers = self.call('/', {SESSION: self.jar(headers)[SESSION]})
+        status, headers = self.call('/somewhere', {SESSION: self.jar(headers)[SESSION]})  # bare / is the hub's door
         self.assertEqual(status, 200)
         self.assertEqual((headers['X-Agentlab-User'], headers['X-Agentlab-Agent']), ('sara@example.com', 'sara'))
         # mirrors hub/access.py proof_ok

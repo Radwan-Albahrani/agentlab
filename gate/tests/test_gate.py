@@ -494,6 +494,24 @@ class Several(Base):
         self.assertEqual(status, 302)
         self.assertEqual(headers['Location'], f'https://{HUB}/agents/sara-lab/onboarding')
 
+    def test_the_main_domain_lands_on_the_hub(self):
+        status, headers, _ = self.verify(tok=token(), accept='text/html')
+        self.assertEqual((status, headers['Location']), (302, f'https://{HUB}/'))
+
+    def test_t3_opened_from_the_hub_stays_t3_for_the_session(self):
+        status, headers, _ = self.verify(tok=token(), uri='/?t3', accept='text/html')
+        self.assertEqual((status, headers['Location']), (302, '/'))
+        self.assertTrue(headers['Set-Cookie'].startswith('agentlab_t3=1;'))
+        self.assertEqual(self.verify(tok=token(), cookie='agentlab_t3=1', accept='text/html')[0], 200)
+
+    def test_t3_paths_and_scripts_still_reach_t3(self):
+        self.assertEqual(self.verify(tok=token(), uri='/threads/abc', accept='text/html')[0], 200)  # old bookmarks
+        self.assertEqual(self.verify(tok=token())[0], 200)  # not a page navigation (T3's own requests)
+
+    def test_opening_an_agents_chats_goes_to_t3_not_the_front_door(self):
+        status, headers, _ = self.page('/_agentlab/view/sara-lab?next=/', agent='gate')
+        self.assertEqual((status, headers['Location']), (303, '/?t3'))
+
     def test_hub_allowed(self):
         self.assertEqual(self.verify(host=HUB, tok=token())[0], 200)
 

@@ -14,6 +14,7 @@ from .tokens import TokenError, email_of
 log = logging.getLogger('gate')
 LOCAL = 'local@localhost'
 VIEW = 'agentlab_view'
+T3_OPEN = 'agentlab_t3'  # set once T3 was opened in this browser session: the main domain's / is T3 again
 VIEW_PATH = re.compile(r'^/_agentlab/view/([a-z0-9-]+)/?$')
 
 
@@ -152,10 +153,26 @@ class Handler(BaseHTTPRequestHandler):
             if self.server.onboarding.pending(agent, upstream):
                 to = f'{cfg.hub_url()}/agents/{agent}/onboarding'
                 return self._send(302, 'text/plain', b'', {'Location': to})
+        front = self._front_door(cfg, place) if place == 'domain' else None
+        if front:
+            return self._send(302, 'text/plain', b'', front)
         extra = {'X-Agentlab-User': email, 'X-Agentlab-Admin': '1' if admin else '0', 'X-Agentlab-Agent': agent}
         if signin is not None and signin.ready():
             extra['X-Agentlab-Proof'] = signin.proof(email, extra['X-Agentlab-Admin'], agent)
         return self._send(200, 'text/plain', b'ok\n', extra)
+
+    def _front_door(self, cfg, place):
+        """The main domain's bare / is the hub: a browser landing there goes to it; `/?t3` (the hub's and the menu's
+        T3 links) opens T3 and marks the session, so T3's home still reloads as T3. Other paths are T3 as before."""
+        uri = urlsplit(self.headers.get('X-Forwarded-Uri') or '/')
+        if uri.path != '/' or not wants_page(self.headers):
+            return None
+        if 't3' in parse_qs(uri.query, keep_blank_values=True):
+            secure = '' if cfg.mode == 'none' else '; Secure'
+            return {'Location': '/', 'Set-Cookie': f'{T3_OPEN}=1; Path=/; HttpOnly; SameSite=Lax{secure}'}
+        if cookie(self.headers, T3_OPEN):
+            return None
+        return {'Location': f'{cfg.hub_url()}/'}
 
     def _oidc(self, cfg, host):
         """The person signed in on this host over HTTPS, or None once this answered the request itself."""
@@ -225,7 +242,9 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             if m.group(1) not in cfg.may_open(email, admin):
                 return self._deny(host, email, 'not an agent you may open')
-            return self._redirect(safe_next(url.query), f'{VIEW}={m.group(1)}; Path=/; HttpOnly; SameSite=Lax{secure}')
+            to = safe_next(url.query)
+            to = '/?t3' if to == '/' else to  # opening an agent's chats: T3, not the front door
+            return self._redirect(to, f'{VIEW}={m.group(1)}; Path=/; HttpOnly; SameSite=Lax{secure}')
         pending = False
         if current in cfg.owned(email):
             upstream = cfg.agents[current].get('upstream') or f'http://agent-{current}'
