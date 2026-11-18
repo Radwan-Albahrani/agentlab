@@ -2,10 +2,11 @@
 
 import json
 import os
+import re
 import time
 
 from . import cases, errands, polls, posts, reviews, slack
-from .config import COMP, FILES, OWNER, log
+from .config import COMP, FILES, NAME, OWNER, log
 from .state import key_of, review_of, save
 
 OUTBOX = os.path.join(FILES, 'outbox')
@@ -59,7 +60,9 @@ def tick(task):
     m = _take(os.path.join(box, 'send.json'))
     if m is not None:
         os.replace(os.path.join(box, 'send.json'), os.path.join(box, f'send-{int(time.time())}.json'))
-        cases.send(task, m, *gate(box, m.get('files') or []))
+        for one in m if isinstance(m, list) else [m]:
+            if isinstance(one, dict):
+                _send(task, box, one)
     p = _take(os.path.join(box, 'post.json'))
     if p is not None:
         os.replace(os.path.join(box, 'post.json'), os.path.join(box, f'post-{int(time.time())}.json'))
@@ -76,6 +79,41 @@ def tick(task):
     if m is not None:
         os.replace(os.path.join(box, 'manifest.json'), os.path.join(box, f'delivered-{int(time.time())}.json'))
         _deliver(task, box, m)
+
+
+CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}')
+
+
+def _same(name, person):
+    return bool(person) and name.lstrip('@').strip().lower() == person.lower()
+
+
+def _send(task, box, m):
+    """One message from send.json, routed by its "to": the colleague (a case), this thread, or a post elsewhere that
+    the owner previews (posts.py). In a colleague's task no "to" means the colleague."""
+    to = m.get('to') or ''
+    one = to.strip() if isinstance(to, str) else ''
+    guest = task.get('guest') and cases.who(task)
+    if m.get('edit') or m.get('poll') or isinstance(to, list) or (one and one.lower() not in ('here', 'thread')):
+        if guest and one and _same(one, guest) and not m.get('poll') and not m.get('edit'):
+            cases.send(task, m, *gate(box, m.get('files') or []))
+            return
+        if guest and one and _same(one, slack.name(OWNER)):
+            cases.note(task, f'**{NAME} → you:**\n' + str(m.get('text') or '').strip()[:3000])
+            return
+        p = {k: m[k] for k in ('text', 'poll', 'edit') if k in m}
+        if isinstance(to, list):
+            p['to'] = to
+        elif one.startswith('#') or CHANNEL_ID.fullmatch(one):
+            p.update(channel=one, new_message=True)
+        elif one:
+            p['to'] = one
+        posts.offer(task, p)
+        return
+    if guest:
+        cases.send(task, m, *gate(box, m.get('files') or []))
+        return
+    _deliver(task, box, {'files': m.get('files') or [], 'text': str(m.get('text') or '').strip()[:3000]})
 
 
 def _preview(task, box):
@@ -105,13 +143,13 @@ def _deliver(task, box, m):
     ok, refused = gate(box, m.get('files') or [])
     ch, tts = task['channel'], task['thread_ts']
     what = str(m.get('what') or task.get('title') or 'Files')[:200]
-    head = f':package: *{what}*'
+    head = m.get('text') or f':package: *{what}*'  # send.json "to": "here" carries a message, not a title
     if refused:
         head += '\n:no_entry: Held back: ' + ', '.join(refused)
     if ok:
         slack.upload(ch, tts, ok, head)
-    elif refused:
-        slack.post(ch, tts, what, md=head)
+    elif refused or m.get('text'):
+        slack.post(ch, tts, str(m.get('text') or what)[:150], md=head)
     where = slack.channel_name(ch)
     if m.get('reply') and task.get('requester'):
         approved = task.pop('reply_pending', None) is not None

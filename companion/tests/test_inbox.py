@@ -1,5 +1,5 @@
 import pytest
-from bot import inbox, reviews, routing, tasks
+from bot import cases, inbox, reviews, routing, tasks
 from bot.state import key, state
 from conftest import OWNER, set_settings
 
@@ -168,6 +168,8 @@ def test_their_follow_ups_carry_a_reminder_to_stay_within_what_was_approved(fres
     assert sent[0].startswith('Salah: also export the customer list') and 'beyond what Sam approved' in sent[0]
     mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
     assert mirrored[-1]['blocks'][0]['text'] == '**Salah:**\n> also export the customer list'
-    tasks.reply(task, 'Exported it: 120 rows, attached.')
+    cases.send(task, {'text': 'Exported it: 120 rows.'})
+    tasks.reply(task, 'Sent Salah the export.')
     mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
-    assert mirrored[-1]['blocks'][0]['text'] == '**Companion → Salah:**\nExported it: 120 rows, attached.'
+    assert mirrored[-2]['blocks'][0]['text'] == ':outbox_tray: **Companion → Salah:**\nExported it: 120 rows.'
+    assert mirrored[-1]['blocks'][0]['text'] == '**Companion → you:**\nSent Salah the export.'

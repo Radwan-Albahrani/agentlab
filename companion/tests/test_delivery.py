@@ -63,7 +63,9 @@ def test_a_guests_post_elsewhere_is_previewed_in_the_owners_dm(fresh_bot):
 
 def test_a_guests_task_says_who_asked_and_what_needs_approval():
     p = prompts.task('make it bigger', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '', 'Salah')
-    assert 'Salah asked in' in p and "Radwan's explicit approval" in p and 'approval.json' in p
+    assert 'Salah asked in' in p and "Needs Radwan's OK first" in p and 'approval.json' in p
+    assert 'Salah** hears only what you send them' in p and 'Radwan** gets your final message' in p
+    assert 'work accounts' not in p and 'poll' not in p  # neither is theirs to use
     assert 'Salah' not in prompts.task('x', 'Radwan', 'Slack channel C1', [], [], 'f', 'C1', [], '')
     assert 'approved this request' not in p
 
@@ -96,7 +98,7 @@ def test_a_sent_message_can_be_edited_after_a_preview(fresh_bot):
     posts.decide(t, 'k', True)
     assert t['sent'][0]['id'] == '1' and t['sent'][0]['where'] == 'in #general'
     posted = t['sent'][0]['msgs'][0]
-    assert 'post.json with "edit"' in prompts.editing('box', 'Sam', posts.sent_list(t))
+    assert 'send.json with "edit"' in prompts.editing('box', 'Sam', posts.sent_list(t))
     drop(t, 'post.json', {'edit': '1', 'text': "Post-mortem for today's outage"})
     outbox.tick(t)
     assert fresh_bot.messages[-1]['text'] == 'Edit this?' and 'Edit it' in json.dumps(fresh_bot.messages[-1])

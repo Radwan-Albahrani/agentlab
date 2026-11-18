@@ -9,6 +9,7 @@ from .config import (
     AGENT_DOWN_LIMIT,
     COMP,
     HISTORY_DAYS,
+    NAME,
     OWNER,
     RESUME_GRACE,
     SETTLE,
@@ -30,7 +31,7 @@ def quiet(task):
 
 def history_with(uid, now=None):
     """What the companion did with this person in the last HISTORY_DAYS: their tasks, and reviews of pull requests
-    they wrote or asked for (one line each, oldest first, at most 12)."""
+    they wrote or asked for (one line each, oldest first, at most 6)."""
     since = (now or time.time()) - HISTORY_DAYS * 86400
     rows = []
     for t in state['tasks'].values():
@@ -40,13 +41,13 @@ def history_with(uid, now=None):
         r = review_of(t)
         outcome = t.get('outcome') or ('in progress' if t.get('active') else 'ended')
         if r and (uid in (r.get('asked_by') or []) or slack_for_github(r.get('author')) == uid):
-            what = f'Reviewed {r["id"]} ({r.get("title", "")[:70]}): {outcome}'
+            what = f'Reviewed {r["id"]} ({r.get("title", "")[:60]}): {outcome}'
         elif not r and (t.get('guest') or OWNER) == uid:
             what = f'Task "{t.get("title", "")[:80]}": {outcome}'
         else:
             continue
         rows.append((at, f'- [{hour(at)}] {no_emoji(what)[:300]} · T3 chat {t["thread"]}'))
-    return [line for _, line in sorted(rows)[-12:]]
+    return [line for _, line in sorted(rows)[-6:]]
 
 
 def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, approved=False, via=None):
@@ -163,7 +164,7 @@ def side_reply(task, question, ts, at=None, lead=''):
         return
     text = f'{lead} Right now: {text}' if lead and text else lead or text
     slack.post(ch, tts, first_sentence(no_emoji(text), 150), md=text, note="Side answer · the agent wasn't interrupted")
-    if task.get('guest') and not at and not task.get('answer_to'):
+    if cases.of(task) and not at and not task.get('answer_to'):
         cases.answered(task, text)
     task['seen_ts'] = ts  # keeps the question out of since_last
     save()
@@ -175,6 +176,14 @@ def where(task):
     return (to['ch'], to['tts']) if to else (task['channel'], task['thread_ts'])
 
 
+def _open_case_late(task, by, text):
+    """A colleague talks in a task started without a case (a review they asked for): open one, so the owner follows."""
+    task['colleague'] = by
+    chan = slack.channel_name(task['channel'])
+    cases.open_case(task, text, f'in #{chan}' if chan else 'in a DM')
+    save()
+
+
 def follow_up(task, text, files, ts, by=None, decision=False):
     """`decision`: the owner's Approve / Reject sent on to the agent, not a message anyone typed in the thread."""
     ch = task['channel']
@@ -182,21 +191,32 @@ def follow_up(task, text, files, ts, by=None, decision=False):
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
     if m and m.group(1) in task.get('options', {}):  # "1" picks option 1 of the last question
         msg = task['options'][m.group(1)]
-    elif is_side_question(msg) and not files and not decision:
-        if by and by != OWNER and by == task.get('guest'):
-            cases.colleague_said(task, text)
+    other = bool(by) and by != OWNER
+    if (
+        other
+        and not cases.of(task)
+        and not task.get('requester')
+        and (task.get('audit') or {}).get('by') not in (None, OWNER)
+    ):
+        _open_case_late(task, by, text)  # e.g. a review a colleague asked for: they talk to the companion now
+    followed = other and bool(cases.of(task))
+    if is_side_question(msg) and not files and not decision and not (m and m.group(1) in task.get('options', {})):
+        if followed:
+            cases.colleague_said(task, text, by=by)
         side_reply(task, msg, ts)
         return
-    colleague = bool(by) and by != OWNER and by == task.get('guest')
-    if colleague:
-        cases.colleague_said(task, text, files or ())
-        if task.get('active') and cases.owners_turn(task):  # the owner is talking to the agent: theirs comes next
-            cases.queue(task, {'by': by, 'text': text, 'files': files, 'ts': ts})
-            return
+    colleague = other and by == task.get('guest')
+    if followed:
+        cases.colleague_said(task, text, files or (), by=by)
+    if colleague and task.get('active') and cases.owners_turn(task):  # the owner is talking: theirs comes next
+        cases.queue(task, {'by': by, 'text': text, 'files': files, 'ts': ts})
+        return
     if task.get('guest') or (by and by != OWNER):
         msg = f'{slack.name(by or OWNER)}: {msg}'
     if task.get('approved') and colleague:
         msg += prompts.follow_up_reminder(slack.name(OWNER))
+    if colleague:
+        msg += prompts.colleague_turn(slack.name(by), slack.name(OWNER))
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
     between, more = ([], []) if quiet(task) else since_last(task, ts, folder)  # a batch thread mixes reviews
@@ -305,8 +325,33 @@ def working_line(task, s, now):
     return f':seedling: {step or "thinking…"}' + (f'  ·  {" · ".join(bits)}' if bits else '')
 
 
+def _to_owner(task, md, outcome):
+    """A colleague's turn ends: the agent's final message goes to the owner's case; the colleague already has what the
+    agent chose to send them (send.json), and their thinking line closes."""
+    told = task.pop('told', 0)
+    name = cases.who(task)
+    if task.get('status_ts'):
+        end = 'replied ↓' if told else {'failed': "that didn't work", 'stopped': 'stopped'}.get(outcome, 'done')
+        line = f':seedling: Picked this up · {end}'
+        slack.update(task['channel'], task['status_ts'], no_emoji(line), note=line)
+    task['status_ts'] = None
+    if not told and outcome == 'failed':
+        slack.post(
+            task['channel'],
+            task['thread_ts'],
+            "That didn't work",
+            md=f":x: That didn't work. {slack.name(OWNER)} has the details.",
+        )
+    nothing = '' if told else f'\n_Nothing was sent to {name} this turn. Reply here to tell {NAME} what to send._'
+    cases.note(task, f'**{NAME} → you:**\n{_clip(md, 2900)}{nothing}', f'{NAME} to you about {name}')
+    cases.answered_owner(task, _clip(md, 2900))
+
+
 def reply(task, md, note=None, outcome='answered below'):
     """Post the answer as a new message (Slack notifies on new messages, not edits) and close the thinking line."""
+    if task.get('guest') and not task.get('answer_to'):  # a colleague's turn: the answer is the owner's
+        _to_owner(task, md, outcome)
+        return
     ch, tts = where(task)
     r = review_of(task)
     if r:  # reviews of a batch share its thread
@@ -324,10 +369,10 @@ def reply(task, md, note=None, outcome='answered below'):
         slack.update(ch, task['status_ts'], no_emoji(line), note=line)
     slack.post(ch, tts, first_sentence(no_emoji(md), 300) or 'Reply', md=md, note=note)
     task['status_ts'] = None
-    if task.get('guest') and not task.get('answer_to'):  # an answer to the owner alone stays in the case
-        cases.answered(task, _clip(md, 2900))
-    elif task.get('guest'):
+    if task.get('guest'):  # the owner's private turn: answered in the case thread
         cases.answered_owner(task, _clip(md, 2900))
+    elif cases.of(task) and not task.get('answer_to'):  # a task a colleague joined: they read it, the owner gets a copy
+        cases.answered(task, _clip(md, 2900))
 
 
 def _clip(md, limit):
@@ -677,6 +722,7 @@ def _finish_turn(task, s):
         ok=outcome != 'failed',
     )
     task.pop('answer_to', None)
+    task.pop('told', None)
     task.update(active=False, quiet_since=0, last_status='', last_status_at=0, outcome=outcome, ended=now_iso())
     a = task.get('approval') or {}
     cases.status(task, 'waiting' if a and not a.get('decided') else 'failed' if outcome == 'failed' else 'answered')

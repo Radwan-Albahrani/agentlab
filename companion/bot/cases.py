@@ -1,9 +1,10 @@
 """Cases: every conversation a colleague has with the companion, followed by the owner from one thread in their DM.
 
 The colleague's thread is theirs and the companion's; the case thread is the owner's and the companion's, with a copy of
-everything said to and by the colleague. Whoever starts a turn gets its answer: the colleague's turns are answered in
-their thread (copied to the case), the owner's (in the case thread, or in T3 directly) only in the case thread. The
-companion sends the colleague something on the owner's word with send.json, and the case shows exactly what went."""
+everything said to and by the colleague. The agent talks to the two on purpose: the colleague hears only what it sends
+them (send.json, at once), and its final message, every turn, goes to the owner in the case thread. The owner's own
+messages there (or in T3 directly) are private turns. A task started without a case (a review a colleague asked for)
+gets one when a colleague first talks in it; there the agent's answers go to the thread and are copied here."""
 
 import os
 import time
@@ -28,7 +29,7 @@ def of(task):
 
 
 def who(task):
-    return slack.name(task.get('guest') or task.get('requester') or OWNER)
+    return slack.name(task.get('guest') or task.get('colleague') or task.get('requester') or OWNER)
 
 
 def open_case(task, ask, where, card=None):
@@ -98,11 +99,12 @@ def make_private(task):
         task['answer_to'] = {'ch': c[0], 'tts': c[1]}
 
 
-def colleague_said(task, text, files=()):
-    """Copy a colleague's message into the case."""
+def colleague_said(task, text, files=(), by=None):
+    """Copy a colleague's message into the case; `by`: who wrote it, when not the case's colleague."""
     said = slack.ask(text).strip() or '(files)'
-    note(task, f'**{who(task)}:**\n' + quote(said) + (f'\n_{len(files)} file(s)_' if files else ''))
-    COMP.event('received', f'{who(task)} wrote', task=key_of(task), detail=said)
+    name = slack.name(by) if by else who(task)
+    note(task, f'**{name}:**\n' + quote(said) + (f'\n_{len(files)} file(s)_' if files else ''))
+    COMP.event('received', f'{name} wrote', task=key_of(task), detail=said)
 
 
 def answered_owner(task, md):
@@ -178,7 +180,7 @@ def next_in_line(task):
 
 
 def send(task, s, ok=(), refused=()):
-    """send.json: a message to the colleague on the owner's word, in their thread at once; the case shows it.
+    """send.json: a message to the colleague, in their thread at once; the case shows exactly what went.
     ok / refused: its files, already through the outbox's gate."""
     text = str(s.get('text') or '').strip()[:3000]
     name = who(task)
@@ -192,6 +194,7 @@ def send(task, s, ok=(), refused=()):
         slack.upload(task['channel'], task['thread_ts'], ok)
     files = f'\n_With {len(ok)} file(s): {", ".join(os.path.basename(p) for p in ok)}_' if ok else ''
     held = f'\n:no_entry: Held back: {", ".join(refused)}' if refused else ''
-    note(task, f':outbox_tray: **Sent to {name}:**\n{text}{files}{held}', f'Sent to {name}')
-    COMP.event('sent', f'Message to {name} (on your word)', task=key_of(task), to=name, detail=text)
+    note(task, f':outbox_tray: **{NAME} → {name}:**\n{text}{files}{held}', f'Sent to {name}')
+    COMP.event('sent', f'Message to {name}', task=key_of(task), to=name, detail=text)
+    task['told'] = task.get('told', 0) + 1
     save()

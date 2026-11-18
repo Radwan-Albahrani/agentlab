@@ -52,13 +52,77 @@ def test_a_colleagues_message_opens_a_case_in_the_owners_dm(case, fresh_bot):
     assert 'Salah' in text_of(first) and 'I fixed them' in text_of(first)
 
 
-def test_their_turn_is_answered_in_their_thread_and_copied_to_the_case(case, fresh_bot, monkeypatch):
+def drop(t, payload):
+    box = os.path.join(outbox.OUTBOX, t['outbox'])
+    os.makedirs(box, exist_ok=True)
+    with open(os.path.join(box, 'send.json'), 'w') as f:
+        json.dump(payload, f)
+    outbox.tick(t)
+
+
+def test_the_colleague_hears_only_what_the_agent_sends_and_its_final_message_is_the_owners(
+    case, fresh_bot, monkeypatch
+):
     t, _ = case
-    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'All 16 PRs check out.'))
+    drop(t, {'text': 'All 16 PRs check out.'})
+    monkeypatch.setattr(
+        t3, 'snapshot', snapshot('completed', 'Told Salah the stack is fine; #6257 still needs a test.')
+    )
     tasks.tick(t)
-    assert 'All 16 PRs' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    copy = text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
-    assert 'All 16 PRs' in copy and 'Salah' in copy
+    theirs = text_of(posted(fresh_bot, SALAH_DM, '60.1'))
+    assert 'All 16 PRs' in theirs and 'needs a test' not in theirs
+    case_thread = text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    assert 'Companion \\u2192 Salah' in case_thread and 'All 16 PRs' in case_thread  # what went, copied
+    assert 'Companion \\u2192 you' in case_thread and 'needs a test' in case_thread  # the agent's word to the owner
+    assert 'Nothing was sent' not in case_thread and 'told' not in t
+
+
+def test_a_turn_that_sent_the_colleague_nothing_says_so_in_the_case(case, fresh_bot, monkeypatch):
+    t, _ = case
+    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Salah wants the logs; asking you first.'))
+    tasks.tick(t)
+    assert 'asking you first' not in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
+    assert 'Nothing was sent to Salah this turn' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+
+
+def test_a_message_for_anyone_else_waits_for_the_owners_preview(case, fresh_bot):
+    t, _ = case
+    drop(t, [{'text': 'On it.'}, {'to': '#random', 'text': 'Release today!'}])
+    assert 'On it.' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
+    preview = next(m for m in fresh_bot.messages if m['text'] == 'Post this?')
+    assert preview['channel'] == 'D_OWNER' and not any(m['channel'] == 'C_RANDOM' for m in fresh_bot.messages)
+
+
+def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_case(monkeypatch, t3_quiet, fresh_bot):
+    sent = []
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    t = state.new_task('C_TECH', '80.1', 'T_REV', 'Review #6257', 'rev-box', '80.1', None)
+    t.update(active=False, audit=tasks.audit('U_SALAH', 'in #tech'))
+    tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'U_SALAH')
+    assert t['case']['ch'] == 'D_OWNER' and 'migration check' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    tasks.reply(t, 'The migration drops a column still read by the map.')
+    assert 'drops a column' in text_of(posted(fresh_bot, 'C_TECH', '80.1'))  # answered where they asked
+    assert 'drops a column' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))  # and copied
+
+
+def test_the_owners_own_task_keeps_no_case(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
+    t = state.new_task('C_TECH', '82.1', 'T_OWN', 'logo', 'own-box', '82.1', None)
+    t.update(active=False, audit=tasks.audit(OWNER, 'in #tech'))
+    tasks.follow_up(t, 'make it blue too', None, '83.1', 'U_SALAH')
+    assert 'case' not in t
+
+
+def test_the_owners_files_go_here_with_send_json(monkeypatch, t3_quiet, fresh_bot):
+    t = state.new_task('D_OWNER', '84.1', 'T_OWN', 'proof', 'own-files', '84.1', None)
+    box = os.path.join(outbox.OUTBOX, 'own-files')
+    os.makedirs(box, exist_ok=True)
+    with open(os.path.join(box, 'proof.png'), 'wb') as f:
+        f.write(b'png')
+    uploads = []
+    monkeypatch.setattr(slack, 'upload', lambda ch, tts, paths, comment=None: uploads.append((ch, tts, comment)))
+    drop(t, {'to': 'here', 'text': 'The new logo:', 'files': ['proof.png']})
+    assert uploads == [('D_OWNER', '84.1', 'The new logo:')]
 
 
 def test_the_owner_talks_to_the_agent_privately_in_the_case(case, fresh_bot, monkeypatch):

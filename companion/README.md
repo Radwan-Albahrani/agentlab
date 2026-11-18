@@ -15,10 +15,11 @@ What it does:
   short digest of the chat (its latest steps, workers, PRs) and replies in two sentences at most. The chat is never
   messaged or interrupted.
 - **Cases.** Every conversation a colleague has with it (a DM, a tag, the requests channel) is a case you follow from
-  one message in your DM: what they wrote and everything it sent them land in that thread, full text. Whoever starts a
-  turn gets its answer: theirs are answered in their thread, yours (a reply in the case thread, or a message in the T3
-  chat directly) only in the case thread, never to them. Tell it to send them something and it does (`send.json`),
-  and the case shows exactly what went. Their messages wait while you talk to it. Approvals sit in the case thread; a
+  one message in your DM: what they wrote and everything it sent them land in that thread, full text. The agent talks
+  to the two of you on purpose: they hear only the messages it chooses to send them (`send.json`, at once), and its
+  final message every turn is yours, in the case thread (a turn that sent them nothing says so). Your own messages
+  there (or in the T3 chat directly) are private. A review or task a colleague asked for gets its case when they
+  first talk in it. Their messages wait while you talk to it. Approvals sit in the case thread; a
   newer one replaces the one waiting and the agent can withdraw one, so a stale card can't be approved. The hub's
   Cases tab shows the same conversations.
 - **Errands.** Tag it bare on someone else's message and it handles their request as you (find a document, give

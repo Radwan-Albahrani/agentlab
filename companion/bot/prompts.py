@@ -31,62 +31,78 @@ def task(
     who = guest or owner
     if fresh:
         span = f'{RECENT_DM // 86400} days' if not channel else f'{RECENT // 60} minutes'
-        p = ask + f'\n\n---\n{who} asked this in a new message in {where}, not in a thread. For context only,'
-        p += f' the messages there in the {span} before it (the last one is the request):\n'
+        p = ask + (
+            f'\n\n---\n{who} wrote this in a new message in {where}. For context, the messages there in the {span}'
+            ' before it (the last one is the request; earlier ones are past conversations, so leave them alone unless'
+            ' the request points to them):\n'
+        )
     else:
-        p = ask + f'\n\n---\nThe Slack thread this came from ({who} asked in {where}), complete:\n'
+        p = ask + f'\n\n---\n{who} asked in {where}. The whole thread (use your Slack tools only if you need more):\n'
     p += '\n'.join(lines[-60:]) or '(no other messages)'
     if history:
         p += (
-            f'\n\nWhat {NAME} did with {who} in the last days (its own records, newest last). A short message like'
-            ' "I fixed them" or "done" usually refers to one of these: check them (the T3 chats hold the details)'
-            ' before asking what they mean:\n' + '\n'.join(history)
+            f'\n\nYour recent work with {who}, newest last. A short message like "done" or "I fixed them" probably'
+            ' refers to one of these: check its T3 chat before asking what they mean.\n' + '\n'.join(history)
         )
     if files:
-        p += '\n\nIts attachments, already downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)
-    p += (
-        '\n\nAnything not about the request is an earlier conversation: leave it alone unless the request points to it.'
-        if fresh
-        else '\n\nThat is the whole thread, so there is no need to open Slack in the browser; if you need more from'
-        ' Slack, use your Slack tools with the channel and thread above.'
-    )
-    p += (
-        '\nYour final message is posted word for word to that Slack thread, for everyone in it to read: write it to'
-        ' them, readable on its own, with the answer and not how you got there (never "I sent an edit", tool or'
-        ' character counts, or what is left in your own work). If there is nothing new for them, because you'
-        ' edited or already posted the answer, end with exactly one line `NO_REPLY: <short reason>`: nothing is'
-        ' posted. Never use post.json to answer here.'
-        ' Gather whatever else you need (issue tracker, GitHub, error monitoring, the code) before you start.'
-    )
-    default = (
-        f'With no "channel", or this channel ({channel}), it goes into this thread right away. Add'
-        ' "new_message": true only when asked to post or announce in the channel itself.'
-        if channel
-        else 'Name the channel.'
-    )
+        p += '\n\nAttachments, downloaded for you:\n' + '\n'.join(f'- {f}' for f in files)
+    p += '\n\nGather what you need first (issue tracker, GitHub, error monitoring, the code).'
+    box = outbox(folder)
+    if guest:
+        return p + colleague_rules(box, guest, owner, channels, approved) + credentials(box, owner, guest)
     then = (
-        f'Any other channel or DM gets a preview {owner} approves first.'
+        f'Other channels and people: {owner} approves a preview first.'
         if channel
         else f'{owner} approves a preview first.'
     )
-    rules = guest_rules(folder, guest, owner) if guest else ''
-    if guest and approved:
-        rules += within_approval(guest, owner)
     return (
-        p + rules + posting(outbox(folder), owner, channels, default, then, open_polls) + work_accounts(owner, folder)
+        p + '\n\nYour final message is posted word for word as your reply in this thread, for everyone in it: the'
+        ' answer, readable on its own, not how you got there (no tool or character counts, no "I sent an edit"). If'
+        ' there is nothing new because you already posted or edited it, end with exactly one line'
+        ' `NO_REPLY: <short reason>` and nothing is posted.'
+        + sending(box, owner, channels, then, open_polls, here=True)
+        + work_accounts(owner)
+        + credentials(box, owner)
     )
+
+
+def colleague_rules(box, guest, owner, channels, approved=False):
+    """A colleague's task: two audiences. The colleague gets only what the agent sends them; the final message and
+    everything else goes to the owner, who follows the case (cases.py)."""
+    known = ', '.join(f'#{c["name"]}' for c in channels) or '(none yet)'
+    rules = (
+        f'\n\n## Who hears what\n{guest} is a colleague {owner} lets use {NAME}: you work for {guest} here, with'
+        f" {owner}'s tools and logins. You are talking to two people, and you choose what each one hears:"
+        f'\n- **{guest}** hears only what you send them: write {box}/send.json:'
+        f' {{"text": "<the message, written to {guest}, readable on its own: the answer, not how you got there>",'
+        ' "files": ["<names of files you put in the same folder>"]}. It reaches their thread at once. Answer each message'
+        f' from {guest} this way; for several messages, write a list. You never post to Slack yourself.'
+        f'\n- **{owner}** gets your final message, and only {owner} does: a line or two on what you did and sent,'
+        f' and anything they should know or decide. {owner} also sees a copy of everything {guest} says and'
+        ' everything you send them.'
+        f'\nMessages from {guest} start with "{guest}:". A message without that prefix is {owner} talking to you'
+        f' privately: answer in your final message, and send {guest} something only when {owner} tells you to.'
+        f'\nAnyone else: add "to": "#<channel>" or "<a person\'s name>" to the message in send.json; {owner}'
+        f' approves a preview first. Channels {NAME} is in: {known}.'
+        f"\n\n## Needs {owner}'s OK first\nPermissions or access, money, deleting anything, changing settings or"
+        ' data in a live service, sharing anything confidential (contracts, HR, salaries, customer data,'
+        f' credentials), and anything going outside {org()}. Code on a branch or pull request needs no OK.'
+        f' Prepare it without changing anything, write {box}/approval.json: {{"action": "<one line: exactly what will'
+        ' change>", "details": "<where, who, current vs new>"}, and tell'
+        f' {guest} you are checking with {owner}. The decision arrives as your next message: after "APPROVED" make'
+        f' the change, check it worked and tell {guest}; after "REJECTED" change nothing. A newer approval.json'
+        ' replaces the waiting one; if you drop the plan, write {"withdraw": "<one line: why>"} instead.'
+    )
+    return rules + (within_approval(guest, owner) if approved else '')
 
 
 def within_approval(guest, owner):
     """An approved ask: follow-ups that leave it, or want sensitive information, go back to the owner first."""
     return (
-        f'\n\n{owner} approved this request as {guest} asked it above, and only that. {guest} may follow up in the'
-        ' thread: small refinements of the same request need no approval. But if a follow-up turns it into a different'
-        ' or clearly bigger job than the one approved, or asks for sensitive or confidential information (credentials,'
-        ' customer or personal data, contracts, HR, salaries, finances, private conversations, internal documents the'
-        ' request does not need), do not act on it: write approval.json the same way, with "action" saying what they'
-        ' now want and "details" how it differs from what was approved or which information it is, and end your turn'
-        f' with one line saying you are checking with {owner}.'
+        f'\n{owner} approved this request as {guest} asked it above, and only that. Small refinements are fine. A'
+        ' follow-up that makes it a different or clearly bigger job, or asks for sensitive or confidential'
+        ' information the request does not need, goes through approval.json first, with "details" saying how it'
+        ' differs.'
     )
 
 
@@ -97,36 +113,9 @@ def follow_up_reminder(owner):
     )
 
 
-def guest_rules(folder, guest, owner):
-    """A colleague's task: work for them, but sensitive steps wait for the owner."""
-    return (
-        f"\n\n{guest} is a colleague {owner} lets use {NAME}: you work for {guest} here, with {owner}'s tools"
-        f" and logins. Sensitive things need {owner}'s explicit approval first: permissions or access, money,"
-        ' deleting anything, changing settings or data in a live service, sharing anything confidential'
-        f' (contracts, HR, salaries, customer data, credentials), and anything going outside {org()}. Code changes'
-        ' on a branch or pull request need no approval. For the sensitive ones, prepare everything WITHOUT'
-        f' changing anything, then write {outbox(folder)}/approval.json: {{"action": "<one line: exactly what will'
-        ' change>", "details": "<where, who, current vs new>"} and end your turn with one line saying you are'
-        f' waiting for {owner}\'s approval. The decision arrives as your next message: only after "APPROVED" make'
-        ' the change, check it worked and confirm in one line; after "REJECTED" change nothing. A newer'
-        ' approval.json replaces the one waiting; if you drop the plan (you learned more, or were told to hold),'
-        f' write approval.json as {{"withdraw": "<one line: why>"}} so {owner} cannot approve a stale one.'
-        + case_rules(folder, guest, owner)
-    )
-
-
-def case_rules(folder, guest, owner):
-    """The colleague's conversation is a case the owner follows and can talk to the companion about privately."""
-    return (
-        f'\n\n{owner} follows this conversation: everything {guest} says and everything you send them is copied to'
-        f' {owner}. Messages from {guest} here start with "{guest}:". A message without that prefix is {owner}'
-        f' talking to you privately (here or in this chat directly): answer {owner}, and that answer reaches only'
-        f' them, never {guest}. Send {guest} something during such a turn only when {owner} tells you to: write'
-        f' {outbox(folder)}/send.json: {{"text": "<the message, written to {guest}, readable on its own>", "files":'
-        f' ["<names in that folder>", ...]}}. It goes to {guest}\'s thread at once and {owner} sees exactly what'
-        f' went; then end with one short line to {owner} (e.g. "Sent."). Anything for someone else still goes'
-        ' through post.json for approval.'
-    )
+def colleague_turn(guest, owner):
+    """Tacked onto a colleague's follow-up: who hears what."""
+    return f'\n\n({guest} hears only what you send with send.json; your final message goes to {owner}.)'
 
 
 def side_answer(question, record):
@@ -144,55 +133,47 @@ def owner_private(owner, guest, box, said, pending=''):
     """The owner's message in a case thread, for the agent."""
     hold = f' Your approval request ({pending}) still waits for their Approve or Reject: do not make that change.'
     return (
-        f"{owner} (private, not {guest}): {said}\n\n---\n{owner} is talking to you privately about {guest}'s"
-        f' conversation. Your final message goes only to {owner}; {guest} sees none of this. Send {guest} something'
-        f' only if {owner} tells you to, with {box}/send.json as your instructions say.' + (hold if pending else '')
+        f'{owner} (private, not {guest}): {said}\n\n---\nAnswer {owner} in your final message; {guest} sees none of'
+        f' this. Send {guest} something only if {owner} tells you to, with {box}/send.json.' + (hold if pending else '')
     )
 
 
-def posting(box, owner, channels, default, then, open_polls):
-    """How to hand over a message or poll for a channel (post.json, see posts.py)."""
-    known = '\n'.join(f'- #{c["name"]} (id {c["id"]})' for c in channels) or f'(none: {NAME} has to be invited first)'
+def sending(box, owner, channels, then, open_polls, here=False):
+    """How the agent hands over messages, polls and files: send.json (outbox.py, posts.py)."""
+    known = ', '.join(f'#{c["name"]}' for c in channels) or f'(none: {NAME} has to be invited first)'
     now = datetime.now().astimezone().isoformat(timespec='minutes')
     return (
-        f'\n\nTo post a message or run a poll in Slack, write {box}/post.json:'
-        ' {"channel": "<channel id>", "text": "<the message, standard markdown>",'
-        ' "poll": {"question": "...", "options": ["...", "..."], "closes": "<ISO 8601 time with offset>",'
-        ' "multiple": <true when people may pick several options, e.g. "multi choice" or "pick all that work">}}'
-        f'\n{default} Channels {NAME} can post in:\n{known}'
-        f'\nTo message people directly instead (when {owner} asks to tell, notify or ping someone in their DMs), use'
-        ' "to": "<their name as written, or @mention>" (or a list of up to 10) in place of "channel";'
-        f' {NAME} finds each person and sends it to them from its own DM, after {owner} approves a preview. Write it'
-        f' to them, in {owner}\'s voice as relayed by {NAME} (e.g. "{owner} asked me to let you know…"). No polls by'
-        ' DM.'
-        '\nLeave "poll" out for a plain message. A poll is a new message of its own: "text" introduces it and carries'
-        ' the details (links, descriptions, one line per option) but never the closing time, which'
-        f' {NAME} shows itself and keeps current; the "options" are short button labels (2 to 10,'
-        f' at most 75 characters, e.g. "Fatto (Italian)"). The time now is {now}; read "ends at 2pm" as today in'
-        ' this time zone (tomorrow if that has passed), and with no closing time pick a sensible one (e.g. the end of'
-        f' the working day). {NAME} runs the poll itself: voting buttons, the live count, closing on time and'
-        f' announcing the winner in the channel, so you do not watch it. {then} Never post to Slack yourself, and'
-        ' write it the way people talk in that channel: short, clear, friendly. If you are asked for changes, write'
-        ' post.json again. Once it is written, end with one short line.'
+        f'\n\n## Sending\nYou never post, send, email or upload anything yourself: {NAME} does, from {box}/send.json.'
+        ' Write one message, or a list of them:'
+        ' {"to": "<where>", "text": "<standard markdown>", "files": ["<names of files you put in the same folder>"]}'
+        + ('\n- "to": "here": this thread, at once (e.g. files to go with your reply).' if here else '')
+        + f'\n- "to": "#<channel>": a new message there. Channels {NAME} is in: {known}.'
+        f'\n- "to": "<a person\'s name>" (or a list of up to 10): a DM from {NAME}, in {owner}\'s voice as relayed by'
+        f' {NAME} ("{owner} asked me to let you know…").'
+        f'\n{then} Write the way people talk there: short, clear, friendly. Once it is written, say so in one line.'
+        '\nA poll: to a channel, add "poll": {"question": "...", "options": ["<2 to 10 short labels>"], "closes":'
+        ' "<ISO 8601 with offset>", "multiple": <true if people may pick several>}. "text" introduces it, without'
+        f' the closing time, which {NAME} shows itself. {NAME} runs it (buttons, live count, closing, the winner), so'
+        f' you do not watch it. The time now is {now}; with no closing time given, pick a sensible one.'
         + editing(box, owner)
         + poll_changes(box, owner, open_polls)
     )
 
 
 def editing(box, owner, sent=''):
-    """How to edit a message the agent posted through post.json (posts.edit)."""
+    """How to edit a message the agent sent through send.json (posts.edit)."""
     return (
-        (f'\nMessages you posted for this task so far (id: where: start):\n{sent}' if sent else '')
-        + f'\nYou CAN edit a message you posted with post.json: when {owner} asks to fix, change or correct it, write'
-        f' {box}/post.json with "edit": "<its id>" and the complete new "text" (not just the change), and no'
-        f' "channel" or "to". {NAME} replaces the message wherever it went (after {owner} approves a preview, like'
-        ' the first post), so never post a correction as a new message and never say you cannot edit it. Ids are'
-        ' numbered 1, 2, 3 in the order your messages went out.'
+        (f'\nMessages you sent for this task so far (id: where: start):\n{sent}' if sent else '')
+        + f'\nTo change a message you sent (when {owner} asks), write {box}/send.json with "edit": "<its id: 1, 2, 3'
+        ' in the order they went out>" and the complete new "text", and no "to". Never send a correction as a new'
+        ' message.'
     )
 
 
 def poll_changes(box, owner, open_polls):
-    """How to change an open poll (poll-change.json)."""
+    """How to change an open poll (poll-change.json); nothing when none is open."""
+    if not open_polls:
+        return ''
     return (
         f'{open_polls}'
         f'\nTo change an open poll when {owner} asks (switch single / multiple choice, move the closing time), write'
@@ -208,20 +189,20 @@ def poll_changes(box, owner, open_polls):
 def ask(text, owner, channel, channels, folder, review, open_polls):
     """An ask the owner typed on the hub."""
     default = (
-        f'It goes to channel {channel}.'
+        f'It goes to channel {channel} ("to": "{channel}").'
         if channel
         else 'No channel was picked: take it from the words, and ask if it is unclear.'
     )
-    then = (
-        f'{NAME} shows {owner} a preview and posts it when they tap "Post it".'
+    then = default + (
+        f' {NAME} shows {owner} a preview and posts it when they tap "Post it".'
         if review
-        else f'{owner} said not to ask: {NAME} posts it as soon as you write the file, so get it right.'
+        else f' {owner} said not to ask: {NAME} posts it as soon as you write the file, so get it right.'
     )
     return (
         f'{owner} asked from the dashboard:\n\n{text}\n\n---\n'
         f"This is for Slack: {NAME} ({owner}'s Slack assistant) posts as itself; your job is to prepare it. If it"
         ' needs facts (issue tracker, GitHub, the code, email), gather them first.'
-        + posting(outbox(folder), owner, channels, default, then, open_polls)
+        + sending(outbox(folder), owner, channels, then, open_polls)
     )
 
 
@@ -239,7 +220,7 @@ def errand(who, how, owner, asked, lines, files, folder):
         ' `NO_ACTION: <short reason>` and stop.'
         f'\n\nLanguage: everything for {owner} (your messages, progress, summaries, the approval "action" and'
         f' "details") is in English, whatever language {who} wrote in. Only the "reply" meant for {who} is in'
-        f" {who}'s language." + TOOL_CHOICE + approvals(folder, who, owner) + work_accounts(owner, folder)
+        f" {who}'s language." + TOOL_CHOICE + approvals(folder, who, owner) + handover(owner, folder)
     )
 
 
@@ -251,12 +232,28 @@ TOOL_CHOICE = (
 )
 
 
-def work_accounts(owner, folder):
-    """How to hand files and logins back through the gate, plus the owner's work tools."""
-    box = outbox(folder)
+def work_accounts(owner):
+    """The owner's work tools (work-mail, work-secret), for the owner's own tasks and errands."""
     tools = work_tools()
+    return f"\n\nIf this needs something from {owner}'s work accounts:\n{tools}" if tools else ''
+
+
+def credentials(box, owner, guest=None):
+    """The one way a password leaves: a new account's first-login password, through credential.json."""
     return (
-        (f"\n\nIf this needs something from {owner}'s work accounts:\n{tools}" if tools else '')
+        '\n\nNever put a password or code in a message or file, with one exception: a temporary first-login password'
+        f' a service showed you for an account you just created for {guest or "the person who asked"} goes ONLY in'
+        f' {box}/credential.json: {{"for": "<their name>", "service": "<name>", "url": "<sign-in address>",'
+        ' "username": "...", "password": "...", "note": "<e.g. must be changed at first login>"}.'
+        f' {NAME} asks {owner} and then DMs it to them privately. Never vault passwords or 2FA codes.'
+    )
+
+
+def handover(owner, folder):
+    """An errand's files and reply: manifest.json (outbox._deliver), plus the owner's work tools."""
+    box = outbox(folder)
+    return (
+        work_accounts(owner)
         + '\n\nNever send, email, upload or post anything to anyone yourself, and never put a password or code in a'
         ' reply or file.'
         f' To hand over files, put them in {box}/ and write {box}/manifest.json LAST:'

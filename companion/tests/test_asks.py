@@ -52,7 +52,7 @@ def channel_posts(bot, channel):
 def test_an_ask_is_taken_once_and_starts_the_agent_in_the_owners_dm(started, fresh_bot):
     task, _, told = started(text='Announce the deploy freeze on Thursday', channel='C_TECH', review=True)
     assert task['channel'] == 'D_OWNER' and task['thread'] == 'T_ASK'
-    assert 'deploy freeze' in told and 'C_TECH' in told and '#ask-tech' in told and 'post.json' in told
+    assert 'deploy freeze' in told and 'C_TECH' in told and '#ask-tech' in told and 'send.json' in told
     assert os.listdir(config.COMP.asks_dir) == []
     assert 'From the hub' in fresh_bot.text()
 
@@ -207,7 +207,7 @@ LUNCH = {
 
 def test_the_agent_is_told_it_can_post_here_without_a_preview(tagged):
     _, _, told = tagged
-    assert 'post.json' in told and 'C_RANDOM' in told and 'right away' in told
+    assert 'send.json' in told and 'C_RANDOM' in told and '"to": "here": this thread, at once' in told
 
 
 def test_a_poll_asked_for_in_a_channel_is_a_new_message_there_at_once(tagged, fresh_bot):
