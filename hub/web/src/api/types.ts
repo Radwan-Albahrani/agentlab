@@ -259,18 +259,59 @@ export interface Task {
   slack: string;
   t3: string;
   poll: string | null;
-  /** A colleague's case: what they wrote, what went to them, the owner's private exchange, approvals (oldest first). */
-  timeline?: CaseEntry[];
+  /** Who the conversation is with: you, a colleague you let use the companion, or someone you ran an errand for. */
+  party: 'owner' | 'colleague' | 'errand';
+  /** Where it stands (companion/bot/machine.py). */
+  phase: Phase | '';
+  /** Your case thread in Slack ('' for your own tasks). */
+  caseLink: string;
+  /** The ledger: every message in and out and everything waiting on you, oldest first (companion/bot/ledger.py). */
+  items: CaseItem[];
 }
 
-export interface CaseEntry {
+export type Phase =
+  'working' | 'waiting_owner' | 'waiting_answer' | 'paused' | 'answered' | 'nothing_to_do' | 'stopped' | 'failed';
+
+/** Each kind moves through its own states; nothing is inferred. */
+export type ItemState =
+  | 'received'
+  | 'awaiting_owner'
+  | 'approved'
+  | 'sent'
+  | 'silent'
+  | 'applied'
+  | 'refused'
+  | 'rejected'
+  | 'replaced'
+  | 'withdrawn'
+  | 'failed'
+  | 'dry_run'
+  | 'lost';
+
+export interface CaseItem {
+  seq: number;
+  /** in: to the companion; final: the agent's last word of a turn; message: one it sent or wants to send */
+  kind: 'in' | 'final' | 'message' | 'edit' | 'approval' | 'credential' | 'poll_change';
+  state: ItemState;
   at: number;
-  /** received: from the colleague; sent: to them; private: between the owner and the companion; else approvals */
-  kind: 'received' | 'sent' | 'private' | 'approval' | 'approved' | 'rejected' | 'withdrawn';
-  title: string;
-  to?: string | null;
-  detail?: string;
-  ok?: boolean;
+  /** colleague | requester | owner | thread | channel | people (messages); case | thread (final) */
+  to?: string;
+  /** who it is from (in) or for (out), as people read it: "Sara", "#incidents" */
+  label?: string;
+  text?: string;
+  files?: string[];
+  /** between you and the companion only */
+  private?: boolean;
+  /** why it was refused or failed, or what replaced it */
+  note?: string;
+  action?: string;
+  details?: string;
+  /** a side answer (status? / btw): no turn, the chat was not messaged */
+  side?: boolean;
+  question?: boolean;
+  where?: string;
+  held?: string;
+  history: [ItemState, number][];
 }
 
 export interface Poll {

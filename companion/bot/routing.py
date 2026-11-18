@@ -1,6 +1,6 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
-from . import cases, drafts, inbox, jobs, requests, reviews, slack, tasks
+from . import cases, drafts, inbox, jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, has_access, log, mode, requests_channel
 from .state import key, save, state
 
@@ -93,6 +93,10 @@ def route(ev, mentioned):
     case = in_dm and thr and key(ch, thr) not in state['tasks'] and cases.at(ch, thr)
     if case and not ev.get('files') and tasks.is_side_question(slack.ask(ev.get('text', '')).strip()):
         jobs.run_later(tasks.side_reply, case, slack.ask(ev.get('text', '')).strip(), ts, cases.of(case))
+        return
+    if case and machine.running(case) and case.get('question'):  # the agent asked the owner there: the answer
+        cases.heard(case, OWNER, ev.get('text', ''), ev.get('files'), private=True)
+        jobs.run_later(tasks.follow_up, case, ev.get('text', ''), ev.get('files'), ts)
         return
     if case:  # the owner talking to the companion about a colleague's conversation: private
         jobs.run_later(cases.ask, case, ev.get('text', ''), ev.get('files'), ts)

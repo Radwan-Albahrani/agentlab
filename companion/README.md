@@ -14,14 +14,19 @@ What it does:
   starting with `btw` is answered on the side: the agent's quick model (Haiku, through the bridge's triage) reads a
   short digest of the chat (its latest steps, workers, PRs) and replies in two sentences at most. The chat is never
   messaged or interrupted.
-- **Cases.** Every conversation a colleague has with it (a DM, a tag, the requests channel) is a case you follow from
-  one message in your DM: what they wrote and everything it sent them land in that thread, full text. The agent talks
-  to the two of you on purpose: they hear only the messages it chooses to send them (`send.json`, at once), and its
-  final message every turn is yours, in the case thread (a turn that sent them nothing says so). Your own messages
-  there (or in the T3 chat directly) are private. A review or task a colleague asked for gets its case when they
-  first talk in it. Their messages wait while you talk to it. Approvals sit in the case thread; a
-  newer one replaces the one waiting and the agent can withdraw one, so a stale card can't be approved. The hub's
-  Cases tab shows the same conversations.
+- **Cases.** Every conversation someone else has with it (a colleague's DM or tag, the requests channel, an errand,
+  a review they asked for once they talk in it) is a case you follow from one thread in your DM: what they wrote and
+  everything it sent them land there, full text. The agent talks to the two of you on purpose: they hear only the
+  messages it chooses to send them, and its final message every turn is yours (a turn that sent them nothing says so).
+  Your own messages there (or in the T3 chat directly) are private; theirs wait while you talk to it. Everything
+  waiting on you (approvals, posts, replies, logins) has its own card, and a card that is no longer waiting decides
+  nothing. The hub's Cases tab shows each case with every message's state, and what waits on you on top.
+- **Explicit states.** A task names who it is with (`party`), where you follow it (`case`), the turn under way
+  (`turn`) and where it stands (`phase`), all in `bot/machine.py`. Every message in and out, and everything waiting
+  on you, is an item in the task's ledger (`bot/ledger.py`) that moves only along its state machine (received →
+  waiting for you → approved → sent, or refused, rejected, replaced, withdrawn, failed); a move it does not allow is a
+  bug, not a state. The agent hands everything over through one file, `outbox/<task>/send.json`, where each item names
+  its `type` and a message its `to`, with no defaults, and reads what became of each one in `receipts.json`.
 - **Errands.** Tag it bare on someone else's message and it handles their request as you (find a document, give
   access, look something up). Anything sensitive (access, money, deleting, sharing) waits for your Approve; replies to
   them wait for your Send. Team mode also notices colleagues asking you directly; dry-run mode lets you rehearse.
@@ -169,8 +174,10 @@ Where things are:
 | The company name, the default project | settings `org` and `default_project`: `companion settings <name> '{"org": "..."}'` or the hub |
 | Which Slack message goes where (tags, DMs, threads) | `bot/routing.py`, then `bot/requests.py` for the owner's tags on other people's messages |
 | A task: Slack thread <-> T3 chat, progress lines, retries | `bot/tasks.py` (T3 access in `bot/t3.py`) |
-| What you hand back through files (posts, polls, approvals, logins, send.json) | `bot/outbox.py`, `bot/posts.py`, `bot/polls.py`, `bot/errands.py` |
-| A colleague's conversation followed from the owner's DM (cases) | `bot/cases.py` |
+| What the agent hands over (send.json: messages, polls, edits, approvals, logins) and its receipts | `bot/outbox.py` (intake), then `bot/posts.py`, `bot/polls.py`, `bot/errands.py`, `bot/cases.py` |
+| Every message in and out, and what waits on the owner: items and their state machine | `bot/ledger.py` |
+| Who a task is with, its case, its turn and phase | `bot/machine.py` |
+| A conversation followed from the owner's DM (cases): the case thread, rendered from the ledger | `bot/cases.py` |
 | Buttons | `slack.app.action('<id>')` handlers next to the feature (e.g. the end of `bot/errands.py`) |
 | Settings the owner sees on the hub | `SCHEMA` in `bot/config.py`, read with `COMP.setting('<key>')` |
 | Pull request review and QA | `bot/reviews.py` (Slack and hub side), `reviewer/` (GitHub side, the review brief in `reviewer/prompt.py`) |

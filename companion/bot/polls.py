@@ -162,17 +162,18 @@ def _thread_for(poll):
 
 
 def change(c, task=None):
-    """Apply a poll change from poll-change.json or the hub (task None): choice mode, closing time, close now."""
+    """Apply a poll change from the agent (a ledger poll_change) or the hub (task None): choice mode, closing time,
+    close now. -> '' once applied (or nothing needed changing), else why not."""
     poll = state['polls'].get(str(c.get('poll') or ''))
     if not poll:
-        return
+        return f'there is no poll {c.get("poll")!r}'
     ch, tts = (task['channel'], task['thread_ts']) if task else _thread_for(poll)
     if c.get('close') and poll['open']:
         close(poll, by=OWNER)
-        return
+        return ''
     if not poll['open']:
         slack.post(ch, tts, 'Poll not changed', md=':warning: That poll is already closed.')
-        return
+        return 'that poll is already closed'
     closes = None
     if c.get('closes'):
         try:  # epoch from the hub, ISO 8601 from the agent
@@ -185,7 +186,7 @@ def change(c, task=None):
             closes = 0
         if closes <= time.time():
             slack.post(ch, tts, 'Poll not changed', md=':warning: The new closing time must be in the future.')
-            return
+            return 'the new closing time must be in the future'
     done = []
     if 'multiple' in c and bool(c['multiple']) != bool(poll.get('multiple')):
         poll['multiple'] = bool(c['multiple'])
@@ -208,20 +209,19 @@ def change(c, task=None):
         line, ok = _vote_for(poll, c['vote'])
         if not ok:
             slack.post(ch, tts, 'Vote not added', md=f':warning: {line}')
-            return
+            return line
         done.append(line)
     if not done:
         slack.note_only(ch, tts, f':bar_chart: "{poll["question"]}" already is like that; nothing changed.')
-        return
+        return ''
     save()
     _refresh(poll)
     where = '#' + (slack.channel_name(poll['channel']) or poll['channel'])
     line = f':bar_chart: Poll in {where} updated: ' + '; '.join(done) + ('' if task else ' (from the hub)')
     slack.note_only(ch, tts, line)
-    if task:
-        task['posted'] = True  # suppresses the agent's own answer in the thread
     COMP.event('settings', f'Poll changed: {" and ".join(done)}', task=poll['task'], to=where, detail=poll['question'])
     log('poll changed', poll['id'], done)
+    return ''
 
 
 def _vote_for(poll, v):

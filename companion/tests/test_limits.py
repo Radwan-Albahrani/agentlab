@@ -3,7 +3,7 @@ import time
 from datetime import UTC, datetime
 
 import pytest
-from bot import limits, publish, state, t3, tasks
+from bot import limits, machine, publish, state, t3, tasks
 from test_turns import task
 
 NOW = datetime(2026, 11, 16, 20, 0, tzinfo=UTC).timestamp()  # 23:00 in Riyadh (UTC+3)
@@ -103,14 +103,14 @@ def limited(monkeypatch, t3_quiet):
 def test_a_usage_limit_pauses_until_t3_resumes_then_finishes_without_a_failure(monkeypatch, limited, fresh_bot):
     t = task()
     tasks.tick(t)
-    assert t['active'] and t['paused']['resumes_at'] == pytest.approx(IN_AN_HOUR, abs=0.01)
+    assert machine.running(t) and t['paused']['resumes_at'] == pytest.approx(IN_AN_HOUR, abs=0.01)
     assert not limited and not t.get('retry_at')
     assert 'Paused for the usage limit' in fresh_bot.text() and 'failed' not in fresh_bot.text()
     card = publish.card('k', t)
-    assert (card['status'], card['resumes_at']) == ('paused', t['paused']['resumes_at'])
+    assert (card['status'], card['phase'], card['resumes_at']) == ('paused', 'paused', t['paused']['resumes_at'])
 
     tasks.tick(t)  # still the same failed run: waits
-    assert t['active'] and not limited
+    assert machine.running(t) and not limited
 
     monkeypatch.setattr(t3, 'snapshot', turn('failed', running=True))  # T3's continuation run
     tasks.tick(t)
@@ -120,7 +120,7 @@ def test_a_usage_limit_pauses_until_t3_resumes_then_finishes_without_a_failure(m
     monkeypatch.setattr(t3, 'snapshot', turn('completed', done='2026-11-16T23:00:00.000Z'))
     t['latest'] = 'The queue is empty.'
     tasks.tick(t)
-    assert not t['active'] and t['outcome'] == 'answered' and not limited
+    assert not machine.running(t) and machine.outcome(t) == 'answered' and not limited
 
 
 def test_if_t3_does_not_resume_it_says_continue_once_after_the_reset(monkeypatch, limited):
@@ -132,11 +132,11 @@ def test_if_t3_does_not_resume_it_says_continue_once_after_the_reset(monkeypatch
     t['paused']['resumes_at'] -= 2 * 60
     tasks.tick(t)
     tasks.tick(t)
-    assert limited == ['continue'] and t['active'] and t['paused']['nudged']
+    assert limited == ['continue'] and machine.running(t) and t['paused']['nudged']
 
 
 def test_a_limit_notice_as_the_answer_pauses_too(monkeypatch, limited):
     monkeypatch.setattr(t3, 'run_error', lambda tid: '')
     t = task(latest="You've hit your 5-hour limit · resets 1:50am (Asia/Riyadh)")
     tasks.tick(t)
-    assert t['active'] and t['paused']['resumes_at']
+    assert machine.running(t) and t['paused']['resumes_at']

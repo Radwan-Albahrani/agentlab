@@ -4,9 +4,9 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from bot import asks, config, errands, outbox, polls, posts, projects, publish, state, t3, tasks
+from bot import asks, config, ledger, machine, outbox, polls, posts, projects, publish, state, t3, tasks
 from bot.text import clock
-from conftest import OWNER
+from conftest import OWNER, agent_sends, click, ended, receipts
 
 IN_AN_HOUR = (datetime.now().astimezone() + timedelta(hours=1)).isoformat()
 
@@ -33,75 +33,86 @@ def started(t3_quiet, monkeypatch):
     return start
 
 
-def write_post(box, post):
-    with open(os.path.join(box, 'post.json'), 'w') as f:
-        json.dump(post, f)
-
-
-def press(action, task, user=OWNER):
-    handler = {'send': lambda t, k: posts.decide(t, k, True), 'skip': lambda t, k: posts.decide(t, k, False)}[action]
-    k = state.key(task['channel'], task['thread_ts'])
-    body = {'user': {'id': user}, 'actions': [{'value': k}], 'channel': {'id': 'D_OWNER'}, 'message': {'ts': 'x'}}
-    errands.owner_action(handler)(lambda: None, body)
-
-
 def channel_posts(bot, channel):
     return [m for m in bot.messages if m['channel'] == channel]
+
+
+def to_tech(text, **more):
+    return {'type': 'message', 'to': '#ask-tech', 'text': text, **more}
 
 
 def test_an_ask_is_taken_once_and_starts_the_agent_in_the_owners_dm(started, fresh_bot):
     task, _, told = started(text='Announce the deploy freeze on Thursday', channel='C_TECH', review=True)
     assert task['channel'] == 'D_OWNER' and task['thread'] == 'T_ASK'
     assert 'deploy freeze' in told and 'C_TECH' in told and '#ask-tech' in told and 'send.json' in told
+    assert '"type"' in told and 'receipts.json' in told
     assert os.listdir(config.COMP.asks_dir) == []
     assert 'From the hub' in fresh_bot.text()
+    assert machine.running(task) and task['party'] == {'kind': 'owner', 'user': OWNER}
 
 
 def test_a_post_waits_for_the_owners_tap_and_only_the_owner_can_give_it(started, fresh_bot):
-    task, box, _ = started(text='Announce the freeze', channel='C_TECH', review=True)
-    write_post(box, {'channel': 'C_TECH', 'text': 'Deploy freeze on Thursday.'})
-    outbox.tick(task)
+    task, _, _ = started(text='Announce the freeze', channel='C_TECH', review=True)
+    agent_sends(task, to_tech('Deploy freeze on Thursday.'))
     assert channel_posts(fresh_bot, 'C_TECH') == []
-    assert ['post_send', 'post_skip'] in fresh_bot.actions()
-    assert publish.card('k', task)['waiting'] == 'post'
-    press('send', task, user='U_SALAH')
-    assert channel_posts(fresh_bot, 'C_TECH') == []
-    press('send', task)
+    (it,) = ledger.pending(task)
+    assert it['state'] == 'awaiting_owner' and publish.card('k', task)['waiting'] == 'post'
+    click(fresh_bot, 'post_send', user='U_SALAH')
+    assert channel_posts(fresh_bot, 'C_TECH') == [] and it['state'] == 'awaiting_owner'
+    click(fresh_bot, 'post_send')
     assert channel_posts(fresh_bot, 'C_TECH')[0]['text'] == 'Deploy freeze on Thursday.'
+    assert [h[0] for h in it['history']] == ['received', 'awaiting_owner', 'approved', 'sent']
 
 
 def test_dont_post_posts_nothing(started, fresh_bot):
     task, box, _ = started(text='x', channel='C_TECH', review=True)
-    write_post(box, {'channel': 'C_TECH', 'text': 'Hello'})
-    outbox.tick(task)
-    press('skip', task)
+    agent_sends(task, to_tech('Hello'))
+    click(fresh_bot, 'post_skip')
     assert channel_posts(fresh_bot, 'C_TECH') == []
+    last = receipts(box)[-1]
+    assert last['state'] == 'rejected' and last['meaning'] == 'rejected by the owner'
 
 
 def test_without_review_it_goes_out_at_once(started, fresh_bot):
-    task, box, _ = started(text='x', channel='C_TECH', review=False)
-    write_post(box, {'channel': '#ask-tech', 'text': 'Hello all'})
-    outbox.tick(task)
+    task, _, _ = started(text='x', channel='C_TECH', review=False)
+    agent_sends(task, to_tech('Hello all'))
     assert channel_posts(fresh_bot, 'C_TECH')[0]['text'] == 'Hello all'
 
 
 def test_a_channel_companion_is_not_in_is_refused_with_how_to_fix_it(started, fresh_bot):
     task, box, _ = started(text='x', channel='', review=False)
-    write_post(box, {'channel': 'C_ELSEWHERE', 'text': 'Hello'})
-    outbox.tick(task)
+    agent_sends(task, {'type': 'message', 'to': 'C_ELSEWHERE', 'text': 'Hello'})
     assert channel_posts(fresh_bot, 'C_ELSEWHERE') == []
-    assert '/invite @Companion' in fresh_bot.text()
+    assert '/invite @Companion' in receipts(box)[-1]['note']
+    assert '/invite @Companion' in fresh_bot.text()  # and the owner is told where they follow the task
 
 
-def test_a_revised_post_retires_the_older_preview(started, fresh_bot):
-    task, box, _ = started(text='x', channel='C_TECH', review=True)
-    write_post(box, {'channel': 'C_TECH', 'text': 'First'})
-    outbox.tick(task)
-    write_post(box, {'channel': 'C_TECH', 'text': 'Second'})
-    outbox.tick(task)
-    assert 'Replaced by the version below' in json.dumps(fresh_bot.updates)
-    press('send', task)
+def test_two_posts_wait_side_by_side_and_each_card_decides_its_own(started, fresh_bot):
+    task, _, _ = started(text='x', channel='C_TECH', review=True)
+    agent_sends(task, to_tech('First'), to_tech('Second'))
+    assert len(ledger.pending(task)) == 2
+    click(fresh_bot, 'post_send', nth=1)
+    click(fresh_bot, 'post_skip', nth=0)
     assert [m['text'] for m in channel_posts(fresh_bot, 'C_TECH')] == ['Second']
+    assert [i['state'] for i in ledger.items(task)] == ['rejected', 'sent']
+
+
+@pytest.mark.parametrize(
+    ('item', 'why'),
+    [
+        ({'to': '#ask-tech', 'text': 'x'}, '"type" must be one of'),
+        ({'type': 'message', 'text': 'x'}, '"to" is required'),
+        ({'type': 'message', 'to': '#ask-tech'}, 'no text and no files'),
+        ({'type': 'approval', 'details': 'x'}, 'needs an "action"'),
+        ({'type': 'edit', 'id': '9', 'text': 'x'}, 'names no message this task sent'),
+    ],
+)
+def test_an_item_that_says_too_little_is_refused_never_guessed(started, fresh_bot, item, why):
+    task, box, _ = started(text='x', channel='C_TECH', review=True)
+    agent_sends(task, item)
+    (r,) = receipts(box)
+    assert r['state'] == 'refused' and why in r['note']
+    assert channel_posts(fresh_bot, 'C_TECH') == []
 
 
 @pytest.mark.parametrize(
@@ -119,16 +130,16 @@ def test_a_bad_poll_is_refused(poll, problem):
 
 @pytest.fixture
 def poll(started, fresh_bot):
-    task, box, _ = started(text='Lunch poll', channel='C_RANDOM', review=False)
-    write_post(
-        box,
+    task, _, _ = started(text='Lunch poll', channel='C_RANDOM', review=False)
+    agent_sends(
+        task,
         {
-            'channel': 'C_RANDOM',
+            'type': 'message',
+            'to': '#random',
             'text': 'Team lunch on Thursday!',
             'poll': {'question': 'Where?', 'options': ['Pizza', 'Shawarma', 'Sushi'], 'closes': IN_AN_HOUR},
         },
     )
-    outbox.tick(task)
     (p,) = state.state['polls'].values()
     return task, p
 
@@ -166,7 +177,7 @@ def test_the_poll_closes_on_time_and_announces_the_winner(poll, fresh_bot):
     assert '**Shawarma** wins with 2 of 3 votes' in json.dumps(announce['blocks'])
     vote(p, 'U_D', 'Pizza')
     assert polls.counts(p) == [1, 2, 0]
-    task['active'] = False
+    ended(task)
     assert publish.card('k', task)['status'] == 'done'
 
 
@@ -200,6 +211,8 @@ def tagged(t3_quiet, monkeypatch):
 
 
 LUNCH = {
+    'type': 'message',
+    'to': '#random',
     'text': 'Lunch on Thursday: pick a place!\n- Peradiz (Indian): https://maps.app.goo.gl/kRDMYyC9x8qAdJpYA',
     'poll': {'question': 'Where do we eat?', 'options': ['Peradiz (Indian)', 'Fatto (Italian)'], 'closes': IN_AN_HOUR},
 }
@@ -207,13 +220,13 @@ LUNCH = {
 
 def test_the_agent_is_told_it_can_post_here_without_a_preview(tagged):
     _, _, told = tagged
-    assert 'send.json' in told and 'C_RANDOM' in told and '"to": "here": this thread, at once' in told
+    assert 'send.json' in told and 'C_RANDOM' in told and '"thread": this thread, at once' in told
+    assert 'Messages to this channel go at once' in told
 
 
 def test_a_poll_asked_for_in_a_channel_is_a_new_message_there_at_once(tagged, fresh_bot):
-    task, box, _ = tagged
-    write_post(box, LUNCH)
-    outbox.tick(task)
+    task, _, _ = tagged
+    agent_sends(task, LUNCH)
     (p,) = state.state['polls'].values()
     poll_msg = next(m for m in fresh_bot.messages if m['channel'] == 'C_RANDOM' and m.get('text') == 'Where do we eat?')
     assert 'thread_ts' not in poll_msg
@@ -227,52 +240,51 @@ def test_a_poll_asked_for_in_a_channel_is_a_new_message_there_at_once(tagged, fr
     assert p['channel'] == 'C_RANDOM'
 
 
-def test_once_posted_the_agents_wrap_up_stays_out_of_the_thread(tagged, fresh_bot):
-    task, box, _ = tagged
-    write_post(box, LUNCH)
-    outbox.tick(task)
+def test_once_posted_the_agent_says_so_or_stays_silent_on_purpose(tagged, fresh_bot):
+    task, _, _ = tagged
+    agent_sends(task, LUNCH)
     before = len(fresh_bot.messages)
-    task['latest'] = 'I prepared the lunch poll.'
+    task['latest'] = 'NO_REPLY: the poll is up'
     tasks._finish_turn(task, {'last_status': 'completed', 'last_done': None})
     assert len(fresh_bot.messages) == before
-    assert task['outcome'] == 'posted'
+    assert machine.outcome(task) == 'silent' and ledger.items(task)[-1]['state'] == 'silent'
 
 
 def test_a_post_for_another_channel_still_asks_first(tagged, fresh_bot):
-    task, box, _ = tagged
-    write_post(box, {'channel': 'C_TECH', 'text': 'Hello tech'})
-    outbox.tick(task)
+    task, _, _ = tagged
+    agent_sends(task, to_tech('Hello tech'))
     assert channel_posts(fresh_bot, 'C_TECH') == []
     assert ['post_send', 'post_skip'] in fresh_bot.actions()
 
 
 def test_a_message_by_dm_is_previewed_even_when_asked_in_the_channel(tagged, fresh_bot):
-    task, box, told = tagged
+    task, _, told = tagged
     assert '"to"' in told
-    write_post(box, {'to': ['Ali', 'Ali Khan'], 'text': 'Sam asked me to let you know: lunch at 2.'})
-    outbox.tick(task)
+    agent_sends(
+        task, {'type': 'message', 'to': ['Ali', 'Ali Khan'], 'text': 'Sam asked me to let you know: lunch at 2.'}
+    )
     assert channel_posts(fresh_bot, 'D_U_ALI') == []
     assert '<@U_ALI>, <@U_ALI2> by DM' in fresh_bot.text()
-    press('send', task)
+    click(fresh_bot, 'post_send')
     assert channel_posts(fresh_bot, 'D_U_ALI')[0]['text'].startswith('Sam asked me')
     assert channel_posts(fresh_bot, 'D_U_ALI2')
     assert 'Message sent to Ali, Ali Khan by DM' in fresh_bot.text()
 
 
 def test_an_unclear_person_is_refused_with_why(tagged, fresh_bot):
-    task, box, _ = tagged
-    write_post(box, {'to': 'Al', 'text': 'Hi'})
-    outbox.tick(task)
+    task, _, _ = tagged
+    agent_sends(task, {'type': 'message', 'to': 'Al', 'text': 'Hi'})
     assert 'matches 2 people' in fresh_bot.text()
     assert 'post_send' not in json.dumps(fresh_bot.actions())
 
 
 def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fresh_bot):
-    task, box, _ = started(text='x', channel='C_RANDOM', review=False)
-    write_post(
-        box,
+    task, _, _ = started(text='x', channel='C_RANDOM', review=False)
+    agent_sends(
+        task,
         {
-            'channel': 'C_RANDOM',
+            'type': 'message',
+            'to': '#random',
             'text': '',
             'poll': {
                 'question': 'Which days?',
@@ -282,7 +294,6 @@ def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fre
             },
         },
     )
-    outbox.tick(task)
     (p,) = state.state['polls'].values()
     vote(p, 'U_A', 'Mon')
     vote(p, 'U_A', 'Wed')
@@ -316,9 +327,9 @@ def test_votes_are_public_with_pictures_and_names(poll, fresh_bot):
     assert '- Shawarma: 2 (Salah, Sam)' in polls.result(p)
 
 
-def drop_change(box, change):
-    with open(os.path.join(box, 'poll-change.json'), 'w') as f:
-        json.dump(change, f)
+def change(task, **fields):
+    agent_sends(task, {'type': 'poll_change', **fields})
+    return ledger.items(task)[-1]
 
 
 def test_the_agent_can_switch_a_poll_to_single_choice_keeping_each_latest_pick(poll, fresh_bot):
@@ -327,11 +338,10 @@ def test_the_agent_can_switch_a_poll_to_single_choice_keeping_each_latest_pick(p
     vote(p, 'U_A', 'Sushi')
     vote(p, 'U_A', 'Pizza')
     vote(p, 'U_B', 'Shawarma')
-    drop_change(os.path.join(outbox.OUTBOX, task['outbox']), {'poll': p['id'], 'multiple': False})
-    outbox.tick(task)
+    it = change(task, poll=p['id'], multiple=False)
     assert not p['multiple'] and p['votes'] == {'U_A': [0], 'U_B': [1]}
     assert '1 person had several picks; their latest was kept' in fresh_bot.text()
-    assert task['posted']
+    assert it['kind'] == 'poll_change' and it['state'] == 'applied'
 
 
 def test_the_page_can_change_the_closing_time_and_close_a_poll(poll, fresh_bot):
@@ -371,14 +381,11 @@ def test_poll_times_read_as_12_hour_clock():
 
 def test_the_owner_can_add_a_vote_for_someone_and_it_says_so(poll, fresh_bot):
     task, p = poll
-    box = os.path.join(outbox.OUTBOX, task['outbox'])
-    drop_change(box, {'poll': p['id'], 'vote': {'for': 'Ali Example', 'options': ['shawarma']}})
-    outbox.tick(task)
+    change(task, poll=p['id'], vote={'for': 'Ali Example', 'options': ['shawarma']})
     assert p['votes']['U_ALI'] == [1] and p['added_by'] == {'U_ALI': OWNER}
     assert "added Ali's vote for Shawarma" in fresh_bot.text()
     assert 'Ali (added by Sam)' in json.dumps(fresh_bot.updates[-1])
-    drop_change(box, {'poll': p['id'], 'vote': {'for': 'Ali Example', 'remove': True}})
-    outbox.tick(task)
+    change(task, poll=p['id'], vote={'for': 'Ali Example', 'remove': True})
     assert 'U_ALI' not in p['votes'] and not p['added_by']
 
 
@@ -393,11 +400,9 @@ def test_the_owner_can_add_a_vote_for_someone_and_it_says_so(poll, fresh_bot):
 )
 def test_a_vote_for_someone_unclear_is_refused_not_guessed(poll, fresh_bot, who, option, problem):
     task, p = poll
-    drop_change(
-        os.path.join(outbox.OUTBOX, task['outbox']), {'poll': p['id'], 'vote': {'for': who, 'options': [option]}}
-    )
-    outbox.tick(task)
+    it = change(task, poll=p['id'], vote={'for': who, 'options': [option]})
     assert p['votes'] == {} and problem in fresh_bot.text()
+    assert it['state'] == 'refused' and problem in it['note']
 
 
 def test_a_later_message_about_a_poll_brings_the_poll_instructions(poll, tagged, monkeypatch):
@@ -407,8 +412,8 @@ def test_a_later_message_about_a_poll_brings_the_poll_instructions(poll, tagged,
     monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
     tasks.follow_up(task, '<@BCOMPANION> add a vote from Ali on Fatto', None, '70.9')
     tasks.follow_up(task, '<@BCOMPANION> thanks!', None, '71.0')
-    assert 'poll-change.json' in sent[0] and p['id'] in sent[0]
-    assert 'poll-change.json' not in sent[1]
+    assert '"type": "poll_change"' in sent[0] and p['id'] in sent[0]
+    assert 'poll_change' not in sent[1]
 
 
 def test_moving_the_closing_time_updates_the_whole_message(poll, fresh_bot):

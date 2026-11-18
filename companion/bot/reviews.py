@@ -9,7 +9,7 @@ from reviewer import prompt as brief
 from reviewer import pulls, report
 from reviewer.github import App, GitHubError
 
-from . import projects, prompts, slack, t3, tasks
+from . import machine, projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, NAME, OWNER, evidence_repo, log, mode, optional_secret, review_slots, slack_for_github
 from .state import key, key_of, lock, new_task, review_of, save, state
 from .text import clock, first_sentence, hour, no_emoji
@@ -133,7 +133,7 @@ def request(repo, number, origin=None):
         return f'GitHub did not answer ({e})'
     pr_id = f'{repo}#{number}'
     _, t = latest(pr_id)
-    if (t and t.get('active')) or any(q['id'] == pr_id for q in state.get('review_queue', [])):
+    if (t and machine.running(t)) or any(q['id'] == pr_id for q in state.get('review_queue', [])):
         return f'{pr_id} is already being reviewed'
     item = {'id': pr_id, 'repo': repo, 'number': int(number), 'origin': origin}
     state.setdefault('review_queue', []).append(item)
@@ -300,12 +300,12 @@ def for_reply(channel, thread_ts, text, others=False):
     if numbers:
         named = [t for t in here.values() if review_of(t)['number'] in numbers]
         return named[0] if len(named) == 1 else None
-    waiting = [t for t in here.values() if t.get('question') and (t.get('active') or t.get('outcome') == 'asked you')]
+    waiting = [t for t in here.values() if t.get('question') and (machine.running(t) or machine.outcome(t) == 'asked')]
     if len(waiting) == 1:
         return waiting[0]
     if others:
         return None
-    running = [t for t in here.values() if t.get('active')]
+    running = [t for t in here.values() if machine.running(t)]
     if len(running) == 1 and not waiting:
         return running[0]
     if waiting or running:
@@ -321,7 +321,7 @@ def answer(task, text, files, ts):
 
 def which(channel, thread_ts):
     """Several reviews here could take that reply: say how to pick one."""
-    busy = [t for t in _here(channel, thread_ts).values() if t.get('active') or t.get('question')]
+    busy = [t for t in _here(channel, thread_ts).values() if machine.running(t) or t.get('question')]
     if not busy:
         return
     names = ', '.join(f'#{review_of(t)["number"]}' for t in busy)
@@ -362,8 +362,7 @@ def prune_tick():
 def tick():
     queue = state.get('review_queue') or []
     _tidy()
-    _recover()
-    running = sum(1 for t in state['tasks'].values() if review_of(t) and t.get('active'))
+    running = sum(1 for t in state['tasks'].values() if review_of(t) and machine.running(t))
     while queue and running < review_slots():
         if not t3.agent_up():  # restarting: the queue waits for it rather than failing
             break
@@ -379,37 +378,6 @@ def tick():
             COMP.event('failed', f'Could not review {item["id"]}', detail=str(ex)[:300], ok=False)
     _settle(queue)
     _keep_posted()
-
-
-def _recover():
-    """Reviews that ended as failed on a usage limit, the newest of their PR and not asked for again: paused instead."""
-    queued = {q['id'] for q in state.get('review_queue') or []}
-    now = time.time()
-    for t in list(state['tasks'].values()):
-        r = review_of(t)
-        if not r or t.get('active') or t.get('outcome') != 'failed' or t.get('limit_checked'):
-            continue
-        if r['id'] in queued or latest(r['id'])[1] is not t:
-            t['limit_checked'] = True
-        elif tasks.recover_limited(t, now):
-            log('review paused for the usage limit after it failed', r['id'])
-            _rejoin(t)
-            save()
-
-
-def _rejoin(t):
-    """Put a recovered review back on a batch card: its own entry if the batch is still going, else a new batch."""
-    k = key_of(t)
-    if any(e.get('task') == k for e in _run()):
-        return  # _settle reopens it
-    r = review_of(t)
-    b = _batch()
-    if not b:
-        thread = None if t['channel'].startswith('D') else t['thread_ts']  # a channel's batch stays in its thread
-        b = state['review_batch'] = {'channel': t['channel'], 'thread': thread, 'card': None, 'prs': []}
-    paused = t['paused'].get('resumes_at') or 0
-    b['prs'].append({'id': r['id'], 'url': r['url'], 'title': r.get('title', ''), 'task': k, 'paused': paused})
-    _show()
 
 
 # A batch: every review asked for while others are queued or running; it ends when the queue is empty and all
@@ -649,10 +617,10 @@ def _tell_asker(e, asker):
 
 def _ended(t):
     """(verdict, detail) of a review task that stopped without publishing."""
-    outcome = (t or {}).get('outcome')
+    outcome = machine.outcome(t or {})
     if outcome == 'stopped':
         return 'stopped', ''
-    if outcome == 'asked you':
+    if outcome == 'asked':
         return 'asked', 'It asked you a question in the thread.'
     if outcome == 'failed':
         return 'failed', first_sentence(no_emoji(t.get('latest', '')), 200) or 'The agent run failed.'
@@ -668,13 +636,13 @@ def _settle(queue):
     changed = False
     for e in b['prs']:
         t = state['tasks'].get(e.get('task') or '')
-        if e.get('verdict') in ('asked', 'failed') and t and t.get('active'):  # answered, or paused after all
+        if e.get('verdict') in ('asked', 'failed') and t and machine.running(t):  # answered, or paused after all
             for k in ('verdict', 'detail', 'link'):
                 e.pop(k, None)
             changed = True
         if e.get('verdict') or not e.get('task'):
             continue
-        if t and t.get('active'):
+        if t and machine.running(t):
             if bool(t.get('question')) != bool(e.get('waiting')):
                 e['waiting'] = bool(t.get('question'))
                 changed = True
@@ -762,7 +730,7 @@ def start(item, e):
     if not tid:
         raise GitHubError(0, f"T3 didn't start the chat: {err}")
     origin = item.get('origin') or {}
-    new_task(
+    t = new_task(
         ch,
         tts,
         tid,
@@ -785,7 +753,9 @@ def start(item, e):
             'title': f['title'],
             'asked_by': [a['user'] for a in _askers(e)],  # colleagues who asked for it (the hub's "started by")
         },
+        party=machine.party_of(),
     )
+    machine.begin_turn(t, 'system')
     e.update(task=k, title=f['title'], url=f['url'], rereview=rereview, began=time.time())
     _show()
     log('review started', pr_id, tid)

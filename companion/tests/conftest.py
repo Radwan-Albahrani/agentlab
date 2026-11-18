@@ -31,10 +31,13 @@ os.environ.update(
 
 from bot import (  # noqa: E402
     asks,
+    cases,
     config,
     drafts,
     errands,
     jobs,
+    ledger,
+    machine,
     outbox,
     polls,
     posts,
@@ -150,7 +153,7 @@ def fresh_bot(monkeypatch):
     monkeypatch.setattr(t3, 'agent_up', lambda: True)
     monkeypatch.setattr(config, 'log', lambda *a: None)
     monkeypatch.setattr(slack, '_channels', {'at': 0.0, 'list': []})
-    for module in (errands, outbox, requests, routing, publish, drafts, asks, posts, polls):
+    for module in (errands, outbox, requests, routing, publish, drafts, asks, posts, polls, cases, ledger, machine):
         if hasattr(module, 'log'):
             monkeypatch.setattr(module, 'log', lambda *a: None)
     state.state['tasks'].clear()
@@ -165,6 +168,61 @@ def fresh_bot(monkeypatch):
     publish._last = 0.0
     set_settings({})
     yield bot
+
+
+def agent_sends(task, *items, raw=None):
+    """The agent writes send.json (these items, or `raw` as the whole file) and the outbox takes it."""
+    box = os.path.join(outbox.OUTBOX, task['outbox'])
+    os.makedirs(box, exist_ok=True)
+    with open(os.path.join(box, 'send.json'), 'w') as f:
+        json.dump(raw if raw is not None else list(items), f)
+    outbox.tick(task)
+    return box
+
+
+def receipts(box):
+    """What the agent reads back: outbox/<task>/receipts.json."""
+    with open(os.path.join(box, 'receipts.json')) as f:
+        return json.load(f)
+
+
+HANDLERS = {  # the buttons, wired as slack.app.action wires them (errands.py, posts.py)
+    'errand_approve': errands.owner_action(lambda t, k, ts: errands.decide(t, k, True, ts), card=True),
+    'errand_reject': errands.owner_action(lambda t, k, ts: errands.decide(t, k, False, ts), card=True),
+    'post_send': errands.owner_action(lambda t, k, ts: posts.decide(t, k, True, ts), card=True),
+    'post_skip': errands.owner_action(lambda t, k, ts: posts.decide(t, k, False, ts), card=True),
+    'reply_send': errands.owner_action(lambda t, k, ts: errands.decide_reply(t, k, True, ts), card=True),
+    'reply_skip': errands.owner_action(lambda t, k, ts: errands.decide_reply(t, k, False, ts), card=True),
+    'cred_send': errands.owner_action(lambda t, k, ts: errands.decide_credential(t, k, True, ts), card=True),
+    'cred_skip': errands.owner_action(lambda t, k, ts: errands.decide_credential(t, k, False, ts), card=True),
+}
+
+
+def click(bot, action_id, user=OWNER, nth=-1):
+    """Press `action_id` on the nth message carrying it (default: the latest), as Slack would; -> that card's ts."""
+    found = [
+        (i, e)
+        for i, m in enumerate(bot.messages)
+        for b in m.get('blocks') or []
+        if b.get('type') == 'actions'
+        for e in b['elements']
+        if e['action_id'] == action_id
+    ]
+    i, e = found[nth]
+    ts = f'{i + 1}.0'  # FakeSlack's ts for message i
+    body = {
+        'user': {'id': user},
+        'actions': [{'value': e.get('value') or ''}],
+        'channel': {'id': bot.messages[i]['channel']},
+        'message': {'ts': ts},
+    }
+    HANDLERS[action_id](lambda: None, body)
+    return ts
+
+
+def ended(task, outcome='answered'):
+    """End the turn under way, as a finished chat would."""
+    machine.end_turn(task, outcome)
 
 
 def set_settings(values):

@@ -1,12 +1,12 @@
-"""The agent's post.json: a message or poll for a channel, DMs to people, or an edit of a message it sent before;
-previewed for the owner unless review is off."""
+"""Ledger messages for a channel or people (with a poll, maybe) and edits of messages sent before: previewed for the
+owner unless they go to the task's own channel or review is off. Each preview card belongs to one ledger item."""
 
 import time
 from datetime import datetime
 
-from . import errands, polls, slack
-from .config import COMP, NAME, OWNER, log
-from .state import key_of, save
+from . import cases, errands, ledger, machine, polls, slack
+from .config import COMP, NAME, log
+from .state import key_of
 from .text import clock, first_sentence, quote
 
 MAX_OPTIONS = 10
@@ -82,22 +82,46 @@ def _poll(p):
     return {'question': question, 'options': options, 'closes': closes, 'multiple': bool(p.get('multiple'))}, ''
 
 
-def _edit(task, p):
-    """(post, problem): an edit of a message this task sent before (post.json with "edit": its id)."""
-    sent = {m['id']: m for m in task.get('sent') or []}
-    m = sent.get(str(p['edit']).strip().lstrip('#'))
+def _target(task, it):
+    """(post, problem) for a ledger message to a channel or people, or an edit."""
+    if it['kind'] == 'edit':
+        return _edit(task, it)
+    if it['to'] == 'people':
+        raw = it.get('raw_to')
+        return _direct(
+            {'to': raw if isinstance(raw, list) else [it['label']], 'text': it['text'], 'poll': it.get('poll')}
+        )
+    ch = it['label'].lstrip('#')
+    if ch.startswith('<#'):
+        ch = ch[2:-1]
+    return parse({'channel': ch, 'text': it['text'], 'poll': it.get('poll')})
+
+
+def _sent_messages(task):
+    """{id: sent record}: ledger messages that went to a channel or people."""
+    out = {}
+    for i in ledger.items(task):
+        if i['kind'] == 'message' and i['state'] == 'sent' and i.get('msgs'):
+            out[i['id']] = {'id': i['id'], 'where': i['where'], 'msgs': i['msgs'], 'text': i['text']}
+    return out
+
+
+def _edit(task, it):
+    sent = _sent_messages(task)
+    m = sent.get(it.get('ref') or '')
     if not m:
         known = ', '.join(f'{i} ({s["where"]})' for i, s in sent.items()) or 'none'
-        return None, f'"edit" names no message this task sent (its messages: {known})'
-    text = str(p.get('text') or '').strip()[:3000]
-    if not text:
+        return None, f'"id" names no message this task sent (its messages: {known})'
+    if not it['text']:
         return None, 'the edit has no new text'
-    return {'edit': m['id'], 'where': m['where'], 'msgs': m['msgs'], 'channel': m['msgs'][0][0], 'text': text}, ''
+    return {'edit': m['id'], 'where': m['where'], 'msgs': m['msgs'], 'channel': m['msgs'][0][0], 'text': it['text']}, ''
 
 
 def sent_list(task):
-    """The messages this task posted, for the agent to edit: '- 1: in #general: "Post-mortem is up…"'."""
-    return '\n'.join(f'- {m["id"]}: {m["where"]}: "{first_sentence(m["text"], 80)}"' for m in task.get('sent') or [])
+    """The messages this task sent, for the agent to edit: '- 3: in #general: "Post-mortem is up…"'."""
+    return '\n'.join(
+        f'- {m["id"]}: {m["where"]}: "{first_sentence(m["text"], 80)}"' for m in _sent_messages(task).values()
+    )
 
 
 def preview_md(post):
@@ -109,114 +133,78 @@ def preview_md(post):
     return md
 
 
-def offer(task, p):
-    """post.json -> a preview to approve, or sent at once."""
-    ch, tts = task['channel'], task['thread_ts']
-    post, problem = _edit(task, p) if p.get('edit') else parse(p, ch if in_channel(task) else '')
+def offer(task, it):
+    """A ledger message for a channel or people, or an edit: refused, sent at once (this channel, or review off), or a
+    preview card for the owner (awaiting_owner)."""
+    post, problem = _target(task, it)
     if problem:
-        slack.post(ch, tts, 'Could not use the post', md=f':warning: The agent prepared a post, but {problem}.')
+        ledger.move(task, it, 'refused', note=problem)
         return
-    asked_here = in_channel(task) and post.get('channel') == ch
-    if asked_here and not post.get('poll') and not p.get('new_message') and not post.get('edit'):
-        post['thread'] = tts
-    if asked_here or not task.get('review', True):
-        send(task, post)
+    it['post'] = post
+    here = in_channel(task) and post.get('channel') == task['channel']
+    if here or not task.get('review', True):
+        ledger.move(task, it, 'approved', note='this channel' if here else 'review is off')
+        send(task, it)
         return
-    k = key_of(task)
-    old = task.pop('post_draft', None)
-    if old:
-        line = ':pencil2: Replaced by the version below'
-        slack.app.client.chat_update(
-            channel=old.get('at') or ch, ts=old['ts'], text=line, blocks=slack.blocks(old['md'], line)
-        )
-    guest = task.get('guest')
     md = ':outbox_tray: ' + preview_md(post)
-    if guest:
-        link = slack.permalink(ch, tts)
-        md += f'\n\nAsked by **{slack.name(guest)}**' + (f' · <{link}|open their thread>' if link else '')
-        slack.note_only(ch, tts, f':hourglass_flowing_sand: Waiting for {slack.name(OWNER)} to approve sending it')
-    at, at_thread = errands.approver(task)
+    if machine.party(task)['kind'] != 'owner':
+        md += f'\n\nAsked by **{slack.name(machine.party(task)["user"])}**'
+    at, at_thread = cases.owner_place(task)
+    edit = bool(post.get('edit'))
     ts = slack.app.client.chat_postMessage(
         channel=at,
         thread_ts=at_thread,
-        text='Edit this?' if post.get('edit') else 'Post this?',
+        text='Edit this?' if edit else 'Post this?',
         blocks=[
-            *slack.blocks(
-                md,
-                ('Nothing has been changed yet.' if post.get('edit') else 'Nothing has been posted yet.')
-                + ('' if guest else ' Reply here to change it.'),
-            ),
+            *slack.blocks(md, 'Nothing has been changed yet.' if edit else 'Nothing has been posted yet.'),
             slack.buttons(
                 (
                     'post_send',
-                    'Edit it' if post.get('edit') else 'Send it' if post.get('to') else 'Post it',
-                    k,
+                    'Edit it' if edit else 'Send it' if post.get('to') else 'Post it',
+                    key_of(task),
                     'primary',
                 ),
                 (
                     'post_skip',
-                    "Don't edit" if post.get('edit') else "Don't send" if post.get('to') else "Don't post",
-                    k,
+                    "Don't edit" if edit else "Don't send" if post.get('to') else "Don't post",
+                    key_of(task),
                     None,
                 ),
             ),
         ],
     )['ts']
-    task['post_draft'] = {**post, 'ts': ts, 'md': md, 'at': at}
-    what = f'an edit of your message {post["where"]}' if post.get('edit') else f'a message for {where(post)}'
-    COMP.event('approval', f'Asked you to check {what}', task=k)
-    save()
+    ledger.move(task, it, 'awaiting_owner', card={'ch': at, 'ts': ts}, md=md)
+    what = f'an edit of your message {post["where"]}' if edit else f'a message for {where(post)}'
+    COMP.event('approval', f'Asked you to check {what}', task=key_of(task))
 
 
-def decide(task, k, send_it):
-    d = task.pop('post_draft', None)
-    if not d:
+def decide(task, k, send_it, card):
+    """The owner's Post / Don't on the preview `card`; a card already decided decides nothing."""
+    it = ledger.on_card(task, card)
+    if not it or it['state'] != 'awaiting_owner':
         return
+    post = it['post']
     line = (
         (':white_check_mark: Editing' if send_it else ':no_entry_sign: Not edited')
-        if d.get('edit')
+        if post.get('edit')
         else (':white_check_mark: Posting' if send_it else ':no_entry_sign: Not posted')
     ) + f' at {clock(time.time())}'
-    slack.app.client.chat_update(
-        channel=d.get('at') or task['channel'], ts=d['ts'], text=line, blocks=slack.blocks(d['md'], line)
-    )
+    slack.app.client.chat_update(channel=it['card']['ch'], ts=card, text=line, blocks=slack.blocks(it['md'], line))
     if send_it:
-        send(task, {f: d[f] for f in ('channel', 'to', 'text', 'poll', 'edit', 'where', 'msgs') if f in d})
+        ledger.move(task, it, 'approved')
+        send(task, it)
     else:
-        if task.get('guest'):
-            slack.note_only(
-                task['channel'], task['thread_ts'], f':no_entry_sign: {slack.name(OWNER)} chose not to send it'
-            )
+        ledger.move(task, it, 'rejected')
         COMP.event('skipped', 'You chose not to post it', task=k)
-    save()
 
 
-def edit(task, post):
-    """Change a message this task sent, everywhere it went."""
-    ch, tts, k = task['channel'], task['thread_ts'], key_of(task)
-    try:
-        for at, ts in post['msgs']:
-            slack.app.client.chat_update(
-                channel=at, ts=ts, text=first_sentence(post['text'], 200), blocks=slack.blocks(post['text'])
-            )
-    except Exception as e:
-        log('edit failed:', e)
-        slack.post(ch, tts, 'Editing failed', md=f":warning: Couldn't edit the message {post['where']}: {str(e)[:200]}")
-        return
-    m = next(m for m in task['sent'] if m['id'] == post['edit'])
-    m['text'] = post['text']
-    at, ts = post['msgs'][0]
-    link = None if at.startswith('D') else slack.permalink(at, ts)
-    slack.note_only(ch, tts, f':pencil2: Edited the message {post["where"]}' + (f' · <{link}|open>' if link else ''))
-    COMP.event('sent', f'Message edited {post["where"]}', task=k, to=post['where'], detail=post['text'])
-    save()
-
-
-def send(task, post):
+def send(task, it):
+    """An approved post or edit, out to Slack: sent or failed."""
+    post = it['post']
     if post.get('edit'):
-        edit(task, post)
+        _apply_edit(task, it, post)
         return
-    ch, tts, k = task['channel'], task['thread_ts'], key_of(task)
+    k = key_of(task)
     dest = where(post)
     at = []
     try:
@@ -228,7 +216,6 @@ def send(task, post):
                 dest_id = slack.app.client.conversations_open(users=to)['channel']['id'] if post.get('to') else to
                 ts = slack.app.client.chat_postMessage(
                     channel=dest_id,
-                    thread_ts=post.get('thread'),
                     text=first_sentence(post['text'], 200),
                     blocks=slack.blocks(post['text']),
                     unfurl_links=False,
@@ -236,19 +223,16 @@ def send(task, post):
                 at.append([dest_id, ts])
     except Exception as e:
         log('post failed:', e)
-        slack.post(ch, tts, 'Posting failed', md=f":warning: Couldn't send it to {dest}: {str(e)[:200]}")
+        ledger.move(task, it, 'failed', note=f"couldn't send it to {dest}: {str(e)[:200]}")
         return
     link = None if post.get('to') else slack.permalink(post['channel'], ts)
     what = 'Poll' if post.get('poll') else 'Message'
     sent = f'sent to {dest}' if post.get('to') else f'posted in {dest}'
-    note = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
+    line = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
     if post.get('poll'):
-        note += f' · closes {clock(post["poll"]["closes"])}'
-    if not post.get('thread'):
-        slack.note_only(ch, tts, note)
-    if post.get('poll'):  # close button goes to the owner's DM only
-        dm, dm_thread = (slack.dm_owner(), None) if in_channel(task) else (ch, tts)
-        slack.app.client.chat_postMessage(
+        line += f' · closes {clock(post["poll"]["closes"])}'
+        dm, dm_thread = (slack.dm_owner(), None) if in_channel(task) else cases.owner_place(task)
+        slack.app.client.chat_postMessage(  # the close button: the owner's only
             channel=dm,
             thread_ts=dm_thread,
             text=f'Poll in {dest}',
@@ -259,26 +243,36 @@ def send(task, post):
                 slack.buttons(('poll_close', 'Close the poll now', task['poll'], None)),
             ],
         )
-    task.update(closed=note, posted=True)
-    if at:
-        sent = task.setdefault('sent', [])
-        sent.append(
-            {
-                'id': str(len(sent) + 1),
-                'where': f'to {dest}' if post.get('to') else f'in {dest}',
-                'msgs': at,
-                'text': post['text'],
-            }
-        )
-    COMP.event(
-        'sent',
-        f'{what} {sent}',
-        task=k,
-        to=dest,
-        detail=post['poll']['question'] if post.get('poll') else post['text'],
+    slack.note_only(*cases.owner_place(task), line)
+    ledger.move(
+        task, it, 'sent', where=f'to {dest}' if post.get('to') else f'in {dest}', msgs=at or None, note=f'{what} {sent}'
     )
-    save()
+    COMP.event(
+        'sent', f'{what} {sent}', task=k, to=dest, detail=post['poll']['question'] if post.get('poll') else post['text']
+    )
 
 
-slack.app.action('post_send')(errands.owner_action(lambda t, k: decide(t, k, True)))
-slack.app.action('post_skip')(errands.owner_action(lambda t, k: decide(t, k, False)))
+def _apply_edit(task, it, post):
+    """Change a message this task sent, everywhere it went."""
+    try:
+        for at, ts in post['msgs']:
+            slack.app.client.chat_update(
+                channel=at, ts=ts, text=first_sentence(post['text'], 200), blocks=slack.blocks(post['text'])
+            )
+    except Exception as e:
+        log('edit failed:', e)
+        ledger.move(task, it, 'failed', note=f"couldn't edit the message {post['where']}: {str(e)[:200]}")
+        return
+    ledger.get(task, post['edit'])['text'] = post['text']
+    at, ts = post['msgs'][0]
+    link = None if at.startswith('D') else slack.permalink(at, ts)
+    slack.note_only(
+        *cases.owner_place(task),
+        f':pencil2: Edited the message {post["where"]}' + (f' · <{link}|open>' if link else ''),
+    )
+    ledger.move(task, it, 'sent', where=post['where'])
+    COMP.event('sent', f'Message edited {post["where"]}', task=key_of(task), to=post['where'], detail=post['text'])
+
+
+slack.app.action('post_send')(errands.owner_action(lambda t, k, ts: decide(t, k, True, ts), card=True))
+slack.app.action('post_skip')(errands.owner_action(lambda t, k, ts: decide(t, k, False, ts), card=True))

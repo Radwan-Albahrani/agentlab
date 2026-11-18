@@ -565,6 +565,19 @@ class Screens(unittest.TestCase):
         self.assertIn('bot/prompts.py', t['detail'])
         self.assertEqual(screens.companion('helper')['templateUpdate'], {})
 
+    def test_each_case_carries_its_party_phase_and_ledger(self):
+        tasks = {t['id']: t for t in screens.companion('scout')['tasks']}
+        sara = tasks['t2']
+        self.assertEqual((sara['party'], sara['phase']), ('colleague', 'waiting_owner'))
+        self.assertTrue(sara['caseLink'].startswith('https://'))
+        self.assertEqual([i['seq'] for i in sara['items']], list(range(1, 10)))
+        first, *_, waiting = sara['items']
+        self.assertEqual((first['kind'], first['state'], first['label']), ('in', 'received', 'Sara'))
+        self.assertEqual((waiting['kind'], waiting['state']), ('approval', 'awaiting_owner'))
+        self.assertEqual([h[0] for h in waiting['history']], ['received', 'awaiting_owner'])
+        self.assertTrue(all('by' not in i for t in tasks.values() for i in t['items']))  # no Slack ids on the page
+        self.assertEqual((tasks['t3']['party'], tasks['t4']['party'], tasks['t4']['items']), ('errand', 'owner', []))
+
     def test_pulls_and_polls(self):
         c = screens.companion('scout')
         self.assertEqual(c['pulls']['items'][0]['id'], 'example/app#12')

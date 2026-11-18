@@ -3,7 +3,7 @@ import { useParams } from 'react-router';
 import { useCompanion } from '../../api/queries';
 import type { Companion as Data } from '../../api/types';
 import { NotFound, Screen } from '../../app/Screen';
-import { STATE_PILL, sentTo, weekStats } from '../../lib/companion';
+import { casesOf, needsYou, STATE_PILL, sentTo, weekStats } from '../../lib/companion';
 import { ago, capitalize, duration } from '../../lib/format';
 import { useHashTab } from '../../lib/useHashTab';
 import { useNow } from '../../lib/useNow';
@@ -19,7 +19,7 @@ import { Crumb, Section, Stat } from '../../ui/page';
 import { CompanionAvatar, Pill } from '../../ui/status';
 import { type TabItem, Tabs } from '../../ui/Tabs';
 import { AskBox } from './AskBox';
-import { Cases, casesOf } from './Cases';
+import { Cases } from './Cases';
 import { CompanionSettings } from './CompanionSettings';
 import { Delivered } from './Delivered';
 import { Blink, Notice } from './parts';
@@ -187,7 +187,7 @@ function CompanionView({ d }: { d: Data }) {
       value: 'cases',
       label: 'Cases',
       icon: 'chat',
-      count: cases.filter((t) => t.status === 'working' || t.status === 'waiting').length,
+      count: cases.filter(needsYou).length,
       content: <Cases tasks={d.tasks} me={d.display} />,
     });
   tabs.push({

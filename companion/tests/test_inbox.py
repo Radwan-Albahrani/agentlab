@@ -1,7 +1,9 @@
 import pytest
-from bot import cases, inbox, reviews, routing, tasks
+from bot import inbox, machine, reviews, routing, tasks
 from bot.state import key, state
-from conftest import OWNER, set_settings
+from conftest import OWNER, agent_sends, set_settings
+
+SALAH = {'kind': 'colleague', 'user': 'U_SALAH'}
 
 
 @pytest.fixture
@@ -108,7 +110,7 @@ def test_more_from_them_while_pending_joins_the_ask(fresh_bot, channel):
 def test_after_approval_their_replies_steer_the_task(fresh_bot, channel):
     asked()
     inbox.decide(key('C_REQ', '90.1'), True)
-    state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'guest': 'U_SALAH'}
+    state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'party': SALAH}
     asked(ts='90.4', text='make it green too', thread='90.1')
     assert channel[-1] == ('follow', '90.4', '<@BCOMPANION> make it green too', 'U_SALAH')  # follow_up drops the tag
 
@@ -139,7 +141,7 @@ def test_untagged_talk_in_the_channel_is_left_alone(fresh_bot, channel):
 def test_after_approval_untagged_replies_are_just_talk(fresh_bot, channel):
     asked()
     inbox.decide(key('C_REQ', '90.1'), True)
-    state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'guest': 'U_SALAH'}
+    state['tasks'][key('C_REQ', '90.1')] = {'channel': 'C_REQ', 'thread_ts': '90.1', 'party': SALAH}
     asked(ts='90.6', text='nice, thanks', thread='90.1', tag=False)
     assert channel[-1][0] == 'task'
 
@@ -154,21 +156,21 @@ def test_their_follow_ups_carry_a_reminder_to_stay_within_what_was_approved(fres
         'thread_ts': '90.1',
         'thread': 'T',
         'outbox': 'f',
-        'guest': 'U_SALAH',
-        'approved': '5.0',
+        'party': SALAH,
+        'case': {'ch': 'D_OWNER', 'ts': '5.0', 'head': 'card', 'mode': 'private'},
         'trigger_ts': '90.1',
-        'active': True,
         'prs': [],
         'asked': [],
         'options': {},
         'status_ts': 's',
     }
     state['tasks'][key('C_REQ', '90.1')] = task
+    machine.begin_turn(task, 'colleague')
     tasks.follow_up(task, 'also export the customer list', None, '90.9', 'U_SALAH')
     assert sent[0].startswith('Salah: also export the customer list') and 'beyond what Sam approved' in sent[0]
     mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
     assert mirrored[-1]['blocks'][0]['text'] == '**Salah:**\n> also export the customer list'
-    cases.send(task, {'text': 'Exported it: 120 rows.'})
+    agent_sends(task, {'type': 'message', 'to': 'Salah', 'text': 'Exported it: 120 rows.'})
     tasks.reply(task, 'Sent Salah the export.')
     mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
     assert mirrored[-2]['blocks'][0]['text'] == ':outbox_tray: **Companion → Salah:**\nExported it: 120 rows.'

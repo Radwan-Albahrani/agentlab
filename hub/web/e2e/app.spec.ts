@@ -114,18 +114,36 @@ test('tell the companion: pick a channel by typing, write, send (intercepted)', 
   await expect(toast).toHaveCount(0);
 });
 
-test('cases: a colleague conversation with the private exchange and what went on your word', async ({ page }) => {
+test('cases: every message with its state, your private exchange, and what waits on you', async ({ page }, info) => {
   await guard(page);
   await page.goto('/agents/admin/scout#cases');
   await settled(page);
   const cases = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Cases' }) });
+  // it opens on what needs you: both of Sara's cases wait on an approval
+  const show = cases.getByRole('group', { name: 'Show' });
+  await expect(show.getByRole('button', { name: /Needs you/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(cases.getByText('Can you summarise the incident thread for the postmortem?')).toBeVisible();
+  await expect(cases.getByText('Book a room', { exact: false })).toHaveCount(0);
   await cases.locator('[aria-expanded="false"]').first().click();
+  await expect(cases.getByText('1 thing waiting on you')).toBeVisible();
+  await expect(cases.getByRole('listitem').filter({ hasText: 'Post the summary in #incidents' })).toBeVisible();
   await expect(cases.getByRole('article', { name: 'Sara to Scout' })).toBeVisible();
+  await expect(cases.getByRole('article', { name: 'Scout to Sara' }).first()).toContainText('09:12 alerts fired');
   await expect(cases.getByRole('article', { name: 'You to Scout' })).toContainText('private');
-  await expect(cases.getByRole('article', { name: 'Scout to you' })).toContainText('09:31');
-  await expect(cases.getByText('on your word')).toBeVisible();
-  await expect(cases.getByText(/Asked you to approve: post the summary/)).toBeVisible();
+  await expect(cases.getByRole('article', { name: 'Scout to you' }).last()).toContainText('09:31');
+  const refused = cases.getByRole('article', { name: 'Scout to nobody named' });
+  await expect(refused).toContainText('Refused');
+  await expect(refused).toContainText('"to" is required');
+  await expect(cases.getByLabel('Approval: Post the summary in #general')).toContainText('Replaced');
+  await expect(cases.getByLabel('Approval: Post the summary in #incidents')).toContainText('Waiting for you');
+  if (shots) {
+    await cases.screenshot({ path: `${shots}/${info.project.name}_case_open.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await cases.screenshot({ path: `${shots}/${info.project.name}_case_open_phone.png` });
+  }
+  // errands are cases too
+  await show.getByRole('button', { name: /^All/ }).click();
+  await expect(cases.getByText('errand', { exact: true })).toBeVisible();
 });
 
 test('companion polls: results with voters, and the open ones can be changed (intercepted)', async ({ page }) => {

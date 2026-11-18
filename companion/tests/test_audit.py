@@ -65,13 +65,6 @@ def test_an_errand_is_for_the_colleague_and_started_by_whoever_triggered_it(chat
     assert (noticed['started_by'], noticed['via']) == ('Salah', 'noticed in team mode')
 
 
-def test_a_task_from_before_the_audit_falls_back_to_what_it_knew():
-    t = {'title': 'old', 'guest': 'U_SALAH', 'active': False, 'channel': 'C1', 'thread_ts': '1.0'}
-    assert publish.card('k', t)['started_by'] == 'Salah' and publish.card('k', t)['via'] == ''
-    del t['guest']
-    assert publish.card('k', t)['started_by'] == ''
-
-
 def test_an_older_database_gets_the_audit_columns(tmp_path):
     con = sqlite3.connect(tmp_path / 'companion.db')
     con.execute(

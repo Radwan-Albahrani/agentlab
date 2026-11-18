@@ -1,166 +1,157 @@
-"""The gate: the agent never sends anything itself; its outbox/<task>/ JSON files are picked up here each poll."""
+"""The gate: the agent never sends anything itself. It writes items to outbox/<task>/send.json; each poll they are
+checked here, recorded in the ledger (ledger.py) and handed to the one module that acts on their type. What became of
+each one is written back to outbox/<task>/receipts.json.
+
+send.json: one item or a list. Every item names its "type", and a message its "to"; nothing has a default:
+  {"type": "message", "to": "<who>", "text": "...", "files": [...], "poll": {...}}
+       to: the colleague's or requester's name | "owner" | "thread" | "#channel" | a person's name | [names]
+  {"type": "edit", "id": "<a message's id from receipts.json>", "text": "<the complete new text>"}
+  {"type": "approval", "action": "...", "details": "...", "reply": "<errands: for the requester once done>",
+   "files": [...]}
+  {"type": "withdraw", "why": "..."}                       takes back the approval waiting
+  {"type": "credential", "for", "service", "url", "username", "password", "note"}
+  {"type": "poll_change", "poll": "<id>", ...the fields that change}
+review.json is a PR review's own hand-over (reviews.py)."""
 
 import json
 import os
 import re
 import time
 
-from . import cases, errands, polls, posts, reviews, slack
-from .config import COMP, FILES, NAME, OWNER, log
-from .state import key_of, review_of, save
+from . import cases, errands, gate, ledger, machine, polls, posts, reviews, slack
+from .config import FILES, OWNER, log
+from .state import review_of
 
 OUTBOX = os.path.join(FILES, 'outbox')
-DELIVER_TYPES = {
-    '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.mov', '.webm',
-    '.csv', '.xlsx', '.xls', '.docx', '.doc', '.txt', '.md', '.zip',
-}  # fmt: skip
-DELIVER_MAX = 50 * 1024 * 1024  # bytes per file
+TYPES = ('message', 'edit', 'approval', 'withdraw', 'credential', 'poll_change')
+CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}')
 
 
-def gate(box, names):
-    """(ok paths, refused reasons): only files inside `box`, of an allowed type, under the size cap may leave."""
-    ok, refused = [], []
-    for f in names:
-        p = os.path.realpath(os.path.join(box, os.path.basename(str(f))))
-        if not p.startswith(os.path.realpath(box) + os.sep) or not os.path.isfile(p):
-            refused.append(f'{f} (missing)')
-        elif os.path.splitext(p)[1].lower() not in DELIVER_TYPES:
-            refused.append(f'{os.path.basename(p)} (file type not allowed)')
-        elif os.path.getsize(p) > DELIVER_MAX:
-            refused.append(f'{os.path.basename(p)} (over 50 MB)')
-        else:
-            ok.append(p)
-    return ok, refused
-
-
-def _take(path):
-    """The parsed JSON file, or None if missing or still being written."""
+def _take(box, name):
+    """The parsed JSON file, moved aside so it is taken once; None if missing or still being written."""
+    path = os.path.join(box, name)
     if not os.path.isfile(path):
         return None
     try:
         with open(path) as f:
-            return json.load(f)
+            data = json.load(f)
     except ValueError:
         return None
+    if name == 'send.json':
+        os.remove(path)  # it may hold a password (credential); what it said lives on in the ledger
+    else:
+        os.replace(path, os.path.join(box, f'{name[:-5]}-{time.time_ns()}.json'))
+    return data
 
 
 def tick(task):
     if not task.get('outbox'):
         return
     box = os.path.join(OUTBOX, task['outbox'])
-    a = _take(os.path.join(box, 'approval.json'))
-    if a is not None:
-        os.replace(os.path.join(box, 'approval.json'), os.path.join(box, f'approval-{int(time.time())}.json'))
-        errands.ask_approval(task, a)
-    _preview(task, box)
-    c = _take(os.path.join(box, 'credential.json'))
-    if c is not None:
-        os.remove(os.path.join(box, 'credential.json'))  # the password must not stay on disk
-        errands.ask_credential(task, c)
-    m = _take(os.path.join(box, 'send.json'))
+    raw = []
+    m = _take(box, 'send.json')
     if m is not None:
-        os.replace(os.path.join(box, 'send.json'), os.path.join(box, f'send-{int(time.time())}.json'))
-        for one in m if isinstance(m, list) else [m]:
-            if isinstance(one, dict):
-                _send(task, box, one)
-    p = _take(os.path.join(box, 'post.json'))
-    if p is not None:
-        os.replace(os.path.join(box, 'post.json'), os.path.join(box, f'post-{int(time.time())}.json'))
-        posts.offer(task, p)
-    c = _take(os.path.join(box, 'poll-change.json'))
-    if c is not None:
-        os.replace(os.path.join(box, 'poll-change.json'), os.path.join(box, f'poll-change-{int(time.time())}.json'))
-        polls.change(c, task)
-    r = _take(os.path.join(box, 'review.json'))
-    if r is not None and review_of(task):
-        os.replace(os.path.join(box, 'review.json'), os.path.join(box, f'review-{int(time.time())}.json'))
+        raw += m if isinstance(m, list) else [m]
+    for one in raw:
+        take(task, box, one)
+    r = _take(box, 'review.json') if review_of(task) else None
+    if r is not None:
         reviews.publish(task, box, r)
-    m = _take(os.path.join(box, 'manifest.json'))
-    if m is not None:
-        os.replace(os.path.join(box, 'manifest.json'), os.path.join(box, f'delivered-{int(time.time())}.json'))
-        _deliver(task, box, m)
 
 
-CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}')
+def resolve(task, to):
+    """(target, label, problem) for a message's "to"; the target is one of the ledger's `to` values."""
+    p = machine.party(task)
+    if isinstance(to, list):
+        names = [str(x).strip() for x in to if str(x).strip()]
+        return ('people', ', '.join(names), '') if names else ('', '', '"to" is an empty list')
+    t = str(to or '').strip()
+    if not t:
+        return '', '', '"to" is required: the person, "owner", "thread", or "#channel"'
+    low = t.lstrip('@').lower()
+    if low == 'owner' or low == slack.name(OWNER).lower():
+        return 'owner', slack.name(OWNER), ''
+    if p['kind'] == 'colleague' and low in ('colleague', slack.name(p['user']).lower()):
+        return 'colleague', slack.name(p['user']), ''
+    if p['kind'] == 'errand' and low in ('requester', slack.name(p['user']).lower()):
+        return 'requester', slack.name(p['user']), ''
+    if low in ('thread', 'here'):
+        if p['kind'] == 'colleague' and machine.case_mode(task) == 'private':
+            return '', '', f'"thread" is {slack.name(p["user"])}\'s thread here: write their name as "to"'
+        return 'thread', 'this thread', ''
+    if t.startswith('#') or CHANNEL_ID.fullmatch(t) or t in {c['id'] for c in slack.channels()}:
+        return 'channel', t if t.startswith('#') else f'<#{t}>', ''
+    return 'people', t, ''
 
 
-def _same(name, person):
-    return bool(person) and name.lstrip('@').strip().lower() == person.lower()
-
-
-def _send(task, box, m):
-    """One message from send.json, routed by its "to": the colleague (a case), this thread, or a post elsewhere that
-    the owner previews (posts.py). In a colleague's task no "to" means the colleague."""
-    to = m.get('to') or ''
-    one = to.strip() if isinstance(to, str) else ''
-    guest = task.get('guest') and cases.who(task)
-    if m.get('edit') or m.get('poll') or isinstance(to, list) or (one and one.lower() not in ('here', 'thread')):
-        if guest and one and _same(one, guest) and not m.get('poll') and not m.get('edit'):
-            cases.send(task, m, *gate(box, m.get('files') or []))
-            return
-        if guest and one and _same(one, slack.name(OWNER)):
-            cases.note(task, f'**{NAME} → you:**\n' + str(m.get('text') or '').strip()[:3000])
-            return
-        p = {k: m[k] for k in ('text', 'poll', 'edit') if k in m}
-        if isinstance(to, list):
-            p['to'] = to
-        elif one.startswith('#') or CHANNEL_ID.fullmatch(one):
-            p.update(channel=one, new_message=True)
-        elif one:
-            p['to'] = one
-        posts.offer(task, p)
+def take(task, box, raw):
+    """One item from the agent: checked, recorded, acted on."""
+    if not isinstance(raw, dict):
+        ledger.add(task, 'message', 'refused', note='an item must be a JSON object')
         return
-    if guest:
-        cases.send(task, m, *gate(box, m.get('files') or []))
-        return
-    _deliver(task, box, {'files': m.get('files') or [], 'text': str(m.get('text') or '').strip()[:3000]})
-
-
-def _preview(task, box):
-    """Upload to the approval thread the files that would be sent, once."""
-    a = task.get('approval') or {}
-    if not a or a.get('decided') or a.get('previewed'):
-        return
-    names = a.get('files') or (
-        sorted(f for f in os.listdir(box) if os.path.splitext(f)[1].lower() in DELIVER_TYPES)
-        if os.path.isdir(box)
-        else []
-    )
-    a['previewed'] = True
-    ok, refused = gate(box, names)
-    if ok:
-        slack.upload(
-            *errands.approver(task),
-            ok,
-            f':mag: Preview: {len(ok)} file{"s" if len(ok) != 1 else ""} that will go out if you approve'
-            + (f' ({len(refused)} would be held back: {", ".join(refused)})' if refused else ''),
+    kind = str(raw.get('type') or '').strip().replace('-', '_')
+    if kind not in TYPES:
+        ledger.add(
+            task,
+            'message',
+            'refused',
+            text=str(raw.get('text') or '')[:300],
+            note=f'"type" must be one of {", ".join(TYPES)}',
         )
-    save()
-
-
-def _deliver(task, box, m):
-    """Files into the task's own thread; the reply, if any, to whoever asked."""
-    ok, refused = gate(box, m.get('files') or [])
-    ch, tts = task['channel'], task['thread_ts']
-    what = str(m.get('what') or task.get('title') or 'Files')[:200]
-    head = m.get('text') or f':package: *{what}*'  # send.json "to": "here" carries a message, not a title
-    if refused:
-        head += '\n:no_entry: Held back: ' + ', '.join(refused)
-    if ok:
-        slack.upload(ch, tts, ok, head)
-    elif refused or m.get('text'):
-        slack.post(ch, tts, str(m.get('text') or what)[:150], md=head)
-    where = slack.channel_name(ch)
-    if m.get('reply') and task.get('requester'):
-        approved = task.pop('reply_pending', None) is not None
-        errands.reply_requester(task, str(m['reply'])[:3000], ok, approved=approved)
-    log('outbox delivered', task.get('outbox'), len(ok), 'files,', len(refused), 'held')
-    if ok or refused:
-        COMP.event(
-            'files',
-            f'{len(ok)} file{"s" if len(ok) != 1 else ""} in the thread: {what}',
-            task=key_of(task),
-            to=f'#{where}' if where else slack.name(OWNER),
-            ok=not refused,
-            detail=('held back: ' + ', '.join(refused)) if refused else ', '.join(os.path.basename(p) for p in ok),
+        return
+    if kind == 'withdraw':
+        errands.withdraw(task, str(raw.get('why') or '').strip()[:300])
+        return
+    if kind == 'credential':
+        errands.ask_credential(task, raw)
+        return
+    text = str(raw.get('text') or '').strip()[:3000]
+    files = [os.path.basename(str(f)) for f in raw.get('files') or [] if str(f).strip()]
+    common = {'text': text, 'files': files}
+    if kind == 'message':
+        target, label, problem = resolve(task, raw.get('to'))
+        it = ledger.add(task, 'message', to=target, label=label, poll=raw.get('poll'), raw_to=raw.get('to'), **common)
+        if problem or (not text and not files and not raw.get('poll')):
+            ledger.move(task, it, 'refused', note=problem or 'it has no text and no files')
+            return
+        _message(task, box, it)
+    elif kind == 'edit':
+        it = ledger.add(task, 'edit', ref=str(raw.get('id') or '').strip().lstrip('#'), **common)
+        posts.offer(task, it)
+    elif kind == 'approval':
+        it = ledger.add(
+            task,
+            'approval',
+            action=str(raw.get('action') or '').strip()[:500],
+            details=str(raw.get('details') or '').strip()[:3000],
+            reply=str(raw.get('reply') or '').strip()[:3000],
+            **common,
         )
+        if not it['action']:
+            ledger.move(task, it, 'refused', note='an approval needs an "action"')
+            return
+        errands.ask_approval(task, it, box)
+    else:
+        it = ledger.add(task, 'poll_change', ref=str(raw.get('poll') or ''), change=raw, **common)
+        problem = polls.change(raw, task)
+        ledger.move(task, it, 'refused' if problem else 'applied', note=problem)
+
+
+def _message(task, box, it):
+    ok, refused = gate.files(box, it.get('files') or [])
+    to = it['to']
+    if to == 'colleague':
+        cases.deliver(task, it, ok, refused)
+    elif to in ('owner', 'thread'):
+        ch, tts = cases.owner_place(task) if to == 'owner' else (task['channel'], task['thread_ts'])
+        md = it['text'] + ('\n:no_entry: Held back: ' + ', '.join(refused) if refused else '')
+        if ok:
+            slack.upload(ch, tts, ok, md or None)
+        elif md:
+            slack.post(ch, tts, it['text'][:150] or 'Files', md=md)
+        ledger.move(task, it, 'sent', held=', '.join(refused) or None)
+    elif to == 'requester':
+        errands.offer_reply(task, it, ok, refused)
+    else:
+        posts.offer(task, it)
+    log('outbox item', it['id'], it['kind'], to, it['state'])

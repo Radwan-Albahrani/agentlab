@@ -55,8 +55,29 @@ def _pulls(con):
         return []
 
 
+def _items(con, task_ids):
+    """{task id: its ledger items, oldest first}: every message in and out and what waits on the owner; {} when the
+    bot has no items table."""
+    if not task_ids:
+        return {}
+    marks = ','.join('?' * len(task_ids))
+    try:
+        rows = con.execute(
+            f'select task, seq, kind, state, at, data from items where task in ({marks}) order by task, seq',
+            list(task_ids),
+        )
+        out = {}
+        for r in rows:
+            out.setdefault(r['task'], []).append(
+                dict(json.loads(r['data'] or '{}'), seq=r['seq'], kind=r['kind'], state=r['state'], at=r['at'])
+            )
+        return out
+    except sqlite3.OperationalError:
+        return {}
+
+
 def _read_db(name):
-    """(tasks, events, polls, pulls) from the bot's database, newest first."""
+    """(tasks, events, polls, pulls) from the bot's database, newest first; each task carries its ledger `items`."""
     path = os.path.join(_folder(name), 'companion.db')
     if not os.path.isfile(path):
         return [], [], [], []
@@ -74,6 +95,9 @@ def _read_db(name):
             ]
             polls = _polls(con)
             pulls = _pulls(con)
+            items = _items(con, [t['id'] for t in tasks])
+            for t in tasks:
+                t['items'] = items.get(t['id'], [])
         finally:
             con.close()
     except sqlite3.Error:

@@ -3,11 +3,18 @@
 companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
   events(id, at, kind, title, task, "to", detail, ok)   append-only
   tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated,
-        resumes_at, started_by, via, approved_by) upserted, never deleted. kind: task | errand | review.
+        resumes_at, started_by, via, approved_by, party, phase, case_link) upserted, never deleted.
+    kind: task | errand | review. party: owner | colleague | errand (who the conversation is with).
+    phase: the task's state machine (bot/machine.py): working | waiting_owner | waiting_answer | paused | answered |
+      nothing_to_do | stopped | failed. case_link: the owner's case thread in Slack ('' without a case).
     The audit: started_by (a name; '' = the owner), via (how: "in #general", "in a DM", "from the hub", "in the
       requests channel"...), approved_by (a name, when someone approved it before it started).
     status: working | waiting ("waiting" says for what) | paused (usage limit; resumes_at: epoch or '') | done |
       failed | stopped
+  items(id, task, seq, kind, state, at, data, updated)   upserted; the ledger (bot/ledger.py): every message in and
+    out of a task and everything waiting on the owner. kind: in | final | message | edit | approval | credential |
+    poll_change. state: that kind's state machine. data JSON (bot/ledger.py SHOWN): by, to, label, text, files,
+    private, note, ref, action, details, side, question, where, held, history [[state, at, note]].
   polls(id, task, open, closes, data, updated)   upserted; data JSON: question, channel,
     link, multiple, closed, options [{label, votes, voters [{name, avatar}]}]
   pulls(id, repo, number, updated, data)   replaced on each re-read;
@@ -51,7 +58,11 @@ CARD = (
     'started_by',
     'via',
     'approved_by',
+    'party',
+    'phase',
+    'case_link',
 )
+ITEM = ('id', 'task', 'seq', 'kind', 'state', 'at', 'data')
 SCHEMA_SQL = f"""
 create table if not exists events (id integer primary key, at real not null, kind text, title text, task text, "to" text,
                                    detail text, ok integer not null default 1);
@@ -60,6 +71,9 @@ create index if not exists events_kind on events (kind, at);
 create table if not exists tasks ({', '.join(c + (' text primary key' if c == 'id' else ' text') for c in CARD)}, updated real);
 create index if not exists tasks_started on tasks (started);
 create table if not exists store (key text primary key, value text not null, updated real);
+create table if not exists items (id text primary key, task text, seq integer, kind text, state text, at real,
+                                  data text, updated real);
+create index if not exists items_task on items (task, seq);
 create table if not exists polls (id text primary key, task text, open integer, closes real, data text, updated real);
 create table if not exists pulls (id text primary key, repo text, number integer, updated text, data text);
 """
@@ -79,7 +93,7 @@ class Companion:
         self.db.execute('pragma journal_mode=wal')
         self.db.executescript(SCHEMA_SQL)
         have = {r[1] for r in self.db.execute('pragma table_info(tasks)')}
-        for column in ('resumes_at', 'started_by', 'via', 'approved_by'):  # a database from before them
+        for column in ('resumes_at', 'started_by', 'via', 'approved_by', 'party', 'phase', 'case_link'):  # older db
             if column not in have:
                 self.db.execute(f'alter table tasks add column {column} text')
         self._write('settings-schema.json', self.schema)
@@ -154,6 +168,21 @@ class Companion:
             )
             self.db.execute('commit')
         self._cards.update({c['id']: dict(c) for c in changed})
+
+    def items(self, rows):
+        """Upsert changed ledger items ({id, task, seq, kind, state, at, data})."""
+        changed = [r for r in rows if self._cards.get('item:' + r['id']) != r]
+        if not changed:
+            return
+        now = time.time()
+        with self._lock:
+            self.db.execute('begin')
+            self.db.executemany(
+                f'insert or replace into items ({", ".join(ITEM)}, updated) values ({", ".join("?" * len(ITEM))}, ?)',
+                [(*(json.dumps(r[k]) if k == 'data' else r[k] for k in ITEM), now) for r in changed],
+            )
+            self.db.execute('commit')
+        self._cards.update({'item:' + r['id']: dict(r) for r in changed})
 
     def polls(self, polls):
         """Upsert changed poll cards ({id, task, open, closes, ...rest as data})."""

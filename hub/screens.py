@@ -262,7 +262,15 @@ def accounts(host, prof, page):
     return page
 
 
-CASE_KINDS = ('received', 'sent', 'private', 'approval', 'approved', 'rejected', 'withdrawn')
+CASE_ITEM = ('seq', 'kind', 'state', 'at', 'to', 'label', 'text', 'files', 'private', 'note', 'action', 'details',
+             'side', 'question', 'where', 'held', 'history')  # fmt: skip
+
+
+def _case_item(it):
+    """A ledger item as the Cases tab shows it (contract: companion/bot/ledger.py); Slack ids stay behind."""
+    out = {k: it[k] for k in CASE_ITEM if it.get(k) not in (None, '', [])}
+    out['history'] = [[h[0], h[1]] for h in it.get('history') or []]
+    return out
 
 
 def companion(name):
@@ -279,12 +287,14 @@ def companion(name):
         for t in c['tasks']
     ]
     poll_of = {p['task']: p['id'] for p in c['polls']}
-    convo = {}  # a colleague's case: what they wrote, what went to them, the owner's private exchange, approvals
-    for e in reversed(c['events']):
-        if e.get('task') and e['kind'] in CASE_KINDS:
-            convo.setdefault(e['task'], []).append({k: e.get(k) for k in ('at', 'kind', 'title', 'to', 'detail', 'ok')})
     for t in tasks:
-        t['timeline'] = convo.get(t['id'], [])
+        # who it is with and where it stands (companion/bot/machine.py), and its ledger: every message in and out
+        t['party'], t['phase'], t['caseLink'] = (
+            t.pop('party', None) or 'owner',
+            t.pop('phase', None) or '',
+            t.pop('case_link', None) or '',
+        )
+        t['items'] = [_case_item(it) for it in t.get('items') or []]
         t.pop('started', None), t.pop('ended', None), t.pop('resumes_at', None)
         # the audit (from a companion new enough to record it): who started it, how, who approved it
         t['startedBy'], t['via'], t['approvedBy'] = (t.pop(k, None) or '' for k in ('started_by', 'via', 'approved_by'))

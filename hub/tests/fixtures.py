@@ -146,6 +146,56 @@ def secrets(root):
         write(f'{root}/secrets/{name}', text)
 
 
+def ledger_items(con):
+    """The companion's ledger (companion/bot/ledger.py): every message in and out of a task, with its state."""
+    con.execute(
+        'create table items (id text primary key, task text, seq integer, kind text, state text, at real, data text,'
+        ' updated real)'
+    )
+
+    def walk(*states, start):
+        return [[s, start + 5 * i, ''] for i, s in enumerate(states)]
+
+    t2 = [  # Sara's case: what she wrote, what went to her, the owner's private word, and what waits on them
+        ('in', 'received', 290, {'label': 'Sara', 'text': 'Can you summarise the incident thread for the postmortem?'}),
+        ('message', 'sent', 240, {'to': 'colleague', 'label': 'Sara',
+                                  'text': 'Here is the summary:\n- 09:12 alerts fired\n- 09:40 fixed'}),
+        ('final', 'sent', 235, {'to': 'case', 'label': 'you',
+                                'text': 'Sent Sara the summary. I did not read the on-call notes yet.'}),
+        ('in', 'received', 200, {'label': 'Admin', 'private': True, 'text': 'Did you check the on-call notes too?'}),
+        ('final', 'sent', 180, {'to': 'case', 'label': 'you', 'text': 'Not yet: they add one more step at 09:31.'}),
+        ('message', 'sent', 150, {'to': 'colleague', 'label': 'Sara', 'text': 'One more step at 09:31, from on-call.'}),
+        ('message', 'refused', 130, {'to': '', 'text': 'Posted it.', 'note': '"to" is required: the person, "owner", '
+                                     '"thread", or "#channel"'}),
+        ('approval', 'replaced', 120, {'action': 'Post the summary in #general', 'note': 'replaced by a newer request: Post the summary in #incidents'}),
+        ('approval', 'awaiting_owner', 100, {'action': 'Post the summary in #incidents',
+                                            'details': 'A new message in #incidents, from Leafy, for the postmortem.'}),
+    ]  # fmt: skip
+    t1 = [
+        ('in', 'received', 900, {'label': 'Sara', 'text': 'Draft the release notes for 2.4'}),
+        ('approval', 'awaiting_owner', 600, {'action': 'Publish the release notes draft to the docs site'}),
+    ]
+    t3 = [  # an errand: the requester's ask, the reply the owner sent on with Send
+        ('in', 'received', 7200, {'label': 'Omar', 'text': 'Can you book a room for the 10:00 sync?'}),
+        ('message', 'sent', 7000, {'to': 'requester', 'label': 'Omar', 'text': 'Booked: Room 2 at 10:00.'}),
+        ('final', 'sent', 6990, {'to': 'thread', 'text': 'Booked Room 2 and told Omar.'}),
+    ]
+    paths = {
+        'received': ('received',),
+        'sent': ('received', 'sent'),
+        'refused': ('received', 'refused'),
+        'replaced': ('received', 'awaiting_owner', 'replaced'),
+        'awaiting_owner': ('received', 'awaiting_owner'),
+    }
+    rows = []
+    for task, items in (('t1', t1), ('t2', t2), ('t3', t3)):
+        for seq, (kind, state, ago, data) in enumerate(items, 1):
+            at = NOW - ago
+            history = walk(*(('sent',) if kind == 'final' else paths[state]), start=at)
+            rows.append((f'{task}#{seq}', task, seq, kind, state, at, json.dumps({**data, 'history': history}), NOW))
+    con.executemany('insert into items values (?,?,?,?,?,?,?,?)', rows)
+
+
 def companion_db(path):
     con = sqlite3.connect(path)
     con.executescript(
@@ -191,13 +241,25 @@ create table pulls (id text primary key, repo text, number integer, updated text
         ),
     ]
     con.executemany('insert into tasks values (?,?,?,?,?,?,?,?,?,?,?,"slack",?)', [(*t, NOW) for t in tasks])
-    # the audit columns a newer companion adds (older databases have none: the hub copes either way)
-    for column in ('started_by', 'via', 'approved_by'):
+    # the audit columns, then who each task is with and where it stands (companion/bot/machine.py)
+    for column in ('started_by', 'via', 'approved_by', 'party', 'phase', 'case_link'):
         con.execute(f'alter table tasks add column {column} text')
     con.execute(
         "update tasks set started_by = 'Sara', via = 'in the requests channel #asks', approved_by = 'Admin' where id = 't2'"
     )
     con.execute("update tasks set via = 'from the hub' where id = 't4'")
+    case_link = 'https://example.slack.com/archives/D0OWNER/p2'
+    for tid, party, phase in (
+        ('t1', 'colleague', 'waiting_owner'),
+        ('t2', 'colleague', 'waiting_owner'),
+        ('t3', 'errand', 'answered'),
+        ('t4', 'owner', 'answered'),
+    ):
+        con.execute(
+            'update tasks set party = ?, phase = ?, case_link = ? where id = ?',
+            (party, phase, case_link if party != 'owner' else '', tid),
+        )
+    ledger_items(con)
     events = [
         (NOW - 7000, 'sent', 'Booked the meeting room', 't3', '#general', 'Room 2, 10:00', 1),
         (NOW - 3000, 'files', 'Shared the report', 't2', 'Sara', 'report.pdf', 1),

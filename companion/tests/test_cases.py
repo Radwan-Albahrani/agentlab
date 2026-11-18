@@ -1,16 +1,17 @@
-"""Cases: a colleague's conversation with the companion, followed by the owner from a thread in their DM."""
+"""Cases: a colleague's conversation with the companion, followed by the owner from a thread in their DM. Every
+message in and out is a ledger item with an explicit state; party, case, turn and phase are explicit too."""
 
 import json
 import os
 
 import pytest
-from bot import errands, jobs, outbox, routing, slack, state, t3, tasks
-from conftest import OWNER
+from bot import jobs, ledger, machine, routing, slack, state, t3, tasks
+from conftest import OWNER, agent_sends, click, receipts
 
 SALAH_DM = 'D_U_SALAH'  # Salah's DM with the bot
 
 
-def snapshot(status, answer):
+def snapshot(status, answer, **more):
     return lambda tid, since: {
         'running': False,
         'last_status': status,
@@ -19,6 +20,7 @@ def snapshot(status, answer):
         'requests': [],
         'workers': [],
         'prs': [],
+        **more,
     }
 
 
@@ -27,6 +29,8 @@ def case(monkeypatch, t3_quiet, fresh_bot):
     """Salah messaged the bot in his DM: his task, with its case head in the owner's DM."""
     sent = []
     monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': True, 'result': 'It is checking the stack.'})
+    monkeypatch.setattr(t3, 'digest', lambda tid: 'record')
     monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
     monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: [])
     message = {'ts': '60.1', 'user': 'U_SALAH', 'text': 'I fixed them'}
@@ -41,93 +45,78 @@ def posted(bot, ch, thread=None):
 
 
 def text_of(msgs):
-    return json.dumps(msgs)
+    return json.dumps(msgs, ensure_ascii=False)
 
 
-def test_a_colleagues_message_opens_a_case_in_the_owners_dm(case, fresh_bot):
+def in_case(bot, t):
+    return text_of(posted(bot, 'D_OWNER', t['case']['ts']))
+
+
+def kinds(t):
+    return [(i['kind'], i.get('to', ''), i['state']) for i in ledger.items(t)]
+
+
+def finish(t, monkeypatch, answer, status='completed', **more):
+    monkeypatch.setattr(t3, 'snapshot', snapshot(status, answer, **more))
+    tasks.tick(t)
+
+
+def test_a_colleagues_message_opens_a_case_with_every_state_named(case, fresh_bot):
     t, _ = case
-    head = t['case']
-    assert head['ch'] == 'D_OWNER' and head['own']
-    first = next(m for m in fresh_bot.messages if m.get('ts') is None and m['channel'] == 'D_OWNER')
-    assert 'Salah' in text_of(first) and 'I fixed them' in text_of(first)
-
-
-def drop(t, payload):
-    box = os.path.join(outbox.OUTBOX, t['outbox'])
-    os.makedirs(box, exist_ok=True)
-    with open(os.path.join(box, 'send.json'), 'w') as f:
-        json.dump(payload, f)
-    outbox.tick(t)
+    assert t['party'] == {'kind': 'colleague', 'user': 'U_SALAH'}
+    assert t['case']['head'] == 'own' and t['case']['mode'] == 'private' and t['case']['ch'] == 'D_OWNER'
+    assert t['turn']['by'] == 'colleague' and t['turn']['state'] == 'running' and t['phase'] == 'working'
+    assert kinds(t) == [('in', '', 'received')]
+    head = next(m for m in fresh_bot.messages if m.get('thread_ts') is None and m['channel'] == 'D_OWNER')
+    assert 'Salah' in text_of(head) and 'I fixed them' in text_of(head)
+    assert not any(k in t for k in ('guest', 'active', 'outcome', 'answer_to'))
 
 
 def test_the_colleague_hears_only_what_the_agent_sends_and_its_final_message_is_the_owners(
     case, fresh_bot, monkeypatch
 ):
     t, _ = case
-    drop(t, {'text': 'All 16 PRs check out.'})
-    monkeypatch.setattr(
-        t3, 'snapshot', snapshot('completed', 'Told Salah the stack is fine; #6257 still needs a test.')
-    )
-    tasks.tick(t)
+    agent_sends(t, {'type': 'message', 'to': 'Salah', 'text': 'All 16 PRs check out.'})
+    finish(t, monkeypatch, 'Told Salah the stack is fine; #6257 still needs a test.')
     theirs = text_of(posted(fresh_bot, SALAH_DM, '60.1'))
     assert 'All 16 PRs' in theirs and 'needs a test' not in theirs
-    case_thread = text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
-    assert 'Companion \\u2192 Salah' in case_thread and 'All 16 PRs' in case_thread  # what went, copied
-    assert 'Companion \\u2192 you' in case_thread and 'needs a test' in case_thread  # the agent's word to the owner
-    assert 'Nothing was sent' not in case_thread and 'told' not in t
+    case_thread = in_case(fresh_bot, t)
+    assert 'Companion → Salah' in case_thread and 'All 16 PRs' in case_thread  # what went, copied
+    assert 'Companion → you' in case_thread and 'needs a test' in case_thread  # the agent's word to the owner
+    assert 'Nothing was sent' not in case_thread
+    assert kinds(t) == [('in', '', 'received'), ('message', 'colleague', 'sent'), ('final', 'case', 'sent')]
+    assert t['turn'] | {'at': 0, 'ended': 0} == {
+        'n': 1, 'by': 'colleague', 'state': 'ended', 'outcome': 'answered', 'at': 0, 'ended': 0
+    }  # fmt: skip
+    assert t['phase'] == 'answered'
 
 
 def test_a_turn_that_sent_the_colleague_nothing_says_so_in_the_case(case, fresh_bot, monkeypatch):
     t, _ = case
-    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Salah wants the logs; asking you first.'))
-    tasks.tick(t)
+    finish(t, monkeypatch, 'Salah wants the logs; asking you first.')
     assert 'asking you first' not in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    assert 'Nothing was sent to Salah this turn' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    assert 'Nothing was sent to Salah this turn' in in_case(fresh_bot, t)
 
 
 def test_a_message_for_anyone_else_waits_for_the_owners_preview(case, fresh_bot):
     t, _ = case
-    drop(t, [{'text': 'On it.'}, {'to': '#random', 'text': 'Release today!'}])
+    agent_sends(
+        t,
+        {'type': 'message', 'to': 'Salah', 'text': 'On it.'},
+        {'type': 'message', 'to': '#random', 'text': 'Release today!'},
+    )
     assert 'On it.' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
     preview = next(m for m in fresh_bot.messages if m['text'] == 'Post this?')
-    assert preview['channel'] == 'D_OWNER' and not any(m['channel'] == 'C_RANDOM' for m in fresh_bot.messages)
-
-
-def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_case(monkeypatch, t3_quiet, fresh_bot):
-    sent = []
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
-    t = state.new_task('C_TECH', '80.1', 'T_REV', 'Review #6257', 'rev-box', '80.1', None)
-    t.update(active=False, audit=tasks.audit('U_SALAH', 'in #tech'))
-    tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'U_SALAH')
-    assert t['case']['ch'] == 'D_OWNER' and 'migration check' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
-    tasks.reply(t, 'The migration drops a column still read by the map.')
-    assert 'drops a column' in text_of(posted(fresh_bot, 'C_TECH', '80.1'))  # answered where they asked
-    assert 'drops a column' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))  # and copied
-
-
-def test_the_owners_own_task_keeps_no_case(monkeypatch, t3_quiet, fresh_bot):
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
-    t = state.new_task('C_TECH', '82.1', 'T_OWN', 'logo', 'own-box', '82.1', None)
-    t.update(active=False, audit=tasks.audit(OWNER, 'in #tech'))
-    tasks.follow_up(t, 'make it blue too', None, '83.1', 'U_SALAH')
-    assert 'case' not in t
-
-
-def test_the_owners_files_go_here_with_send_json(monkeypatch, t3_quiet, fresh_bot):
-    t = state.new_task('D_OWNER', '84.1', 'T_OWN', 'proof', 'own-files', '84.1', None)
-    box = os.path.join(outbox.OUTBOX, 'own-files')
-    os.makedirs(box, exist_ok=True)
-    with open(os.path.join(box, 'proof.png'), 'wb') as f:
-        f.write(b'png')
-    uploads = []
-    monkeypatch.setattr(slack, 'upload', lambda ch, tts, paths, comment=None: uploads.append((ch, tts, comment)))
-    drop(t, {'to': 'here', 'text': 'The new logo:', 'files': ['proof.png']})
-    assert uploads == [('D_OWNER', '84.1', 'The new logo:')]
+    assert (preview['channel'], preview['thread_ts']) == ('D_OWNER', t['case']['ts'])
+    assert not any(m['channel'] == 'C_RANDOM' for m in fresh_bot.messages)
+    assert t['phase'] == 'waiting_owner'
+    click(fresh_bot, 'post_skip')
+    assert t['phase'] == 'working' and ledger.items(t)[-1]['state'] == 'rejected'
 
 
 def test_the_owner_talks_to_the_agent_privately_in_the_case(case, fresh_bot, monkeypatch):
     t, sent = case
-    t['active'] = False
+    finish(t, monkeypatch, 'Done.')
     before = len(posted(fresh_bot, SALAH_DM))
     routing.route(
         {
@@ -140,106 +129,178 @@ def test_the_owner_talks_to_the_agent_privately_in_the_case(case, fresh_bot, mon
         },
         False,
     )
-    assert sent[-1].startswith('Radwan') or 'private' in sent[-1]
     assert 'is the engine real?' in sent[-1] and 'sees none of this' in sent[-1]
-    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'No: the engine repo does not exist.'))
-    tasks.tick(t)
-    assert 'engine repo' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    assert t['turn']['by'] == 'owner' and t['turn']['n'] == 2
+    last = ledger.items(t)[-1]
+    assert (last['kind'], last['private'], last['by']) == ('in', True, OWNER)
+    finish(t, monkeypatch, 'No: the engine repo does not exist.')
+    assert 'engine repo' in in_case(fresh_bot, t)
     assert len(posted(fresh_bot, SALAH_DM)) == before  # nothing reached Salah, not even a thinking line
-    assert 'answer_to' not in t and not t['active']
 
 
 def test_on_the_owners_word_the_agent_sends_the_colleague_a_message(case, fresh_bot):
     t, _ = case
-    box = os.path.join(outbox.OUTBOX, t['outbox'])
-    os.makedirs(box, exist_ok=True)
-    with open(os.path.join(box, 'send.json'), 'w') as f:
-        json.dump({'text': 'The stack is on hold until the engine is in a repo we can see.'}, f)
-    outbox.tick(t)
+    box = agent_sends(
+        t, {'type': 'message', 'to': 'Salah', 'text': 'The stack is on hold until the engine is in a repo.'}
+    )
     assert 'on hold' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    assert 'Sent to Salah' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    assert 'Companion → Salah' in in_case(fresh_bot, t)
     assert not os.path.exists(os.path.join(box, 'send.json'))
+    (r,) = receipts(box)
+    assert r == {
+        'id': '2', 'type': 'message', 'to': 'Salah', 'state': 'sent', 'meaning': 'sent', 'note': '',
+        'text': 'The stack is on hold until the engine is in a repo.',
+    }  # fmt: skip
 
 
 def test_a_colleague_writing_while_the_owner_talks_waits_its_turn(case, fresh_bot, monkeypatch):
     t, sent = case
-    t['active'] = False
+    finish(t, monkeypatch, 'Done.')
     routing.route(
-        {
-            'channel': 'D_OWNER',
-            'channel_type': 'im',
-            'ts': '91.1',
-            'thread_ts': t['case']['ts'],
-            'user': OWNER,
-            'text': 'hold on',
-        },
+        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '91.1', 'thread_ts': t['case']['ts'], 'user': OWNER,
+         'text': 'hold on'},
         False,
-    )
+    )  # fmt: skip
     n = len(sent)
     tasks.follow_up(t, 'the staging log is attached now', None, '92.1', 'U_SALAH')
     assert len(sent) == n and t['queue'][0]['text'] == 'the staging log is attached now'
-    assert 'the staging log is attached now' in text_of(
-        posted(fresh_bot, 'D_OWNER', t['case']['ts'])
-    )  # the owner sees it at once
-    monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Holding.'))
-    tasks.tick(t)  # the owner's turn ends: Salah's message goes to the agent now, as his turn
-    assert (
-        len(sent) == n + 1
-        and 'Salah' in sent[-1]
-        and 'the staging log is attached now' in sent[-1]
-        and 'answer_to' not in t
-    )
+    assert 'the staging log is attached now' in in_case(fresh_bot, t)  # the owner sees it at once
+    finish(t, monkeypatch, 'Holding.')  # the owner's turn ends: Salah's message goes to the agent now, as his turn
+    assert len(sent) == n + 1 and 'Salah' in sent[-1] and 'the staging log is attached now' in sent[-1]
+    assert t['turn']['by'] == 'colleague' and t['turn']['state'] == 'running'
 
 
 def test_a_turn_the_owner_starts_in_t3_answers_the_owner(case, fresh_bot, monkeypatch):
     t, _ = case
-    t['active'] = False
+    finish(t, monkeypatch, 'Done.')
     monkeypatch.setattr(t3, 'has_open_run', lambda tid: True)
     monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**snapshot('completed', 'x')(tid, since), 'running': True})
     tasks.tick(t)
-    assert t['answer_to'] == {'ch': 'D_OWNER', 'tts': t['case']['ts']}
+    assert t['turn']['by'] == 't3' and machine.owners_turn(t) and machine.final_goes_to(t) == 'case'
 
 
 def test_approvals_go_in_the_case_and_a_newer_one_replaces_the_old(case, fresh_bot):
     t, _ = case
-    errands.ask_approval(t, {'action': 'Merge the stack', 'details': 'x'})
-    first = t['approval']
-    assert first['ch'] == 'D_OWNER' and posted(fresh_bot, 'D_OWNER', t['case']['ts'])
-    errands.ask_approval(t, {'action': 'Merge only #6257', 'details': 'y'})
-    assert t['approval']['action'] == 'Merge only #6257' and first['decided'] == 'replaced'
-    assert 'Replaced by a newer request' in fresh_bot.text()
-    errands.decide(t, 'k', True, card=first['ts'])  # the old card's button decides nothing
-    assert not t['approval']['decided']
+    agent_sends(t, {'type': 'approval', 'action': 'Merge the stack', 'details': 'x'})
+    agent_sends(t, {'type': 'approval', 'action': 'Merge only #6257', 'details': 'y'})
+    first, second = (i for i in ledger.items(t) if i['kind'] == 'approval')
+    assert first['state'] == 'replaced' and second['state'] == 'awaiting_owner'
+    assert first['card']['ch'] == 'D_OWNER' and 'Replaced by a newer request' in fresh_bot.text()
+    click(fresh_bot, 'errand_approve', nth=0)  # the old card's button decides nothing
+    assert second['state'] == 'awaiting_owner' and t['phase'] == 'waiting_owner'
+    click(fresh_bot, 'errand_approve')
+    assert second['state'] == 'approved' and t['turn']['by'] == 'decision'
 
 
 def test_the_agent_can_withdraw_its_approval_request(case, fresh_bot):
     t, _ = case
-    errands.ask_approval(t, {'action': 'Merge the stack', 'details': 'x'})
-    errands.ask_approval(t, {'withdraw': 'the engine is not in a repo yet'})
-    assert t['approval']['decided'] == 'replaced' and 'Withdrawn by' in fresh_bot.text()
-    errands.decide(t, 'k', True)
-    assert t['approval']['decided'] == 'replaced'  # nothing left to approve
+    agent_sends(t, {'type': 'approval', 'action': 'Merge the stack', 'details': 'x'})
+    agent_sends(t, {'type': 'withdraw', 'why': 'the engine is not in a repo yet'})
+    (a,) = ledger.items(t)[1:]
+    assert a['state'] == 'withdrawn' and 'Withdrawn by' in fresh_bot.text() and t['phase'] == 'working'
+    click(fresh_bot, 'errand_approve')
+    assert a['state'] == 'withdrawn'  # nothing left to approve
 
 
-def test_a_colleagues_task_from_before_cases_takes_its_approval_card_as_its_case(monkeypatch, t3_quiet, fresh_bot):
-    sent = []
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
-    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
-    t = state.new_task(SALAH_DM, '61.1', 'T_OLD', 'I fixed them', 'old-box', '61.1', None, guest='U_SALAH')
-    t.update(active=False, approval={'action': 'Merge', 'ts': '70.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''})
-    routing.route(
-        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '71.1', 'thread_ts': '70.1', 'user': OWNER, 'text': 'why?'},
-        False,
-    )
-    assert sent and 'why?' in sent[-1] and t['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'own': False}
-    assert t['answer_to'] == {'ch': 'D_OWNER', 'tts': '70.1'}
-
-
-def test_an_approval_that_waits_for_the_running_turn_tells_the_owner_not_the_colleague(case, fresh_bot, monkeypatch):
+def test_the_agents_question_comes_to_the_owner_and_their_reply_answers_it(case, fresh_bot, monkeypatch):
     t, _ = case
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True, 'result': {'delivery': 'queued'}})
-    monkeypatch.setattr(t3, 'triage', lambda prompt: pytest.fail('no side answer for a decision'))
-    errands.ask_approval(t, {'action': 'Merge the stack', 'details': 'x'})
-    errands.decide(t, 'k', True)
-    assert 'Queued' not in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    assert 'gets your decision when its current step ends' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    ask = {'questions': [{'question': 'Merge #6257 too?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]}
+    running = snapshot('running', '', requests=[('r1', 'user_input', ask)])
+    monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**running(tid, since), 'running': True})
+    tasks.tick(t)
+    assert 'Merge #6257 too?' in in_case(fresh_bot, t) and 'Merge #6257' not in text_of(posted(fresh_bot, SALAH_DM))
+    assert t['phase'] == 'waiting_answer'
+    monkeypatch.setattr(t3, 'waiting_question', lambda tid: True)
+    answered = []
+    monkeypatch.setattr(t3, 'answer', lambda tid, msg: answered.append(msg) or {'ok': True})
+    routing.route(
+        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '93.1', 'thread_ts': t['case']['ts'], 'user': OWNER,
+         'text': '1'},
+        False,
+    )  # fmt: skip
+    assert answered and answered[-1].endswith('Yes') and 'queue' not in t
+
+
+def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_shared_case(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
+    t = state.new_task('C_TECH', '80.1', 'T_REV', 'Review #6257', 'rev-box', '80.1', None, party=machine.party_of())
+    t['audit'] = tasks.audit('U_SALAH', 'in #tech')
+    machine.begin_turn(t, 'system')
+    machine.end_turn(t, 'answered')
+    tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'U_SALAH')
+    assert t['party'] == {'kind': 'colleague', 'user': 'U_SALAH'} and t['case']['mode'] == 'shared'
+    assert 'migration check' in in_case(fresh_bot, t)
+    tasks.reply(t, 'The migration drops a column still read by the map.')
+    assert 'drops a column' in text_of(posted(fresh_bot, 'C_TECH', '80.1'))  # answered where they asked
+    assert 'drops a column' in in_case(fresh_bot, t)  # and copied
+
+
+def test_the_owners_own_task_keeps_no_case(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
+    t = state.new_task('C_TECH', '82.1', 'T_OWN', 'logo', 'own-box', '82.1', None, party=machine.party_of())
+    t['audit'] = tasks.audit(OWNER, 'in #tech')
+    machine.begin_turn(t, 'owner')
+    machine.end_turn(t, 'answered')
+    tasks.follow_up(t, 'make it blue too', None, '83.1', 'U_SALAH')
+    assert 'case' not in t and t['party']['kind'] == 'owner'
+
+
+def test_side_questions_are_answered_on_the_side_and_start_no_turn(case, fresh_bot, monkeypatch):
+    t, sent = case
+    finish(t, monkeypatch, 'Done.')
+    n, turn = len(sent), dict(t['turn'])
+    tasks.follow_up(t, '/btw what is it doing?', None, '94.1', 'U_SALAH')
+    assert len(sent) == n and t['turn'] == turn  # the chat was not messaged; no new turn
+    assert 'It is checking the stack.' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
+    side = ledger.items(t)[-1]
+    assert side['kind'] == 'message' and side['to'] == 'colleague' and side['side'] and side['state'] == 'sent'
+    assert 'It is checking the stack.' in in_case(fresh_bot, t)  # the owner sees the side answer too
+    routing.route(
+        {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '95.1', 'thread_ts': t['case']['ts'], 'user': OWNER,
+         'text': 'status?'},
+        False,
+    )  # fmt: skip
+    assert len(sent) == n and ledger.items(t)[-1]['to'] == 'owner'
+
+
+def test_moves_the_state_machine_does_not_allow_are_bugs_not_states(case):
+    t, _ = case
+    it = ledger.add(t, 'message', to='colleague', text='x')
+    ledger.move(t, it, 'sent')
+    with pytest.raises(ledger.IllegalMoveError):
+        ledger.move(t, it, 'awaiting_owner')
+    with pytest.raises(machine.IllegalStateError):
+        machine.begin_turn(t, 'owner')  # the colleague's turn is still running
+    with pytest.raises(machine.IllegalStateError):
+        machine.open_case(t, 'D_OWNER', '1.0', 'own')  # it has one
+
+
+def test_a_task_saved_before_these_states_is_converted_once(fresh_bot):
+    old = {
+        'thread': 'T_OLD', 'title': 'logs', 'channel': SALAH_DM, 'thread_ts': '61.1', 'outbox': 'old-box',
+        'trigger_ts': '61.1', 'status_ts': 's', 'active': False, 'outcome': 'asked you', 'guest': 'U_SALAH',
+        'case': {'ch': 'D_OWNER', 'ts': '70.1', 'own': True, 'md': 'head'}, 'told': 1,
+        'approval': {'action': 'Merge', 'ts': '71.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''},
+        'sent': [{'id': '1', 'where': 'in #random', 'msgs': [['C_RANDOM', '5.0']], 'text': 'Lunch?'}],
+    }  # fmt: skip
+    state.state['tasks'][state.key(SALAH_DM, '61.1')] = old
+    machine.prepare_all([old])
+    assert old['party'] == {'kind': 'colleague', 'user': 'U_SALAH'}
+    assert old['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'head': 'own', 'mode': 'private', 'md': 'head'}
+    assert old['turn']['state'] == 'ended' and old['turn']['outcome'] == 'asked'
+    assert kinds(old) == [('message', 'channel', 'sent'), ('approval', '', 'awaiting_owner')]
+    assert old['phase'] == 'waiting_owner' and old['status_ts'] is None
+    assert not any(k in old for k in machine.OLD)
+    assert not fresh_bot.messages  # converted, not shown again
+    click_on = ledger.on_card(old, '71.1')
+    assert click_on['kind'] == 'approval'
+
+
+def test_an_old_record_the_conversion_does_not_understand_keeps_its_task(fresh_bot):
+    odd = {
+        'thread': 'T_ODD', 'title': 'x', 'channel': 'C1', 'thread_ts': '62.1', 'outbox': 'odd', 'trigger_ts': '62.1',
+        'active': True, 'post_draft': {'text': 'no ts'},
+    }  # fmt: skip
+    machine.prepare_all([odd])
+    assert odd['party']['kind'] == 'owner' and machine.running(odd) and odd['items'] == []
+    assert 'post_draft' not in odd and 'active' not in odd

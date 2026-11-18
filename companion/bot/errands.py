@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from . import cases, jobs, prompts, slack, t3, tasks
+from . import cases, gate, jobs, ledger, machine, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, default_project, log, mode
 from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
@@ -59,7 +59,7 @@ def start(p, what=''):
 
 def track(p, dm, head, tid, title, folder, link):
     """Register an errand's chat as a task in the owner's DM thread."""
-    new_task(
+    task = new_task(
         dm,
         head,
         tid,
@@ -67,7 +67,7 @@ def track(p, dm, head, tid, title, folder, link):
         folder,
         head,
         slack.note_only(dm, head, tasks.THINKING),
-        requester=p['user'],
+        party=machine.party_of(requester=p['user']),
         audit=tasks.audit(
             OWNER if p.get('tagged') else p['user'],
             'by your tag on their message' if p.get('tagged') else 'noticed in team mode',
@@ -78,13 +78,16 @@ def track(p, dm, head, tid, title, folder, link):
         source_im=p['im'],
         source_thread=p['thread_ts'] or (None if p['im'] else p['ts']),
     )
+    machine.open_case(task, dm, head, 'errand')  # the errand's thread is the owner's: it is the case
+    machine.begin_turn(task, 'colleague')
+    cases.heard(task, p['user'], '\n'.join(p['texts']), p.get('files'), first=True)
     log('errand started for', p['user'], tid)
     COMP.event('started', title, task=key(dm, head), detail=f'errand for {slack.name(p["user"])}')
 
 
 def close_head(task, line, emoji):
     """Mark the errand's head message ended: no Stop button, :eyes: -> `emoji`, footer -> `line`."""
-    if not task.get('requester'):
+    if machine.party(task)['kind'] != 'errand':
         return
     ch, ts = task['channel'], task['thread_ts']
     try:
@@ -130,114 +133,109 @@ def _approval_blocks(md, note, task_key='', buttons=True):
 
 
 def approver(task):
-    """Where the owner decides: a colleague's task's case thread (their DM before cases), else the task's thread."""
-    if cases.of(task):
-        return cases.of(task)
-    return (slack.dm_owner(), None) if task.get('guest') else (task['channel'], task['thread_ts'])
+    """Where the owner decides: the case thread, else the task's own thread."""
+    return cases.owner_place(task)
 
 
-def _close_card(task, line):
-    """Take the buttons off the approval still waiting, with `line` saying why; '' when there is none."""
-    old = task.get('approval') or {}
-    if not old or old.get('decided'):
-        return ''
-    old['decided'] = 'replaced'
+def _close_card(it, line):
+    """Take the buttons off a card, with `line` saying why."""
     slack.app.client.chat_update(
-        channel=old.get('ch') or task['channel'],
-        ts=old['ts'],
-        text=line,
-        blocks=_approval_blocks(old['md'], line, buttons=False),
+        channel=it['card']['ch'], ts=it['card']['ts'], text=line, blocks=_approval_blocks(it['md'], line, buttons=False)
     )
-    if old.get('note'):
-        slack.update(task['channel'], old['note'], line, note=line)
-    return old['action']
 
 
-def ask_approval(task, a):
-    """approval.json -> owner-only Approve / Reject, in the case thread when a colleague asked. A newer one replaces
-    the one waiting; {"withdraw": why} takes it back."""
-    who = slack.name(task.get('requester') or task.get('guest') or OWNER)
+def ask_approval(task, it, box=None):
+    """A ledger approval -> owner-only Approve / Reject where the owner follows the task. It replaces any approval
+    still waiting; the files it would send are shown with it."""
+    who = cases.who(task)
     k = key_of(task)
-    if a.get('withdraw'):
-        why = str(a['withdraw'])[:300]
-        took = _close_card(task, f':leftwards_arrow_with_hook: Withdrawn by {NAME}: {why}')
-        if took:
-            COMP.event('withdrawn', f'Withdrew the approval request: {took}'[:200], task=k, detail=why)
-            cases.status(task, 'answered')
-        save()
-        return
-    _close_card(task, ':arrows_counterclockwise: Replaced by a newer request below')
-    action = a.get('action', '')
-    link = slack.permalink(task['channel'], task['thread_ts']) if task.get('guest') else ''
+    for old in ledger.pending(task, 'approval'):
+        _close_card(old, ':arrows_counterclockwise: Replaced by a newer request below')
+        ledger.move(task, old, 'replaced', note=f'replaced by a newer request: {it["action"]}'[:300])
+    link = slack.permalink(task['channel'], task['thread_ts']) if machine.is_colleague(task) else ''
     md = (
-        f':raised_hand: **Approve?** {action}\n\n{a.get("details", "")}'
-        + (f'\n\n**Then reply to {who}:**\n' + quote(a['reply']) if a.get('reply') else '')
+        f':raised_hand: **Approve?** {it["action"]}\n\n{it.get("details", "")}'
+        + (f'\n\n**Then reply to {who}:**\n' + quote(it['reply']) if it.get('reply') else '')
         + (f"\n\n<{link}|Open {who}'s thread>" if link else '')
     )
     ch, tts = approver(task)
     ts = slack.app.client.chat_postMessage(
         channel=ch,
         thread_ts=tts,
-        text=f'Approve? {first_sentence(str(action), 150)}',
+        text=f'Approve? {first_sentence(str(it["action"]), 150)}',
         blocks=_approval_blocks(md, f'Asked by {who}. Nothing has changed yet.', k),
     )['ts']
-    note = None
-    if task.get('guest'):
-        note = slack.note_only(
-            task['channel'], task['thread_ts'], f':hourglass_flowing_sand: Waiting for {slack.name(OWNER)} to approve'
-        )
-    task['approval'] = {
-        'action': action,
-        'reply': a.get('reply', ''),
-        'ts': ts,
-        'ch': ch,
-        'note': note,
-        'md': md,
-        'decided': '',
-        'files': a.get('files') or [],
-    }
-    COMP.event('approval', f'Asked you to approve: {a.get("action", "")}'[:200], task=k, detail=f'for {who}')
-    cases.status(task, 'waiting')
+    ledger.move(task, it, 'awaiting_owner', card={'ch': ch, 'ts': ts}, md=md)
+    if box and it.get('files'):
+        ok, refused = gate.files(box, it['files'])
+        if ok:
+            slack.upload(
+                ch,
+                tts,
+                ok,
+                f':mag: Preview: {len(ok)} file{"s" if len(ok) != 1 else ""} that will go out if you approve'
+                + (f' ({len(refused)} would be held back: {", ".join(refused)})' if refused else ''),
+            )
+    COMP.event('approval', f'Asked you to approve: {it["action"]}'[:200], task=k, detail=f'for {who}')
 
 
-def decide(task, k, approved, card=None):
-    """card: the pressed card's ts; a card other than the one waiting (replaced, withdrawn) decides nothing."""
-    a = task.get('approval')
-    if not a or a.get('decided') or (card and card != a['ts']):
+def withdraw(task, why):
+    """The agent takes back the approval waiting (it learned more, or was told to hold)."""
+    waiting = ledger.pending(task, 'approval')
+    if not waiting:
+        log('withdraw: no approval is waiting', key_of(task))
         return
-    a['decided'] = 'approved' if approved else 'rejected'
+    it = waiting[-1]
+    _close_card(it, f':leftwards_arrow_with_hook: Withdrawn by {NAME}: {why or "no reason given"}')
+    ledger.move(task, it, 'withdrawn', note=why)
+    COMP.event('withdrawn', f'Withdrew the approval request: {it["action"]}'[:200], task=key_of(task), detail=why)
+
+
+def decide(task, k, approved, card):
+    """The owner's Approve / Reject on `card`; a card no longer waiting (replaced, withdrawn, decided) decides
+    nothing."""
+    it = ledger.on_card(task, card)
+    if not it or it['kind'] != 'approval' or it['state'] != 'awaiting_owner':
+        return
     when = datetime.now().strftime('%H:%M')
     slack.app.client.chat_update(
-        channel=a.get('ch') or task['channel'],
-        ts=a['ts'],
-        text=a['decided'],
+        channel=it['card']['ch'],
+        ts=card,
+        text='approved' if approved else 'rejected',
         blocks=_approval_blocks(
-            a['md'],
+            it['md'],
             (':white_check_mark: Approved' if approved else ':x: Rejected') + f' by you at {when}',
             buttons=False,
         ),
     )
-    who, owner = slack.name(task.get('requester') or task.get('guest') or OWNER), slack.name(OWNER)
-    if a.get('note'):
-        line = f':white_check_mark: {owner} approved' if approved else f':x: {owner} said no, so nothing changes'
-        slack.update(task['channel'], a['note'], line, note=line)
+    ledger.move(task, it, 'approved' if approved else 'rejected')
+    who, owner = cases.who(task), slack.name(OWNER)
     if approved:
-        task['reply_pending'] = a.get('reply') or ''
-        msg = f'APPROVED by {owner}: {a["action"]}. Make the change now, check it worked, and confirm in one line' + (
-            f' (it goes to {who}).' if task.get('guest') else '.'
-        )
-        cases.status(task, 'working')
+        if it.get('reply') and machine.party(task)['kind'] == 'errand':  # sent once the agent has made the change
+            r = ledger.add(task, 'message', to='requester', label=who, text=it['reply'], after='turn', ref=it['id'])
+            ledger.move(task, r, 'approved', note=f'with approval {it["id"]}')
+        msg = f'APPROVED by {owner}: {it["action"]}. Make the change now, check it worked, and confirm in one line.'
     else:
         msg = f'REJECTED by {owner}: do not make this change. Nothing is sent to {who}. Stop here.'
         close_head(task, ':x: Rejected · nothing changed', 'x')
-    COMP.event('approved' if approved else 'rejected', f'You {a["decided"]}: {a["action"]}'[:200], task=k)
+    COMP.event('approved' if approved else 'rejected', f'You {it["state"]}: {it["action"]}'[:200], task=k)
     save()
-    jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'], None, True)
+    jobs.run_later(tasks.follow_up, task, msg, None, card, None, True)
+
+
+def after_turn(task, completed):
+    """Messages approved to go once the turn is over: sent if it completed, else failed."""
+    for it in ledger.items(task):
+        if it['kind'] == 'message' and it['state'] == 'approved' and it.get('after') == 'turn':
+            if completed:
+                send_to_requester(task, it, it.get('paths') or [])
+            else:
+                ledger.move(task, it, 'failed', note='the turn did not complete')
 
 
 def stop(task, k):
     res = t3.stop(task['thread'])
-    task['reply_pending'] = ''
+    after_turn(task, completed=False)
     COMP.event('stopped', f'You stopped: {task.get("title", "")}', task=k, ok=bool(res.get('ok')))
     if res.get('ok'):
         close_head(task, ':black_square_for_stop: Stopped by you', 'black_square_for_stop')
@@ -253,43 +251,54 @@ def stop(task, k):
         )
 
 
-def reply_requester(task, text, files=(), approved=False):
-    """Offer the reply to the owner with a Send button; sent at once if `approved`, never sent in dry run."""
-    who, req = slack.name(task.get('requester') or OWNER), task.get('requester')
-    if mode() == 'owner' or not req or req == OWNER:
+def offer_reply(task, it, ok=(), refused=()):
+    """A ledger message for an errand's requester: Send / Don't send for the owner (sent at once when it answers a
+    decision the owner just approved; never sent in dry run)."""
+    who = cases.who(task)
+    it['paths'] = list(ok)
+    if refused:
+        it['held'] = ', '.join(refused)
+    if mode() == 'owner':
         slack.post(
             task['channel'],
             task['thread_ts'],
             f'Would send to {who}',
-            md=f':outbox_tray: Would send to **{who}**:\n' + quote(text),
+            md=f':outbox_tray: Would send to **{who}**:\n' + quote(it['text']),
             note='Dry run: nothing was sent to them.',
         )
+        ledger.move(task, it, 'dry_run')
         return
-    if approved:
-        send_to_requester(task, text, files)
+    turn = machine.turn(task)
+    approval = ledger.latest(task, 'approval', ('approved',))
+    if turn.get('by') == 'decision' and approval and approval['updated'] >= turn.get('at', 0) - 5:
+        ledger.move(task, it, 'approved', note=f'with approval {approval["id"]}')
+        send_to_requester(task, it, ok)
         return
-    k = key_of(task)
     md = (
         f':outbox_tray: **Send to {who}?**\n'
-        + quote(text)
-        + (f'\n\nWith {len(files)} file(s), shown above.' if files else '')
+        + quote(it['text'])
+        + (f'\n\nWith {len(ok)} file(s), shown above.' if ok else '')
     )
+    if ok:
+        slack.upload(task['channel'], task['thread_ts'], ok, f':mag: The file(s) that would go to {who}')
     ts = slack.app.client.chat_postMessage(
         channel=task['channel'],
         thread_ts=task['thread_ts'],
         text=f'Send to {who}?',
         blocks=[
             *slack.blocks(md, 'Nothing has been sent yet.'),
-            slack.buttons(('reply_send', f'Send to {who}', k, 'primary'), ('reply_skip', "Don't send", k, None)),
+            slack.buttons(
+                ('reply_send', f'Send to {who}', key_of(task), 'primary'),
+                ('reply_skip', "Don't send", key_of(task), None),
+            ),
         ],
     )['ts']
-    task['reply_draft'] = {'text': text, 'files': list(files), 'ts': ts, 'md': md}
-    save()
+    ledger.move(task, it, 'awaiting_owner', card={'ch': task['channel'], 'ts': ts}, md=md)
 
 
-def send_to_requester(task, text, files=()):
-    """Send the reply in the requester's thread if possible, else by DM, and note it in the owner's thread."""
-    who, req = slack.name(task['requester']), task['requester']
+def send_to_requester(task, it, files=()):
+    """Send the reply in the requester's thread if possible, else by DM; sent or failed."""
+    who, req = cases.who(task), machine.party(task)['user']
     targets = [] if task.get('source_im') else [(task['source_ch'], task.get('source_thread'))]
     for target, tts in [*targets, ('dm', None)]:
         ch = target
@@ -299,8 +308,8 @@ def send_to_requester(task, text, files=()):
             slack.app.client.chat_postMessage(
                 channel=ch,
                 thread_ts=tts,
-                text=first_sentence(text, 200),
-                blocks=slack.blocks(text, f"From {slack.name(OWNER)}'s assistant"),
+                text=first_sentence(it['text'], 200),
+                blocks=slack.blocks(it['text'], f"From {slack.name(OWNER)}'s assistant"),
             )
             if files:
                 slack.upload(ch, tts, files)
@@ -308,103 +317,104 @@ def send_to_requester(task, text, files=()):
         except Exception as e:
             log('send to requester failed in', ch, e)
     else:
-        slack.post(
-            task['channel'],
-            task['thread_ts'],
-            'Could not send',
-            md=f":warning: Couldn't reach **{who}**. Nothing was sent.",
-        )
+        ledger.move(task, it, 'failed', note=f"couldn't reach {who}")
         return
     slack.post(
-        task['channel'], task['thread_ts'], f'Sent to {who}', md=f':outbox_tray: Sent to **{who}**:\n' + quote(text)
+        task['channel'],
+        task['thread_ts'],
+        f'Sent to {who}',
+        md=f':outbox_tray: Sent to **{who}**:\n' + quote(it['text']),
     )
-    task.pop('reply_draft', None)  # what was just sent replaces any draft still waiting for Send
-    save()
+    ledger.move(task, it, 'sent')
     log('sent to requester', req, len(files), 'files')
     COMP.event(
         'sent',
         f'Message to {who}' + (f' with {len(files)} file{"s" if len(files) != 1 else ""}' if files else ''),
         task=key_of(task),
         to=who,
-        detail=text,
+        detail=it['text'],
     )
     close_head(
         task, f':white_check_mark: Done · sent to {who} at {datetime.now().strftime("%H:%M")}', 'white_check_mark'
     )
 
 
-def decide_reply(task, k, send):
-    d = task.pop('reply_draft', None)
-    if not d:
+def decide_reply(task, k, send, card):
+    it = ledger.on_card(task, card)
+    if not it or it['state'] != 'awaiting_owner':
         return
-    who = slack.name(task['requester'])
+    who = cases.who(task)
     slack.app.client.chat_update(
-        channel=task['channel'],
-        ts=d['ts'],
+        channel=it['card']['ch'],
+        ts=card,
         text='sent' if send else 'not sent',
         blocks=slack.blocks(
-            d['md'],
+            it['md'],
             (f':white_check_mark: Sent to {who}' if send else ':no_entry_sign: Not sent')
             + f' at {datetime.now().strftime("%H:%M")}',
         ),
     )
     if send:
-        send_to_requester(task, d['text'], d['files'])
+        ledger.move(task, it, 'approved')
+        send_to_requester(task, it, it.get('paths') or [])
     else:
+        ledger.move(task, it, 'rejected')
         close_head(task, f':black_square_for_stop: Closed · nothing sent to {who}', 'black_square_for_stop')
         COMP.event('skipped', f'You chose not to send the reply to {who}', task=k, to=who)
-    save()
 
 
-_creds = {}  # task key -> login; memory only, never persist
+_creds = {}  # (task key, item id) -> login; memory only, never persisted, never in the ledger
 
 
-def ask_credential(task, c):
-    """Ask the owner whether to DM a temporary password to the requester (never into a thread)."""
-    req = task.get('requester')
-    if not req or req == OWNER or not c.get('password'):
-        slack.post(
-            task['channel'],
-            task['thread_ts'],
-            'Login not sent',
-            md=':no_entry: The agent handed over a login, but there is nobody else to send it to. It was discarded.',
-        )
+def ask_credential(task, raw):
+    """Ask the owner whether to DM a temporary password to the person the task is for (never into a thread)."""
+    p = machine.party(task)
+    c = {f: str(raw.get(f) or '')[:300] for f in ('service', 'url', 'username', 'password', 'note')}
+    who = slack.name(p['user'])
+    it = ledger.add(
+        task, 'credential', to='person', label=who, text=f'{c["service"] or "New"} login for {c["username"] or "?"}'
+    )
+    if p['kind'] == 'owner' or not c['password']:
+        ledger.move(task, it, 'refused', note='there is nobody else to send it to' if c['password'] else 'no password')
         return
     k = key_of(task)
-    who = slack.name(req)
-    c = {f: str(c.get(f) or '')[:300] for f in ('service', 'url', 'username', 'password', 'note')}
-    _creds[k] = c
+    _creds[(k, it['id'])] = c
     md = (
         f':key: **Send {who} their {c["service"] or "new"} login?**\n'
         + (f'Sign in: {c["url"]}\n' if c['url'] else '')
         + f'Username: `{c["username"]}`\nPassword: hidden'
         + (f'\n_{c["note"]}_' if c['note'] else '')
     )
+    ch, tts = cases.owner_place(task)
     ts = slack.app.client.chat_postMessage(
-        channel=task['channel'],
-        thread_ts=task['thread_ts'],
+        channel=ch,
+        thread_ts=tts,
         text=f'Send {who} their login?',
         blocks=[
             *slack.blocks(md, f'Goes to {who} in a private DM.'),
             slack.buttons(('cred_send', f'Send login to {who}', k, 'primary'), ('cred_skip', "Don't send", k, None)),
         ],
     )['ts']
-    task['cred_ask'] = {'ts': ts, 'md': md}
+    ledger.move(task, it, 'awaiting_owner', card={'ch': ch, 'ts': ts}, md=md)
     COMP.event('approval', f'Asked you to send {who} their {c["service"] or "new"} login', task=k, to=who)
-    save()
 
 
-def decide_credential(task, k, send):
-    ask = task.pop('cred_ask', None)
-    if not ask:
+def decide_credential(task, k, send, card):
+    it = ledger.on_card(task, card)
+    if not it or it['state'] != 'awaiting_owner':
         return
-    c, who = _creds.pop(k, None), slack.name(task['requester'])
+    c, p = _creds.pop((k, it['id']), None), machine.party(task)
+    who = slack.name(p['user'])
     when = datetime.now().strftime('%H:%M')
-    if send and not c:
+    if not send:
+        line = f':no_entry_sign: Not sent at {when}'
+        ledger.move(task, it, 'rejected')
+    elif not c:
         line = f':warning: {NAME} restarted since, so the password is gone. Ask the agent for a new one.'
-    elif send:
+        ledger.move(task, it, 'lost', note='the companion restarted, so the password is gone')
+    else:
         try:
-            dm = slack.app.client.conversations_open(users=task['requester'])['channel']['id']
+            dm = slack.app.client.conversations_open(users=p['user'])['channel']['id']
             text = (
                 f'Your {c["service"] or "new"} login' + (f' for {c["url"]}' if c['url'] else '') + ':\n'
                 f'Username: `{c["username"]}`\nTemporary password: `{c["password"]}`'
@@ -416,7 +426,8 @@ def decide_credential(task, k, send):
                 blocks=slack.blocks(text, f"From {slack.name(OWNER)}'s assistant"),
             )
             line = f':white_check_mark: Sent to {who} in a private DM at {when}'
-            log('credential sent to', task['requester'])
+            ledger.move(task, it, 'sent')
+            log('credential sent to', p['user'])
             COMP.event(
                 'sent',
                 f'{c["service"] or "New"} login to {who} (private DM)',
@@ -426,10 +437,8 @@ def decide_credential(task, k, send):
             )
         except Exception as e:
             line = f":warning: Couldn't DM {who}: {e}"[:200]
-    else:
-        line = f':no_entry_sign: Not sent at {when}'
-    slack.app.client.chat_update(channel=task['channel'], ts=ask['ts'], text=line, blocks=slack.blocks(ask['md'], line))
-    save()
+            ledger.move(task, it, 'failed', note=str(e)[:200])
+    slack.app.client.chat_update(channel=it['card']['ch'], ts=card, text=line, blocks=slack.blocks(it['md'], line))
 
 
 def owner_action(handler, locked=True, card=False):
@@ -459,7 +468,7 @@ def owner_action(handler, locked=True, card=False):
 slack.app.action('errand_approve')(owner_action(lambda t, k, ts: decide(t, k, True, ts), card=True))
 slack.app.action('errand_reject')(owner_action(lambda t, k, ts: decide(t, k, False, ts), card=True))
 slack.app.action('errand_stop')(owner_action(stop, locked=False))
-slack.app.action('reply_send')(owner_action(lambda t, k: decide_reply(t, k, True)))
-slack.app.action('reply_skip')(owner_action(lambda t, k: decide_reply(t, k, False)))
-slack.app.action('cred_send')(owner_action(lambda t, k: decide_credential(t, k, True)))
-slack.app.action('cred_skip')(owner_action(lambda t, k: decide_credential(t, k, False)))
+slack.app.action('reply_send')(owner_action(lambda t, k, ts: decide_reply(t, k, True, ts), card=True))
+slack.app.action('reply_skip')(owner_action(lambda t, k, ts: decide_reply(t, k, False, ts), card=True))
+slack.app.action('cred_send')(owner_action(lambda t, k, ts: decide_credential(t, k, True, ts), card=True))
+slack.app.action('cred_skip')(owner_action(lambda t, k, ts: decide_credential(t, k, False, ts), card=True))

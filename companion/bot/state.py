@@ -89,7 +89,6 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
         'outbox': outbox,
         'trigger_ts': trigger_ts,
         'status_ts': status_ts,
-        'active': True,
         'start': now,
         'burst_start': now,
         'seen': now,
@@ -111,11 +110,6 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
 
 
 def prepare_for_start():
-    """Normalise loaded tasks after a restart."""
+    """Normalise loaded tasks after a restart (their states: machine.prepare_all)."""
     for t in state['tasks'].values():
-        if not t.get('active'):
-            t['status_ts'] = None
         t.setdefault('project', default_project())
-        # older versions left the draft an approved reply replaced, so the task kept waiting for Send
-        if (t.get('closed') or '').startswith(':white_check_mark: Done · sent to ') and not t.get('reply_pending'):
-            t.pop('reply_draft', None)

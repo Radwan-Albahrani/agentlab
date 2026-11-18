@@ -1,8 +1,14 @@
-import type { Event, Poll, Task } from '../api/types';
+import type { CaseItem, Event, Poll, Task } from '../api/types';
 import {
   askedBy,
   askers,
+  casesOf,
   dayLabel,
+  filterCases,
+  ITEM_PILL,
+  itemHistory,
+  lineOf,
+  waitingOnYou,
   delivery,
   sentTo,
   filterTasks,
@@ -29,7 +35,63 @@ const task = (over: Partial<Task>): Task => ({
   endedAt: now - 1800,
   slack: '',
   t3: '',
+  party: 'owner',
+  phase: 'answered',
+  caseLink: '',
+  items: [],
   ...over,
+});
+
+const item = (over: Partial<CaseItem>): CaseItem => ({ seq: 1, kind: 'in', state: 'received', at: now, history: [], ...over });
+
+describe('cases', () => {
+  const sara = task({ id: 's', party: 'colleague', requester: 'Sara', phase: 'working' });
+  const waiting = task({
+    id: 'w',
+    party: 'colleague',
+    phase: 'answered',
+    items: [item({ seq: 2, kind: 'approval', state: 'awaiting_owner', action: 'Merge' })],
+  });
+  const errand = task({ id: 'e', party: 'errand', phase: 'answered' });
+  const mine = task({ id: 'm', party: 'owner' });
+
+  it('are every conversation with someone else, errands included', () => {
+    expect(casesOf([sara, waiting, errand, mine]).map((t) => t.id)).toEqual(['s', 'w', 'e']);
+  });
+
+  it('need you while anything waits on you, whatever the phase says', () => {
+    const all = casesOf([sara, waiting, errand]);
+    expect(filterCases(all, 'you').map((t) => t.id)).toEqual(['w']);
+    expect(filterCases(all, 'open').map((t) => t.id)).toEqual(['s', 'w']);
+    expect(waitingOnYou(waiting)).toHaveLength(1);
+  });
+
+  it('read each message as who to whom, keeping your private exchange apart', () => {
+    expect(lineOf(item({ label: 'Sara' }), 'Sara', 'Leafy')).toEqual({ from: 'Sara', to: 'Leafy', side: 'theirs' });
+    expect(lineOf(item({ private: true }), 'Sara', 'Leafy')).toEqual({ from: 'You', to: 'Leafy', side: 'private' });
+    expect(lineOf(item({ kind: 'final', to: 'case' }), 'Sara', 'Leafy')).toEqual({ from: 'Leafy', to: 'you', side: 'private' });
+    const out = item({ kind: 'message', to: 'channel', label: '#incidents', state: 'awaiting_owner' });
+    expect(lineOf(out, 'Sara', 'Leafy')).toEqual({ from: 'Leafy', to: '#incidents', side: 'ours' });
+    expect(lineOf(item({ kind: 'approval' }), 'Sara', 'Leafy')).toBeNull();
+  });
+
+  it('say how an item got to its state', () => {
+    const it = item({
+      kind: 'approval',
+      state: 'approved',
+      history: [
+        ['received', now],
+        ['awaiting_owner', now],
+        ['approved', now],
+      ],
+    });
+    expect(
+      itemHistory(it)
+        .split(' → ')
+        .map((s) => s.split(' ').slice(0, -2).join(' ')),
+    ).toEqual(['received', 'waiting for you', 'approved']);
+    expect(ITEM_PILL[it.state]).toEqual(['Approved', 'ok']);
+  });
 });
 
 describe('companion tasks', () => {

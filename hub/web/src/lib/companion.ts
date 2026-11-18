@@ -1,5 +1,79 @@
-import type { Event, Poll, Task } from '../api/types';
+import type { CaseItem, Event, ItemState, Phase, Poll, Task } from '../api/types';
 import { clock, duration, plural } from './format';
+
+type Tone = 'info' | 'warn' | 'ok' | 'bad' | 'idle';
+
+/** Where a task stands (companion/bot/machine.py), as a pill. */
+export const PHASE_PILL: Record<Phase, [string, Tone]> = {
+  working: ['Working', 'info'],
+  waiting_owner: ['Needs you', 'warn'],
+  waiting_answer: ['Asked a question', 'warn'],
+  paused: ['Paused', 'warn'],
+  answered: ['Answered', 'ok'],
+  nothing_to_do: ['Nothing to do', 'ok'],
+  stopped: ['Stopped', 'idle'],
+  failed: ['Failed', 'bad'],
+};
+
+/** What became of an item (companion/bot/ledger.py), as a pill. */
+export const ITEM_PILL: Record<ItemState, [string, Tone]> = {
+  received: ['Received', 'idle'],
+  awaiting_owner: ['Waiting for you', 'warn'],
+  approved: ['Approved', 'ok'],
+  sent: ['Sent', 'ok'],
+  silent: ['Nothing to say', 'idle'],
+  applied: ['Applied', 'ok'],
+  refused: ['Refused', 'bad'],
+  rejected: ['Rejected by you', 'idle'],
+  replaced: ['Replaced', 'idle'],
+  withdrawn: ['Withdrawn', 'idle'],
+  failed: ['Failed', 'bad'],
+  dry_run: ['Dry run: not sent', 'idle'],
+  lost: ['Lost', 'bad'],
+};
+
+/** "received 9:58 AM → waiting for you → approved 10:02 AM": how an item got where it is. */
+export const itemHistory = (it: CaseItem) =>
+  it.history
+    .map(([s, at]) => {
+      const time = new Date(at * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `${ITEM_PILL[s][0].toLowerCase()} ${time}`;
+    })
+    .join(' → ');
+
+/** A case: a conversation someone other than you has with the companion (a colleague, or an errand's requester). */
+export const casesOf = (tasks: Task[]) => tasks.filter((t) => t.party !== 'owner');
+
+export const waitingOnYou = (t: Task) => t.items.filter((i) => i.state === 'awaiting_owner');
+
+export const needsYou = (t: Task) => t.phase === 'waiting_owner' || t.phase === 'waiting_answer' || waitingOnYou(t).length > 0;
+
+const OPEN: Phase[] = ['working', 'waiting_owner', 'waiting_answer', 'paused'];
+export const isOpen = (t: Task) => (t.phase ? OPEN.includes(t.phase) : false) || needsYou(t);
+
+export type CaseFilter = 'you' | 'open' | 'all';
+export function filterCases(cases: Task[], f: CaseFilter): Task[] {
+  return f === 'you' ? cases.filter(needsYou) : f === 'open' ? cases.filter(isOpen) : cases;
+}
+
+/** How a message item reads: who to whom, and whether it is your private exchange with the companion. */
+export interface Line {
+  from: string;
+  to: string;
+  side: 'theirs' | 'ours' | 'private';
+}
+
+/** null for items that are decisions or changes rather than messages (approvals, logins, edits, poll changes). */
+export function lineOf(it: CaseItem, who: string, me: string): Line | null {
+  if (it.kind === 'in')
+    return it.private ? { from: 'You', to: me, side: 'private' } : { from: it.label || who, to: me, side: 'theirs' };
+  if (it.kind === 'final')
+    return it.to === 'case' ? { from: me, to: 'you', side: 'private' } : { from: me, to: it.label || who, side: 'ours' };
+  if (it.kind !== 'message') return null;
+  if (it.to === 'owner') return { from: me, to: 'you', side: 'private' };
+  if (it.to === 'thread') return { from: me, to: 'the thread', side: 'ours' };
+  return { from: me, to: it.label || it.to || 'nobody named', side: 'ours' };
+}
 
 export type TaskFilter = 'all' | 'errand' | 'task' | 'review' | 'done' | 'failed';
 

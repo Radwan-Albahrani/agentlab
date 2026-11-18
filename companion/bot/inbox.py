@@ -4,7 +4,7 @@ An approved ask runs as the colleague's task in its thread (a pull request link:
 is told so. The card is the ask's case (see cases.py): while it is pending the owner's replies under it go to the
 colleague; once taken on they are the owner talking to the companion, privately."""
 
-from . import jobs, requests, reviews, slack, tasks
+from . import jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, log, mode
 from .state import key, lock, save, state
 from .text import first_sentence, quote
@@ -28,7 +28,7 @@ def route(ev, mentioned):
             jobs.run_later(ask, ev)
         return True
     task = state['tasks'].get(key(ch, thr))
-    if task and task.get('guest') == user:
+    if task and machine.is_colleague(task) and machine.party(task)['user'] == user:
         jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
         return True
     a = _asks().get(key(ch, thr))

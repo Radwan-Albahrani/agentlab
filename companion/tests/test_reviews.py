@@ -5,10 +5,12 @@ import stat
 import time
 
 import pytest
-from bot import asks, config, outbox, projects, publish, reviews, routing, state, t3, tasks
-from conftest import OWNER, set_settings
+from bot import asks, config, machine, outbox, projects, publish, reviews, routing, state, t3, tasks
+from conftest import OWNER, ended, set_settings
 from reviewer import report
 from reviewer.github import GitHubError
+
+RUNNING = {'n': 1, 'by': 'system', 'state': 'running', 'outcome': '', 'at': 0, 'ended': 0}
 
 REPO = 'example-org/app'
 PATCH = '@@ -10,3 +10,6 @@ def f():\n a\n+b\n+c\n+d\n e\n f\n'
@@ -426,7 +428,7 @@ def test_there_is_one_qa_comment_per_pr_edited_on_every_review(gh, told, fresh_b
     assert f'![Desktop](https://github.com/{EVIDENCE}/raw/commit1/{run}/desk.png)' in body
     assert '`/tmp/run.log`' in body and gh.evidence == 'commit1'
     assert all(EVIDENCE in c[1] for c in gh.calls if '/git/' in c[1])
-    task['active'] = False
+    ended(task)
     again = started(gh, told)
     qa_box(again)
     finish(again, QA_DONE)
@@ -491,8 +493,9 @@ def test_a_lead_chat_that_stops_before_the_review_is_nudged_twice_at_most(gh, to
     for _ in range(3):
         tasks._finish_turn(task, turn)
     assert len(sent) == 2 and 'review.json' in sent[0]
-    assert task['outcome'] == 'answered'
+    assert machine.outcome(task) == 'answered'
     task['review']['published'] = 'a' * 40
+    machine.begin_turn(task, 'system')
     tasks._finish_turn(task, turn)
     assert len(sent) == 2
 
@@ -574,12 +577,13 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     runs = [p['review']['run'] for p in reviews.rows(lambda k, t: {'status': 'done', 'outcome': ''})]
     assert runs == [{'n': 1, 'of': 3, 'done': True}, {'n': 2, 'of': 3, 'done': False}, {'n': 3, 'of': 3, 'done': False}]
 
-    first['active'] = False
+    ended(first)
     reviews.tick()
     third = review(5924)
     finish(second, CLEAN)
-    third.update(active=False, outcome='failed', latest='The build broke on install.')
-    second['active'] = False
+    third['latest'] = 'The build broke on install.'
+    ended(third, 'failed')
+    ended(second)
     reviews.tick()
 
     assert not any(m.get('reply_broadcast') for m in fresh_bot.messages)
@@ -606,7 +610,7 @@ def test_a_run_asked_in_a_slack_thread_stays_in_that_thread(gh, told, fresh_bot)
     assert {(t['channel'], t['thread_ts']) for t in (a, b, c)} == {('C1', '60.1')}
     finish(a, CLEAN)
     finish(b, {'head': 'a' * 40, 'findings': FINDINGS})
-    c.update(active=False, outcome='stopped')
+    ended(c, 'stopped')
     reviews.tick()
     in_thread = [m['text'] for m in fresh_bot.messages if m['thread_ts'] == '60.1']
     assert in_thread[1:] == [
@@ -689,7 +693,7 @@ def test_a_question_goes_to_the_batch_thread_and_the_answer_to_its_own_review(gh
         routing.route(dm, False)
 
     reply('90.1', '2')
-    assert answered == [('T1', 'dev')] and not a['question'] and b['active'] and not b.get('question')
+    assert answered == [('T1', 'dev')] and not a['question'] and machine.running(b) and not b.get('question')
 
     snaps['T1'] = snap(requests=[asking('r2', 'Run QA on mobile too?')])
     snaps['T2'] = snap(requests=[asking('r3', 'Which flag?')])
@@ -707,7 +711,7 @@ def test_a_run_saved_by_the_per_card_version_continues_on_one_batch_card(gh, tol
     old = {
         'channel': 'D_OWNER',
         'thread_ts': '7.0',
-        'active': True,
+        'turn': RUNNING,
         'start': '2026-11-14T10:00:00.000Z',
         'review': {'id': f'{REPO}#5922', 'repo': REPO, 'number': 5922, 'url': f'https://github.com/{REPO}/pull/5922'},
     }
@@ -730,8 +734,9 @@ def test_a_run_saved_by_the_per_card_version_continues_on_one_batch_card(gh, tol
     assert new['thread_ts'] == '1.0'
     assert [line.split(' · ')[-1] for line in card_now(fresh_bot, '1.0').split('\n')[1:]] == ['reviewing'] * 2
 
-    old.update(active=False, outcome='stopped')
-    new.update(active=False, outcome='failed', latest='No Android build.')
+    ended(old, 'stopped')
+    new['latest'] = 'No Android build.'
+    ended(new, 'failed')
     reviews.tick()
     assert [m['text'] for m in fresh_bot.messages[1:]] == [
         f'{REPO}#5922: stopped',
@@ -754,7 +759,7 @@ def test_the_hub_gets_a_short_review_once_it_is_done(gh, told, monkeypatch):
 
     qa_box(task)
     finish(task, {**QA_DONE, 'findings': FINDINGS})
-    task['active'] = False
+    ended(task)
     shown = {r['number']: r['review'] for r in reviews.rows(publish.card)}
     assert 'detail' not in shown[5923]
     detail = shown[5922]['detail']
@@ -784,7 +789,7 @@ def test_long_text_is_cut_after_a_sentence_or_between_words():
 
 
 def test_hub_asks_are_not_counted_as_reviews(gh, told):
-    state.state['tasks']['D_OWNER:9.0'] = {'review': True, 'active': True, 'start': ''}
+    state.state['tasks']['D_OWNER:9.0'] = {'review': True, 'turn': dict(RUNNING), 'start': ''}
     reviews.refresh()
     assert all(r['review'] is None for r in reviews.rows(lambda k, t: {}))
     for n in (5922, 5923):
@@ -839,19 +844,16 @@ def test_reviews_stopped_by_the_usage_limit_pause_on_a_short_calm_card(gh, told,
     reviews.tick()
     ts = state.state['review_batch']['card']
     a, b, c = review(5922), review(5923), review(5924)
-    a.update(active=False, outcome='failed', ended=state.now_iso(), latest=LIMITED, limit_checked=True)
-    reviews.tick()  # as the version before limits were told apart left it: failed
-    assert '· failed' in card_now(fresh_bot, ts)
-
-    a.pop('limit_checked')
-    b['latest'] = LIMITED
-    tasks.tick(b)  # hits the limit now
+    for t in (a, b):
+        t['latest'] = LIMITED
+        tasks.tick(t)  # hits the limit
     finish(c, CLEAN)
-    c['active'] = False
+    ended(c)
     reviews.tick()
     reviews.tick()
 
-    assert a['active'] and a['paused'] and b['paused'] and 'review_batch' in state.state
+    assert machine.running(a) and a['paused'] and b['paused'] and 'review_batch' in state.state
+    assert a['phase'] == 'paused'
     md = card_now(fresh_bot, ts)
     head, *lines = md.split('\n')
     resumes = reviews.hour(a['paused']['resumes_at'])
@@ -902,29 +904,6 @@ def test_the_people_who_can_work_on_the_repos_are_merged_once_and_capped(gh):
     found = reviews.pulls.people(Denied(), listed, cap=5)
     assert [p['login'] for p in found] == ['user000', 'user001', 'user002', 'user003', 'user004']
     assert [p['login'] for p in reviews.pulls.people(Denied(), listed[:1])] == ['Zed']
-
-
-def test_limit_failures_of_a_batch_that_already_ended_come_back_on_a_new_card(gh, told, fresh_bot, monkeypatch):
-    monkeypatch.setattr(t3, 'snapshot', ended_on_a_limit)
-    pulls_listed(5922, 5923)
-    for n in (5922, 5923):
-        reviews.request(REPO, n)
-    reviews.tick()
-    for n in (5922, 5923):
-        review(n).update(active=False, outcome='failed', ended=state.now_iso(), latest=LIMITED, limit_checked=True)
-    reviews.tick()
-    assert 'review_batch' not in state.state and fresh_bot.messages[-1]['text'] == 'All 2 reviews done'
-    for n in (5922, 5923):
-        review(n).pop('limit_checked')
-
-    reviews.tick()
-    b = state.state['review_batch']
-    resumes = reviews.hour(review(5922)['paused']['resumes_at'])
-    head, *lines = card_now(fresh_bot, b['card']).split('\n')
-    assert head == f':mag: **Reviewing 2 pull requests** · 2 paused until {resumes}'
-    assert all(line.endswith('· paused') for line in lines) and len(lines) == 2
-    assert [m['text'] for m in fresh_bot.messages].count('Paused for the usage limit') == 1
-    assert review(5922)['active']
 
 
 def test_the_lead_settles_its_own_chat_once_review_json_is_written(gh, told):
@@ -978,7 +957,8 @@ def test_a_colleague_dms_a_pr_link_and_hears_the_result_in_their_thread(gh, told
 def test_a_colleagues_failed_review_says_so_without_the_details(gh, told, fresh_bot, their_dm):
     routing.route(colleague_dm('71.1', f'https://github.com/{REPO}/pull/5922'), False)
     reviews.tick()
-    review(5922).update(active=False, outcome='failed', latest='Internal: the token in /secrets broke')
+    review(5922)['latest'] = 'Internal: the token in /secrets broke'
+    ended(review(5922), 'failed')
     reviews.tick()
     said = [m['blocks'][0]['text'] for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
     assert 'failed; Sam has the details' in said[-1] and 'token' not in said[-1]
@@ -1045,9 +1025,9 @@ def test_a_queued_colleague_sees_how_many_are_ahead(gh, told, fresh_bot, their_d
     ack = fresh_bot.messages[-1]
     assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · 1 ahead'
     finish(review(5922), CLEAN)
-    review(5922)['active'] = False  # its chat ended: the slot is free
+    ended(review(5922))  # its chat ended: the slot is free
     reviews.tick()
-    assert review(5923)['active']
+    assert machine.running(review(5923))
     assert status_line(fresh_bot, ack) == ':hourglass_flowing_sand: Queued · next up'
 
 
@@ -1083,4 +1063,4 @@ def test_a_review_waits_in_the_queue_while_the_agent_restarts(gh, told, fresh_bo
     monkeypatch.setattr(t3, 'agent_up', lambda: False)
     reviews.tick()
     assert [q['number'] for q in state.state['review_queue']] == [5922]
-    assert not any(t.get('outcome') == 'failed' for t in state.state['tasks'].values())
+    assert not any(machine.outcome(t) == 'failed' for t in state.state['tasks'].values())

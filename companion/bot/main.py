@@ -9,6 +9,7 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from . import (  # noqa: F401  (routing registers the handlers)
     asks,
     drafts,
+    machine,
     outbox,
     polls,
     publish,
@@ -84,6 +85,7 @@ def run():
     for d in (DATA, FILES, drafts.DRAFTS, outbox.OUTBOX):
         os.makedirs(d, exist_ok=True)
     prepare_for_start()
+    machine.prepare_all(list(state['tasks'].values()))
     polls.migrate()
     log(f'{NAME} for {AGENT}: owner {OWNER}, bridge {BRIDGE}, {len(state["tasks"])} known threads, mode {mode()}')
     me = slack.app.client.auth_test()  # also verifies the bot token

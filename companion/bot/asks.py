@@ -1,6 +1,6 @@
 """Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
-from . import jobs, polls, prompts, publish, reviews, routing, slack, t3, tasks
+from . import jobs, machine, polls, prompts, publish, reviews, routing, slack, t3, tasks
 from .config import COMP, OWNER, default_project, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
@@ -68,7 +68,7 @@ def start(ask):
         slack.post(dm, head, f"Couldn't start: {err}", md=f":warning: I couldn't start on it: {err}")
         COMP.event('failed', f'Could not start: {title}', task=key(dm, head), detail=err, ok=False)
         return
-    new_task(
+    t = new_task(
         dm,
         head,
         tid,
@@ -78,6 +78,8 @@ def start(ask):
         slack.note_only(dm, head, tasks.THINKING),
         review=review,
         audit=tasks.audit(OWNER, 'from the hub'),
+        party=machine.party_of(),
     )
+    machine.begin_turn(t, 'owner')
     log('ask started', tid)
     COMP.event('started', title, task=key(dm, head), detail='from the hub')
