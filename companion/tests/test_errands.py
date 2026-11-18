@@ -16,7 +16,7 @@ def errand(monkeypatch):
     with open(os.path.join(box, 'inv.pdf'), 'wb') as f:
         f.write(b'%PDF-1.4')
     followed = []
-    monkeypatch.setattr(tasks, 'follow_up', lambda task, msg, files, ts: followed.append(msg))
+    monkeypatch.setattr(tasks, 'follow_up', lambda task, msg, files, ts, *rest: followed.append(msg))
     t = state.new_task(
         'D_OWNER',
         '50.1',

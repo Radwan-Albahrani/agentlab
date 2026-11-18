@@ -232,7 +232,7 @@ def decide(task, k, approved, card=None):
         close_head(task, ':x: Rejected · nothing changed', 'x')
     COMP.event('approved' if approved else 'rejected', f'You {a["decided"]}: {a["action"]}'[:200], task=k)
     save()
-    jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'])
+    jobs.run_later(tasks.follow_up, task, msg, None, a.get('note') or a['ts'], None, True)
 
 
 def stop(task, k):

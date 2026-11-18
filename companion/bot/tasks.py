@@ -175,13 +175,14 @@ def where(task):
     return (to['ch'], to['tts']) if to else (task['channel'], task['thread_ts'])
 
 
-def follow_up(task, text, files, ts, by=None):
+def follow_up(task, text, files, ts, by=None, decision=False):
+    """`decision`: the owner's Approve / Reject sent on to the agent, not a message anyone typed in the thread."""
     ch = task['channel']
     msg = slack.ask(text).strip()
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
     if m and m.group(1) in task.get('options', {}):  # "1" picks option 1 of the last question
         msg = task['options'][m.group(1)]
-    elif is_side_question(msg) and not files:
+    elif is_side_question(msg) and not files and not decision:
         if by and by != OWNER and by == task.get('guest'):
             cases.colleague_said(task, text)
         side_reply(task, msg, ts)
@@ -221,7 +222,10 @@ def follow_up(task, text, files, ts, by=None):
         slack.react(ch, ts, 'eyes', remove=True)
         slack.post(ch, task['thread_ts'], f":warning: I couldn't pass that on: {t3.error_text(res)}")
         return
-    if (res.get('result') or {}).get('delivery') == 'queued':  # T3 can't steer for us: say so, and where it is
+    queued = (res.get('result') or {}).get('delivery') == 'queued'  # T3 can't steer for us: say so
+    if queued and decision:
+        slack.note_only(*errands.approver(task), ':inbox_tray: The agent gets your decision when its current step ends')
+    elif queued:
         lead = ':inbox_tray: Queued: the agent reads this when its current step ends.'
         jobs.run_later(side_reply, task, 'What is it doing right now?', ts, None, lead)
     now = now_iso()

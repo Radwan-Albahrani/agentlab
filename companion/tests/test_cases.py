@@ -169,3 +169,13 @@ def test_a_colleagues_task_from_before_cases_takes_its_approval_card_as_its_case
     )
     assert sent and 'why?' in sent[-1] and t['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'own': False}
     assert t['answer_to'] == {'ch': 'D_OWNER', 'tts': '70.1'}
+
+
+def test_an_approval_that_waits_for_the_running_turn_tells_the_owner_not_the_colleague(case, fresh_bot, monkeypatch):
+    t, _ = case
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True, 'result': {'delivery': 'queued'}})
+    monkeypatch.setattr(t3, 'triage', lambda prompt: pytest.fail('no side answer for a decision'))
+    errands.ask_approval(t, {'action': 'Merge the stack', 'details': 'x'})
+    errands.decide(t, 'k', True)
+    assert 'Queued' not in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
+    assert 'gets your decision when its current step ends' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))
