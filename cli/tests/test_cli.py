@@ -1399,8 +1399,9 @@ class DiskSizes(unittest.TestCase):
         self.assertEqual(self.plan_shrink(30, 110, 88, free_gib=40)[0], [])  # no host room for the moved blocks
         self.assertEqual(self.plan_shrink(10, 110, 88, mounted=False)[0], [])  # data unmeasured
 
-    def run_shrink(self, rcs=None, fail=None):
-        """`rcs`: {command or 'e2fsck -n': exit code}; `fail`: the command that raises."""
+    def run_shrink(self, rcs=None, fail=None, holder=False):
+        """`rcs`: {command or 'e2fsck -n': exit code}; `fail`: the command that raises; `holder`: another running
+        container (the hub) mounts the disk."""
         tmp = self.enterContext(tempfile.TemporaryDirectory())
         img = f'{tmp}/sara.img'
         with open(img, 'wb') as f:
@@ -1410,8 +1411,13 @@ class DiskSizes(unittest.TestCase):
         rcs = rcs or {}
 
         def run(cmd, check=True):
-            name = 'e2fsck -n' if cmd[:3] == ['e2fsck', '-f', '-n'] else cmd[0]
+            docker = cmd[0] == 'docker'
+            name = 'e2fsck -n' if cmd[:3] == ['e2fsck', '-f', '-n'] else ' '.join(cmd[:2]) if docker else cmd[0]
             calls.append(name)
+            if name == 'docker ps':
+                return 0, 'c0ffee\nbeef00' if holder else ''
+            if name == 'docker inspect':
+                return 0, f'c0ffee {tmp}/data|{tmp}/mnt|\nbeef00 {tmp}/mnt-other|'
             if name == 'resize2fs':
                 open(disks.undo_file(img), 'w').close()
             if name == 'losetup':
@@ -1440,9 +1446,20 @@ class DiskSizes(unittest.TestCase):
     def test_shrink_runs_offline_checks_and_cuts_the_image_last(self):
         calls, size, mounted, left, warned = self.run_shrink()
         self.assertEqual(
-            calls, ['stop', 'umount', 'e2fsck', 'losetup', 'resize2fs', 'losetup', 'e2fsck -n', 'mount', 'start']
+            calls,
+            ['stop', 'docker ps', 'umount', 'e2fsck', 'losetup', 'resize2fs', 'losetup', 'e2fsck -n', 'mount', 'start'],
         )
         self.assertEqual((size, mounted, left, warned), (4 << 20, True, False, []))
+
+    def test_other_containers_holding_the_disk_stop_for_the_shrink_and_come_back(self):
+        calls, size, _, _, warned = self.run_shrink(holder=True)
+        self.assertEqual(calls[1:5], ['docker ps', 'docker inspect', 'docker stop', 'umount'])
+        self.assertEqual((calls[-1], size, warned), ('docker start', 4 << 20, []))
+
+    def test_a_busy_disk_says_what_holds_it(self):
+        _, size, mounted, _, warned = self.run_shrink(rcs={'umount': 32})
+        self.assertIn('still using it', warned[0])
+        self.assertEqual((size, mounted), (8 << 20, True))
 
     def test_a_refused_shrink_keeps_the_image_and_brings_everything_back(self):
         calls, size, mounted, left, warned = self.run_shrink(fail='resize2fs')

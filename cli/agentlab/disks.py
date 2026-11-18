@@ -199,19 +199,46 @@ def _wait_stopped(cfg, stacks, sleep=time.sleep):
     raise Failed(f'{", ".join(stacks)} did not stop within {STOP_WAIT_S} s')
 
 
+def _holders(mnt):
+    """Running containers that mount the disk (or a folder on it) besides the stacks a shrink stops: the hub mounts
+    every person's disk, so while it runs the disk can't be unmounted."""
+    rc, ids = run(['docker', 'ps', '-q'], check=False)
+    if rc or not ids.split():
+        return []
+    rc, out = run(
+        ['docker', 'inspect', '-f', '{{.Id}} {{range .Mounts}}{{.Source}}|{{end}}', *ids.split()], check=False
+    )
+    held = []
+    for line in out.splitlines() if not rc else []:
+        cid, _, sources = line.partition(' ')
+        if any(s == mnt or s.startswith(mnt + '/') for s in sources.split('|')):
+            held.append(cid[:12])
+    return held
+
+
+def _unmount(mnt):
+    rc, out = run(['umount', mnt], check=False)
+    if rc:
+        _, who = run(['fuser', '-vm', mnt], check=False)
+        raise Failed(f'umount {mnt} failed ({rc}): {out[-200:]}; still using it: {who[-400:] or "nothing listed"}')
+
+
 def _shrink(cfg, u, want, sleep=time.sleep):
     """Stop whatever uses the disk, then shrink its filesystem offline with an undo file, check it, and only then cut
     the image. Any failure rolls the filesystem back; the disk is always remounted (unless a roll back failed, when
     nothing touches it again until a person looks) and its stacks restarted."""
     img, mnt, undo, quiet = u['image'], u['mount'], undo_file(u['image']), Plan(False)
     running = [s for s in u['stacks'] if any(c['state'] == 'running' for c in deploy.stack_containers(cfg, s))]
-    was_mounted, intact = os.path.ismount(mnt), True
+    was_mounted, intact, held = os.path.ismount(mnt), True, []
     try:
         for s in running:
             deploy.stop(cfg, s, quiet)
         _wait_stopped(cfg, running, sleep)
         if was_mounted:
-            run(['umount', mnt])  # fails while anything still holds a file there, before anything changed
+            held = _holders(mnt)  # just those containers (the hub), not their whole stack: the edge and gate stay up
+            if held:
+                run(['docker', 'stop', *held])
+            _unmount(mnt)  # fails while anything still holds a file there, before anything changed
         rc, out = run(['e2fsck', '-f', '-p', img], check=False)
         if rc >= 4:
             raise Failed(f'{img} needs a manual e2fsck: {out[-300:]}')
@@ -249,6 +276,8 @@ def _shrink(cfg, u, want, sleep=time.sleep):
         if intact:
             for s in running:
                 deploy.start(cfg, s, quiet)
+            if held:
+                run(['docker', 'start', *held], check=False)
 
 
 def _roll_back(img):
