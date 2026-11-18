@@ -1,11 +1,10 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
-from datetime import datetime
-
 from . import cases, gate, jobs, ledger, machine, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, default_project, log, mode
 from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
+from .when import say
 
 
 def start(p, what=''):
@@ -197,7 +196,7 @@ def decide(task, k, approved, card):
     it = ledger.on_card(task, card)
     if not it or it['kind'] != 'approval' or it['state'] != 'awaiting_owner':
         return
-    when = datetime.now().strftime('%H:%M')
+    when = say()
     slack.app.client.chat_update(
         channel=it['card']['ch'],
         ts=card,
@@ -334,9 +333,7 @@ def send_to_requester(task, it, files=()):
         to=who,
         detail=it['text'],
     )
-    close_head(
-        task, f':white_check_mark: Done · sent to {who} at {datetime.now().strftime("%H:%M")}', 'white_check_mark'
-    )
+    close_head(task, f':white_check_mark: Done · sent to {who} at {say()}', 'white_check_mark')
 
 
 def decide_reply(task, k, send, card):
@@ -350,8 +347,7 @@ def decide_reply(task, k, send, card):
         text='sent' if send else 'not sent',
         blocks=slack.blocks(
             it['md'],
-            (f':white_check_mark: Sent to {who}' if send else ':no_entry_sign: Not sent')
-            + f' at {datetime.now().strftime("%H:%M")}',
+            (f':white_check_mark: Sent to {who}' if send else ':no_entry_sign: Not sent') + f' at {say()}',
         ),
     )
     if send:
@@ -405,7 +401,7 @@ def decide_credential(task, k, send, card):
         return
     c, p = _creds.pop((k, it['id']), None), machine.party(task)
     who = slack.name(p['user'])
-    when = datetime.now().strftime('%H:%M')
+    when = say()
     if not send:
         line = f':no_entry_sign: Not sent at {when}'
         ledger.move(task, it, 'rejected')

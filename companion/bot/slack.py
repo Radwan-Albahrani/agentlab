@@ -5,12 +5,12 @@ import os
 import re
 import time
 import urllib.request
-from datetime import datetime
 
 from slack_bolt import App
 
 from .config import AGENT_FILES, DM_LINES, FILES, OWNER, RECENT, RECENT_DM, log, secret
 from .text import to_slack, without_mention
+from .when import say
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
 try:
@@ -343,7 +343,7 @@ def transcript(msgs, folder=None):
         text = m.get('text') or ''
         for a in m.get('attachments') or []:
             text += '\n' + (a.get('text') or a.get('fallback') or '')
-        when = datetime.fromtimestamp(float(m['ts'])).strftime('%b %d %H:%M')
+        when = say(float(m['ts']), 'stamp')
         lines.append(f'[{when}] {who}: {readable(text.strip())}')
         got = download(m.get('files'), folder) if folder else []
         if got:

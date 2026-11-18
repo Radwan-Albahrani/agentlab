@@ -6,6 +6,7 @@ import time
 
 import pytest
 from bot import asks, config, machine, outbox, projects, publish, reviews, routing, state, t3, tasks
+from bot.when import say
 from conftest import OWNER, ended, set_settings
 from reviewer import report
 from reviewer.github import GitHubError
@@ -856,7 +857,7 @@ def test_reviews_stopped_by_the_usage_limit_pause_on_a_short_calm_card(gh, told,
     assert a['phase'] == 'paused'
     md = card_now(fresh_bot, ts)
     head, *lines = md.split('\n')
-    resumes = reviews.hour(a['paused']['resumes_at'])
+    resumes = say(a['paused']['resumes_at'], 'near')
     assert head == f':mag: **Reviewing 3 pull requests** · 1 done · 2 paused until {resumes}'
     assert [line.split(' · ', 1)[1] for line in lines] == ['paused', 'paused', 'approved']
     assert lines[0].startswith(':double_vertical_bar: <') and 'resets' not in md

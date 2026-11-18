@@ -8,12 +8,12 @@ final_goes_to). The owner's own messages in the case thread (or in T3 directly) 
 
 import os
 import time
-from datetime import datetime
 
 from . import ledger, machine, prompts, slack, t3
 from .config import COMP, NAME, OWNER, log
 from .state import key_of, lock, now_iso, save, state
 from .text import first_sentence, no_emoji, quote
+from .when import say
 
 THINKING = ':seedling: thinking…'
 
@@ -93,7 +93,7 @@ def status(task):
         return
     n = len(ledger.pending(task))
     line = _NOTES[task.get('phase') or 'working'].format(
-        me=NAME, name=who(task), t=datetime.now().strftime('%H:%M'), n=f'{n} item{"s" if n != 1 else ""}'
+        me=NAME, name=who(task), t=say(), n=f'{n} item{"s" if n != 1 else ""}'
     )
     slack.update(c['ch'], c['ts'], 'case', md=c.get('md'), note=line)
 

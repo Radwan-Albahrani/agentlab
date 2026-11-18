@@ -12,7 +12,8 @@ from reviewer.github import App, GitHubError
 from . import machine, projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, NAME, OWNER, evidence_repo, log, mode, optional_secret, review_slots, slack_for_github
 from .state import key, key_of, lock, new_task, review_of, save, state
-from .text import clock, first_sentence, hour, no_emoji
+from .text import first_sentence, no_emoji
+from .when import say
 
 APP_ID, APP_KEY = 'github-app-id.txt', 'github-app-key.pem'
 IMAGES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
@@ -231,7 +232,7 @@ def _progress(e):
         ahead = queue.index(e['id']) if e['id'] in queue else 0
         return ':hourglass_flowing_sand: Queued · ' + (f'{ahead} ahead' if ahead else 'next up')
     if st == 'reviewing':
-        bits = ['Reviewing'] + ([f'started {hour(e["began"])}'] if e.get('began') else [])
+        bits = ['Reviewing'] + ([f'started {say(e["began"], "near")}'] if e.get('began') else [])
         n = (state['tasks'].get(e.get('task') or '') or {}).get('workers_said') or 0
         if n:
             bits.append(f'{_plural(n, "reviewer")} on it')
@@ -239,10 +240,10 @@ def _progress(e):
     if st == 'waiting':
         return f':raised_hand: Waiting for {slack.name(OWNER)} to answer a question from the review'
     if st == 'paused':
-        when = f'resumes at {hour(e["paused"])}' if e.get('paused') else 'resumes when it resets'
+        when = f'resumes at {say(e["paused"], "near")}' if e.get('paused') else 'resumes when it resets'
         return f':double_vertical_bar: Paused for the usage limit · {when}'
     icon, label = VERDICTS[st]
-    return f'{icon} {label}' + (f' · {hour(e["ended"])}' if e.get('ended') else '')
+    return f'{icon} {label}' + (f' · {say(e["ended"], "near")}' if e.get('ended') else '')
 
 
 def _status(e, a):
@@ -517,7 +518,7 @@ def _card(b):
     parts = [
         ('done', n.get('approved', 0) + n.get('changes', 0)),
         ('waiting for you', n.get('waiting', 0)),
-        (f'paused until {hour(reset)}' if reset else 'paused for the usage limit', n.get('paused', 0)),
+        (f'paused until {say(reset, "near")}' if reset else 'paused for the usage limit', n.get('paused', 0)),
         ('reviewing', n.get('reviewing', 0)),
         ('queued', n.get('queued', 0)),
         ('failed', n.get('failed', 0)),
@@ -527,7 +528,7 @@ def _card(b):
     md = f'{":checkered_flag:" if finished else ":mag:"} **{head}**' + ''.join(f' · {x}' for x in bits)
     md += '\n' + '\n'.join(_line(e) for e in sorted(prs, key=lambda e: list(LOOK).index(_state(e))))
     if finished:
-        note = f'Finished {clock(time.time())}'
+        note = f'Finished {say(form="day")}'
     elif n.get('paused'):
         note = 'Paused for the usage limit · T3 picks the reviews up again when it resets'
     else:
@@ -660,7 +661,7 @@ def _settle(queue):
     if any('paused' in e for e in b['prs']) and not b.get('limit_told'):
         b['limit_told'] = True
         reset = _reset(b['prs'])
-        when = f'at {hour(reset)}' if reset else 'when the limit resets'
+        when = f'at {say(reset, "near")}' if reset else 'when the limit resets'
         slack.post(
             b['channel'],
             _thread(b),

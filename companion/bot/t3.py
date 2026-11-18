@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from .config import BRIDGE, T3, log, secret
 from .state import parse_iso
+from .when import say
 
 BRIDGE_KEY = secret('agent-key.txt')
 
@@ -230,7 +231,7 @@ def _steps(con, tid, limit):
 def _local(iso):
     """An ISO time from T3 (UTC) as local time, e.g. 1:34 PM."""
     try:
-        return time.strftime('%I:%M %p', time.localtime(parse_iso(iso))).lstrip('0')
+        return say(parse_iso(iso))
     except (TypeError, ValueError):
         return str(iso or '')
 
@@ -251,7 +252,7 @@ def digest(tid):
     s = snapshot(tid, '9999')
     run = open_run_since(tid)
     lines = [
-        f'Now: {time.strftime("%I:%M %p").lstrip("0")}',
+        f'Now: {say()}',
         f'Running: yes, since {_local(run)}'
         if run
         else f'Running: no; last run {s["last_status"] or "none"} at {_local(s["last_done"])}',

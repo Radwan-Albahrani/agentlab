@@ -1,13 +1,13 @@
 """Ledger messages for a channel or people (with a poll, maybe) and edits of messages sent before: previewed for the
 owner unless they go to the task's own channel or review is off. Each preview card belongs to one ledger item."""
 
-import time
 from datetime import datetime
 
 from . import cases, errands, ledger, machine, polls, slack
 from .config import COMP, NAME, log
 from .state import key_of
-from .text import clock, first_sentence, quote
+from .text import first_sentence, quote
+from .when import say
 
 MAX_OPTIONS = 10
 MAX_PEOPLE = 10
@@ -188,7 +188,7 @@ def decide(task, k, send_it, card):
         (':white_check_mark: Editing' if send_it else ':no_entry_sign: Not edited')
         if post.get('edit')
         else (':white_check_mark: Posting' if send_it else ':no_entry_sign: Not posted')
-    ) + f' at {clock(time.time())}'
+    ) + f' at {say()}'
     slack.app.client.chat_update(channel=it['card']['ch'], ts=card, text=line, blocks=slack.blocks(it['md'], line))
     if send_it:
         ledger.move(task, it, 'approved')
@@ -230,7 +230,7 @@ def send(task, it):
     sent = f'sent to {dest}' if post.get('to') else f'posted in {dest}'
     line = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
     if post.get('poll'):
-        line += f' · closes {clock(post["poll"]["closes"])}'
+        line += f' · closes {say(post["poll"]["closes"], "day")}'
         dm, dm_thread = (slack.dm_owner(), None) if in_channel(task) else cases.owner_place(task)
         slack.app.client.chat_postMessage(  # the close button: the owner's only
             channel=dm,

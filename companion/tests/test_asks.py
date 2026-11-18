@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from bot import asks, config, ledger, machine, outbox, polls, posts, projects, publish, state, t3, tasks
-from bot.text import clock
+from bot.when import say
 from conftest import OWNER, agent_sends, click, ended, receipts
 
 IN_AN_HOUR = (datetime.now().astimezone() + timedelta(hours=1)).isoformat()
@@ -375,8 +375,8 @@ def test_polls_are_published_for_the_page_with_their_voters(poll):
 
 def test_poll_times_read_as_12_hour_clock():
     two_pm = datetime(2026, 10, 29, 14, 0).timestamp()
-    assert clock(two_pm) == 'Thu 2:00 PM'
-    assert clock(two_pm, date=True) == 'Thu Oct 29, 2:00 PM'
+    assert say(two_pm, 'day') == 'Thu 2:00 PM'
+    assert say(two_pm, 'date') == 'Thu Oct 29, 2:00 PM'
 
 
 def test_the_owner_can_add_a_vote_for_someone_and_it_says_so(poll, fresh_bot):

@@ -8,7 +8,7 @@ from datetime import datetime
 from . import slack
 from .config import COMP, OWNER, log
 from .state import lock, save, state
-from .text import clock
+from .when import say
 
 BAR = 10  # characters of the longest bar
 AVATARS = 9  # Slack context rows hold max 10 elements: pictures + one names element
@@ -16,7 +16,7 @@ AVATARS = 9  # Slack context rows hold max 10 elements: pictures + one names ele
 
 def describe(poll):
     """The poll as preview text."""
-    when = clock(poll['closes'], date=True)
+    when = say(poll['closes'], 'date')
     return (
         f':bar_chart: **{poll["question"]}**\n'
         + '\n'.join(f'- {o}' for o in poll['options'])
@@ -64,7 +64,7 @@ def _voters_line(poll, people):
 def _blocks(poll):
     n = counts(poll)
     top = max(n) or 1
-    state_ = f'closes {clock(poll["closes"])}' if poll['open'] else 'closed'
+    state_ = f'closes {say(poll["closes"], "day")}' if poll['open'] else 'closed'
     intro = (poll['text'] + '\n\n' if poll['text'] else '') + f':bar_chart: **{poll["question"]}** · {state_}'
     b = slack.blocks(intro)
     for i, (o, c) in enumerate(zip(poll['options'], n, strict=True)):
@@ -148,7 +148,8 @@ def for_prompt(channel='', thread_ts=''):
     lines = [
         f'- {p["id"]}: "{p["question"]}" in channel {p["channel"]}, '
         + ('multiple choice' if p.get('multiple') else 'single choice')
-        + datetime.fromtimestamp(p['closes']).astimezone().strftime(', closes %Y-%m-%dT%H:%M%z')
+        + f', closes {say(p["closes"], "date")}'
+        + datetime.fromtimestamp(p['closes']).astimezone().strftime(' (%Y-%m-%dT%H:%M%z)')
         + (' (THIS thread is under it)' if p['channel'] == channel and p['ts'] == thread_ts else '')
         for p in open_polls
     ]
@@ -201,7 +202,7 @@ def change(c, task=None):
         )
     if closes and closes != poll['closes']:
         poll['closes'] = closes
-        done.append(f'now closes {clock(closes)}')
+        done.append(f'now closes {say(closes, "day")}')
     if 'text' in c and str(c['text'] or '').strip()[:3000] != poll['text']:
         poll['text'] = str(c['text'] or '').strip()[:3000]
         done.append('new intro')
@@ -323,7 +324,7 @@ def card(poll):
 
 
 def summary(poll):
-    when = clock(poll['closes'])
+    when = say(poll['closes'], 'day')
     return f'Poll open until {when} · {_people(voters(poll))} voted'
 
 

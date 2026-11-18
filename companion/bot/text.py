@@ -1,7 +1,6 @@
-"""Small text helpers with no Slack or T3 access."""
+"""Small text helpers with no Slack or T3 access (times for people: when.py)."""
 
 import re
-from datetime import datetime
 
 
 def first_sentence(text, limit=180):
@@ -38,16 +37,3 @@ def to_slack(md, limit=3500):
     t = re.sub(r'\*\*(.+?)\*\*', r'*\1*', t)
     t = re.sub(r'^(\s*)[-*]\s+', r'\1• ', t, flags=re.M)
     return t if len(t) <= limit else t[:limit].rsplit('\n', 1)[0] + '\n…_(the rest is in the T3 chat)_'
-
-
-def hour(ts):
-    """1:50 AM for a time within a day from now, else Tue 1:50 AM."""
-    d = datetime.fromtimestamp(ts)
-    day = d.strftime('%a ') if abs(ts - datetime.now().timestamp()) > 86400 else ''
-    return day + d.strftime('%I:%M %p').lstrip('0')
-
-
-def clock(ts, date=False):
-    """12-hour time: "Thu 2:00 PM", or "Thu Oct 30, 2:00 PM" with the date."""
-    d = datetime.fromtimestamp(ts)
-    return d.strftime('%a %b %d, ' if date else '%a ') + d.strftime('%I:%M %p').lstrip('0')

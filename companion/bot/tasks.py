@@ -19,7 +19,8 @@ from .config import (
     slack_for_github,
 )
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save, state
-from .text import first_sentence, hour, mins, no_emoji
+from .text import first_sentence, mins, no_emoji
+from .when import say
 
 THINKING = ':seedling: thinking…'
 
@@ -46,7 +47,7 @@ def history_with(uid, now=None):
             what = f'Task "{t.get("title", "")[:80]}": {outcome}'
         else:
             continue
-        rows.append((at, f'- [{hour(at)}] {no_emoji(what)[:300]} · T3 chat {t["thread"]}'))
+        rows.append((at, f'- [{say(at, "near")}] {no_emoji(what)[:300]} · T3 chat {t["thread"]}'))
     return [line for _, line in sorted(rows)[-6:]]
 
 
@@ -462,7 +463,7 @@ def limit_hit(task, s):
 
 
 def paused_line(resumes_at):
-    when = f'at {hour(resumes_at)}' if resumes_at else 'when it resets'
+    when = f'at {say(resumes_at, "near")}' if resumes_at else 'when it resets'
     return f':double_vertical_bar: Paused for the usage limit · T3 picks it up again {when}'
 
 
@@ -483,7 +484,7 @@ def pause(task, resumes_at, run, now):
             'paused',
             f'Paused for the usage limit: {task.get("title", "")[:80]}',
             task=key_of(task),
-            detail=f'resumes at {hour(resumes_at)}' if resumes_at else 'resumes when the limit resets',
+            detail=f'resumes at {say(resumes_at, "near")}' if resumes_at else 'resumes when the limit resets',
         )
 
 

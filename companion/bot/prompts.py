@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from . import when
 from .config import AGENT_FILES, NAME, RECENT, RECENT_DM, org, work_tools
 
 
@@ -119,7 +120,7 @@ def side_answer(question, record):
         "Someone asked about an AI agent's ongoing work. Answer from the record below only, in at most two short"
         ' sentences (under 40 words): where it is and what it is doing now, or the direct answer to the question.'
         ' No greeting, no preamble, no filler, no headings, no lists, no guessing beyond the record. If the record'
-        ' does not say, say so in one sentence.\n\n'
+        f' does not say, say so in one sentence. {when.RULE}\n\n'
         f'Question: {question}\n\nRecord:\n{record}'
     )
 
@@ -142,7 +143,8 @@ def sending(box, owner, recipients, more=''):
         '\n- {"type": "message", "to": "<who>", "text": "<standard markdown>", "files": ["<names>"]}. "to" is one of:'
         + ''.join(f'\n  - {r}' for r in recipients)
         + f'\nFiles you send go in {box}/ first; name them in "files". Write messages the way people talk there:'
-        ' short, clear, friendly.'
+        f' short, clear, friendly. {when.RULE} That goes for your final message too. It is {when.say(form="date")}'
+        ' now.'
         + more
         + f'\nWhat became of each item (sent, waiting for {owner}, approved, rejected, refused and why) is in'
         f' {box}/receipts.json, by "id". Check it before you say something went out, and fix what was refused.'
@@ -165,7 +167,7 @@ def polls_and_edits(owner, open_polls, sent=''):
         '\n- A poll: a message to a channel with "poll": {"question": "...", "options": ["<2 to 10 short labels>"],'
         ' "closes": "<ISO 8601 with offset>", "multiple": <true if people may pick several>}. "text" introduces it,'
         f' without the closing time, which {NAME} shows itself; {NAME} runs it (buttons, count, closing, the winner).'
-        f' The time now is {now}; with no closing time given, pick a sensible one.'
+        f' The time now is {now} (ISO, for "closes"); with no closing time given, pick a sensible one.'
         + editing(owner, sent)
         + poll_changes(owner, open_polls)
     )
