@@ -1346,6 +1346,32 @@ class AgentNative(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmp.name), ['cluster.toml'])
 
 
+class Revive(unittest.TestCase):
+    def test_stopped_services_start_again_and_one_off_containers_stay_down(self):
+        cfg = resolve()
+        states = {'hub1': ('hub-x', 'unless-stopped'), 'job1': ('setup-x', 'no')}
+
+        def containers(cfg, stack, service=None, all_states=False):
+            if stack != 'agentlab-core':
+                return []
+            return ['edge1', 'hub1', 'job1'] if all_states else ['edge1']
+
+        def run(cmd, check=True, **_):
+            name, policy = states[cmd[-1]]
+            return 0, f'/{name} {policy}'
+
+        plan = util.Plan(True)
+        with (
+            mock.patch.object(deploy, 'containers', side_effect=containers),
+            mock.patch.object(deploy, 'run', side_effect=run),
+            mock.patch.object(plan, 'do') as do,
+        ):
+            deploy.revive(cfg, plan)
+        self.assertEqual(
+            [c.args for c in do.call_args_list], [('start hub-x (it was stopped)', ['docker', 'start', 'hub1'])]
+        )
+
+
 class DiskSizes(unittest.TestCase):
     GIB = 2**30
 

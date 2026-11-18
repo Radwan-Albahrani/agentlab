@@ -364,6 +364,24 @@ def stop(cfg, stack, plan):
         plan.do(f'stop {stack}', ['docker', 'compose', '-p', stack, '-f', compose_file(cfg, stack), 'stop'])
 
 
+def revive(cfg, plan, only=None):
+    """Start agentlab's long-running containers that are stopped (a deploy only follows compose changes, so a container
+    stopped by hand or by a disk shrink that couldn't restart it stayed down through every apply)."""
+    for stack in render.stacks(cfg):
+        if only is not None and stack not in only:
+            continue
+        up = set(containers(cfg, stack))
+        for cid in containers(cfg, stack, all_states=True):
+            if cid in up:
+                continue
+            rc, info = run(
+                ['docker', 'inspect', '-f', '{{.Name}} {{.HostConfig.RestartPolicy.Name}}', cid], check=False
+            )
+            name, _, policy = info.strip().lstrip('/').partition(' ')
+            if rc == 0 and policy in ('always', 'unless-stopped'):  # not one-off containers meant to exit
+                plan.do(f'start {name} (it was stopped)', ['docker', 'start', cid])
+
+
 def start(cfg, stack, plan):
     if cfg['deploy'] == 'coolify' and coolify.stack_uuid(stack_folder(cfg, stack)):
         uuid = coolify.stack_uuid(stack_folder(cfg, stack))

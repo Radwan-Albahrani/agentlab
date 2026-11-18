@@ -354,6 +354,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     companion_lists(cfg, plan)
     for a in existing:
         adopt(a, plan)
+    deploy.revive(cfg, plan, only)
     deploy.connect(cfg, plan)
     deploy.isolate(cfg, plan)
     templates = {}
