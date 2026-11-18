@@ -112,12 +112,19 @@ def test_a_colleague_writing_while_the_owner_talks_waits_its_turn(case, fresh_bo
         False,
     )
     n = len(sent)
-    tasks.follow_up(t, 'any news?', None, '92.1', 'U_SALAH')
-    assert len(sent) == n and t['queue'][0]['text'] == 'any news?'
-    assert 'any news?' in text_of(posted(fresh_bot, 'D_OWNER', t['case']['ts']))  # the owner sees it at once
+    tasks.follow_up(t, 'the staging log is attached now', None, '92.1', 'U_SALAH')
+    assert len(sent) == n and t['queue'][0]['text'] == 'the staging log is attached now'
+    assert 'the staging log is attached now' in text_of(
+        posted(fresh_bot, 'D_OWNER', t['case']['ts'])
+    )  # the owner sees it at once
     monkeypatch.setattr(t3, 'snapshot', snapshot('completed', 'Holding.'))
     tasks.tick(t)  # the owner's turn ends: Salah's message goes to the agent now, as his turn
-    assert len(sent) == n + 1 and 'Salah' in sent[-1] and 'any news?' in sent[-1] and 'answer_to' not in t
+    assert (
+        len(sent) == n + 1
+        and 'Salah' in sent[-1]
+        and 'the staging log is attached now' in sent[-1]
+        and 'answer_to' not in t
+    )
 
 
 def test_a_turn_the_owner_starts_in_t3_answers_the_owner(case, fresh_bot, monkeypatch):

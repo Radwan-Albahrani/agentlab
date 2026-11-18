@@ -117,7 +117,7 @@ def audit(by, via, approved_by=None, for_=None):
 
 
 STATUS_ASK = re.compile(
-    r"\b(status|progress|eta|update me|updates?\?|any updates?|an update|how(?:'s| is) it going|how far"
+    r"\b(status|progress|eta|update me|any updates?|an update|how(?:'s| is) it going|how far"
     r"|where (?:are|r) (?:we|you|u)|where(?:'s| is) it at|done yet|finished yet"
     r"|what(?:'s| are you| r u) (?:doing|working on|up|happening|going on)|what(?:'s| is) going on"
     r'|still (?:working|going|on it))\b',
@@ -135,8 +135,13 @@ POLL_WORDS = re.compile(r'\b(poll|vote|votes|voting)\b', re.I)
 BTW = re.compile(r'^\s*/?btw\b[\s,:.-]*', re.I)
 
 
+ONLY_UPDATE = re.compile(r'^\W*(?:any\s+)?(?:updates?|news)\W*$', re.I)  # "updates?" alone; not "push the updates"
+
+
 def is_status_ask(msg):
     """A short "how's it going?", not an instruction mentioning status ("fix the status badge")."""
+    if ONLY_UPDATE.match(msg):
+        return True
     return len(msg.split()) <= 8 and not INSTRUCTION.match(msg) and bool(STATUS_ASK.search(msg))
 
 
