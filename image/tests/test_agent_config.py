@@ -127,3 +127,17 @@ def test_a_new_file_gets_a_marked_block_it_can_refresh_later(tmp_path, monkeypat
     agent_config.write_notes('example', str(tmp_path))
     text = agents.read_text()
     assert 'v2' in text and 'v1' not in text and text.endswith('\n# the agent wrote this\n')
+
+
+def test_the_owners_notes_reach_claude_and_codex(tmp_path, monkeypatch):
+    instructions(tmp_path, monkeypatch, 'Your environment\n')
+    own = tmp_path / '.config' / 'agent' / 'notes.md'
+    own.parent.mkdir(parents=True)
+    own.write_text('- `work-mail search "<query>"`: my work email, read-only.\n')
+    agent_config.write_notes('example', str(tmp_path))
+    told = (tmp_path / '.config' / 'agent' / 'environment.md').read_text()
+    assert told == 'Your environment\n\n## From your owner\n\n- `work-mail search "<query>"`: my work email, read-only.\n'
+    assert 'work-mail' in (tmp_path / '.codex' / 'AGENTS.md').read_text()
+    own.unlink()  # gone again: so is the section
+    agent_config.write_notes('example', str(tmp_path))
+    assert 'From your owner' not in (tmp_path / '.config' / 'agent' / 'environment.md').read_text()

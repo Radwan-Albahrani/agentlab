@@ -82,6 +82,9 @@ def write_notes(agent, home, android=False, companions=()):
     """Write environment.md and refresh (or append once) our block in CLAUDE.md (@import) and AGENTS.md (text)."""
     text = read(INSTRUCTIONS).replace('{{AGENT_ID}}', agent).replace('{{COMPANIONS}}', ', '.join(companions))
     text = sections(text, {'android': android, 'companions': bool(companions)})
+    own = read(os.path.join(home, '.config', 'agent', 'notes.md')).strip()  # the owner's: their tools, their rules
+    if own:
+        text += f'\n\n## From your owner\n\n{own}'
     notes = os.path.join(home, '.config', 'agent', 'environment.md')
     os.makedirs(os.path.dirname(notes), exist_ok=True)
     with open(notes, 'w') as f:

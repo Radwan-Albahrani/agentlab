@@ -87,7 +87,7 @@ broker to admit them; the spool lives in `~/.local/state/agent-throttle/`.
 
 | Path | What |
 |---|---|
-| `/home/agent` | the agent's home: sign-ins, T3 chats (`~/.t3/userdata`), tools, logs, `~/.android` |
+| `/home/agent` | the agent's home: sign-ins, T3 chats (`~/.t3/userdata`), tools, logs, `~/.android`; `~/.config/agent/notes.md` (optional, the owner's) is added to the agent's environment notes on every start, e.g. to tell it about tools of its own |
 | `/workspace` | repos |
 | `/home/linuxbrew` | Homebrew |
 | `/opt/android-sdk` (read-only) | the shared Android SDK from `<data>/shared/android-sdk` (when Android is on) |
