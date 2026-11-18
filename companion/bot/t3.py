@@ -209,6 +209,50 @@ def _subagent_busy(w_tid, updated, reported, now=None):
     return (now or time.time()) - parse_iso(updated) < SUBAGENT_STALE
 
 
+STEP_TEXT = {'reasoning': 'text', 'assistant_message': 'text', 'command_execution': 'input', 'dynamic_tool': 'title'}
+
+
+def _steps(con, tid, limit):
+    """The chat's latest steps, oldest first: what it thought, said and ran, one short line each."""
+    out = []
+    for typ, status, payload in con.execute(
+        """select type, status, payload_json from orchestration_v2_projection_turn_items where thread_id = ?
+             and type in ('reasoning', 'assistant_message', 'command_execution', 'dynamic_tool')
+           order by ordinal desc limit ?""",
+        (tid, limit),
+    ):
+        text = str(json.loads(payload).get(STEP_TEXT[typ]) or '').replace('\n', ' ').strip()
+        if text:
+            out.append(f'{typ.replace("_", " ")}{" (failed)" if status == "failed" else ""}: {text[:200]}')
+    return out[::-1]
+
+
+def digest(tid):
+    """A compact record of a chat for a side answer: its state, latest steps, workers, PRs and open question."""
+    s = snapshot(tid, '9999')
+    run = open_run_since(tid)
+    lines = [
+        f'Running: yes, since {run}'
+        if run
+        else f'Running: no; last run {s["last_status"] or "none"} at {s["last_done"]}',
+        f'Now: {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}',
+    ]
+    with db() as con:
+        lines += ['Latest steps of the chat (oldest first):', *(f'- {x}' for x in _steps(con, tid, 14))]
+        for w, title, running in s['workers']:
+            last = _steps(con, w, 2)
+            lines.append(
+                f'Worker "{title}": {"running" if running else "finished"}' + (f'; last: {last[-1]}' if last else '')
+            )
+    lines += [f'Pull request: {pr.get("url")}' for pr in s['prs'] if pr.get('url')]
+    if s['requests'] or s.get('asked'):
+        lines.append('It is waiting on an answer to a question it asked.')
+    last = last_answer(tid)
+    if last:
+        lines.append(f'Its last message: {last[:800]}')
+    return '\n'.join(lines)
+
+
 def busy(tid):
     s = snapshot(tid, '9999')  # skip messages
     return s['running'] or any(r for _, _, r in s['workers'])

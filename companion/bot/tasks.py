@@ -117,8 +117,9 @@ def audit(by, via, approved_by=None, for_=None):
 
 
 STATUS_ASK = re.compile(
-    r"\b(status|progress|eta|update me|any update|an update|updates\?|how(?:'s| is) it going|how far"
-    r"|where (?:are|r) (?:we|you|u)|done yet|finished yet|what(?:'s| are you| r u) (?:doing|working on|up|happening)"
+    r"\b(status|progress|eta|update me|updates?\?|any updates?|an update|how(?:'s| is) it going|how far"
+    r"|where (?:are|r) (?:we|you|u)|where(?:'s| is) it at|done yet|finished yet"
+    r"|what(?:'s| are you| r u) (?:doing|working on|up|happening|going on)|what(?:'s| is) going on"
     r'|still (?:working|going|on it))\b',
     re.I,
 )
@@ -131,9 +132,34 @@ INSTRUCTION = re.compile(
 POLL_WORDS = re.compile(r'\b(poll|vote|votes|voting)\b', re.I)
 
 
+BTW = re.compile(r'^\s*/?btw\b[\s,:.-]*', re.I)
+
+
 def is_status_ask(msg):
     """A short "how's it going?", not an instruction mentioning status ("fix the status badge")."""
     return len(msg.split()) <= 8 and not INSTRUCTION.match(msg) and bool(STATUS_ASK.search(msg))
+
+
+def is_side_question(msg):
+    """Answered on the side from the chat's record, never by the chat: a status ask, or anything starting with btw."""
+    return is_status_ask(msg) or bool(BTW.match(msg) and BTW.sub('', msg).strip())
+
+
+def side_reply(task, question, ts, at=None):
+    """Answer a side question with the quick model from the chat's record, without messaging the chat; `at`: where
+    to post it (default: where the task talks). Falls back to the plain status summary."""
+    ch, tts = at or where(task)
+    question = BTW.sub('', question).strip() or question
+    res = t3.triage(prompts.side_answer(question, t3.digest(task['thread'])))
+    text = str(res.get('result') or '').strip() if res.get('ok') else ''
+    if not text:
+        status_reply(task, ts)
+        return
+    slack.post(ch, tts, first_sentence(no_emoji(text), 150), md=text, note="Side answer · the agent wasn't interrupted")
+    if task.get('guest') and not at and not task.get('answer_to'):
+        cases.answered(task, text)
+    task['seen_ts'] = ts  # keeps the question out of since_last
+    save()
 
 
 def where(task):
@@ -148,8 +174,10 @@ def follow_up(task, text, files, ts, by=None):
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
     if m and m.group(1) in task.get('options', {}):  # "1" picks option 1 of the last question
         msg = task['options'][m.group(1)]
-    elif is_status_ask(msg) and not files and t3.busy(task['thread']):
-        status_reply(task, ts)
+    elif is_side_question(msg) and not files:
+        if by and by != OWNER and by == task.get('guest'):
+            cases.colleague_said(task, text)
+        side_reply(task, msg, ts)
         return
     colleague = bool(by) and by != OWNER and by == task.get('guest')
     if colleague:

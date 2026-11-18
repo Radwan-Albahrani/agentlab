@@ -104,6 +104,8 @@ def test_a_turn_with_nothing_new_posts_nothing(monkeypatch, t3_quiet, fresh_bot)
         ('status?', True),
         ("how's it going", True),
         ('any update?', True),
+        ("what's going on?", True),
+        ('where is it at', True),
         ('fix the status badge', False),
         ('check the status page and update the docs please now', False),
     ],
@@ -171,3 +173,41 @@ def test_a_new_message_in_a_dm_sees_the_last_days_and_its_history(monkeypatch, t
     tasks.start('D_U_SALAH', '80.1', '80.1', 'I fixed them', guest='U_SALAH')
     assert float(calls[0]['latest']) - float(calls[0]['oldest']) == 3 * 86400 and calls[0]['limit'] == 20
     assert 'the 3 days before it' in prompts_sent[0] and 'Reviewed org/p#6257' in prompts_sent[0]
+
+
+@pytest.mark.parametrize('ask', ['status?', 'btw did you run the e2e tests?', '/btw which branch?'])
+@pytest.mark.parametrize('busy', [True, False])
+def test_a_side_question_is_answered_by_the_quick_model_and_never_reaches_the_chat(
+    monkeypatch, t3_quiet, fresh_bot, ask, busy
+):
+    sent, asked = [], []
+    monkeypatch.setattr(t3, 'busy', lambda tid: busy)
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
+    monkeypatch.setattr(t3, 'digest', lambda tid: 'Running: yes\n- reasoning: running the e2e tests')
+    monkeypatch.setattr(
+        t3, 'triage', lambda prompt: asked.append(prompt) or {'ok': True, 'result': 'Running the e2e tests.'}
+    )
+    t = task(active=busy)
+    tasks.follow_up(t, ask, None, '9.5')
+    assert not sent and 'running the e2e tests' in asked[0] and 'btw' not in asked[0].split('Question: ')[1][:8]
+    assert 'Running the e2e tests.' in fresh_bot.text() and "the agent wasn't interrupted" in fresh_bot.text()
+
+
+def test_without_the_quick_model_a_status_ask_gets_the_plain_summary(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'digest', lambda tid: '')
+    monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': False, 'error': 'down'})
+    monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**snapshot('completed', 'x')(tid, since), 'running': True})
+    monkeypatch.setattr(t3, 'open_run_since', lambda tid: None)
+    monkeypatch.setattr(t3, 'last_answer', lambda tid: 'Half way through the migration.')
+    tasks.follow_up(task(), 'status?', None, '9.6')
+    assert 'Half way through the migration' in fresh_bot.text()
+
+
+def test_a_colleagues_side_question_and_its_answer_reach_the_owners_case(monkeypatch, t3_quiet, fresh_bot):
+    monkeypatch.setattr(t3, 'digest', lambda tid: 'r')
+    monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': True, 'result': 'Reviewing PR 6257.'})
+    t = task(channel='D_U_SALAH', thread_ts='60.1', guest='U_SALAH', case={'ch': 'D_OWNER', 'ts': '61.1', 'own': True})
+    tasks.follow_up(t, 'any update?', None, '60.5', 'U_SALAH')
+    in_case = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m.get('thread_ts') == '61.1']
+    assert 'any update?' in str(in_case) and 'Reviewing PR 6257.' in str(in_case)
+    assert any(m['channel'] == 'D_U_SALAH' and 'Reviewing PR 6257.' in str(m) for m in fresh_bot.messages)

@@ -10,6 +10,10 @@ What it does:
   as context. Reply in the thread to continue. It shows live progress, retries when the model is busy, and splits
   big work into T3 child threads. Replies and files (screenshots, documents) go into that thread. Settings →
   "People who can tag it" lets colleagues give it work too; their sensitive steps wait for your Approve.
+- **Side answers.** A status question in a task's thread ("status?", "any update?", "what's going on") or anything
+  starting with `btw` is answered on the side: the agent's quick model (Haiku, through the bridge's triage) reads a
+  short digest of the chat (its latest steps, workers, PRs) and replies in two sentences at most. The chat is never
+  messaged or interrupted.
 - **Cases.** Every conversation a colleague has with it (a DM, a tag, the requests channel) is a case you follow from
   one message in your DM: what they wrote and everything it sent them land in that thread, full text. Whoever starts a
   turn gets its answer: theirs are answered in their thread, yours (a reply in the case thread, or a message in the T3

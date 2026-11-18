@@ -91,6 +91,9 @@ def route(ev, mentioned):
             jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''), None, user)
         return
     case = in_dm and thr and key(ch, thr) not in state['tasks'] and cases.at(ch, thr)
+    if case and not ev.get('files') and tasks.is_side_question(slack.ask(ev.get('text', '')).strip()):
+        jobs.run_later(tasks.side_reply, case, slack.ask(ev.get('text', '')).strip(), ts, cases.of(case))
+        return
     if case:  # the owner talking to the companion about a colleague's conversation: private
         jobs.run_later(cases.ask, case, ev.get('text', ''), ev.get('files'), ts)
         return

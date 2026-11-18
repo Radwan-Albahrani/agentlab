@@ -129,6 +129,17 @@ def case_rules(folder, guest, owner):
     )
 
 
+def side_answer(question, record):
+    """For the quick model: a side question about a chat, answered from its record only."""
+    return (
+        "Someone asked about an AI agent's ongoing work. Answer from the record below only, in at most two short"
+        ' sentences (under 40 words): where it is and what it is doing now, or the direct answer to the question.'
+        ' No greeting, no preamble, no filler, no headings, no lists, no guessing beyond the record. If the record'
+        ' does not say, say so in one sentence.\n\n'
+        f'Question: {question}\n\nRecord:\n{record}'
+    )
+
+
 def owner_private(owner, guest, box, said, pending=''):
     """The owner's message in a case thread, for the agent."""
     hold = f' Your approval request ({pending}) still waits for their Approve or Reject: do not make that change.'

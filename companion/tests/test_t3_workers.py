@@ -9,7 +9,8 @@ create table orchestration_v2_projection_messages (message_id text, thread_id te
   created_at text, payload_json text);
 create table orchestration_v2_projection_runtime_requests (runtime_request_id text, thread_id text, kind text,
   status text, payload_json text);
-create table orchestration_v2_projection_turn_items (thread_id text, type text, ordinal int, payload_json text);
+create table orchestration_v2_projection_turn_items (thread_id text, type text, ordinal int, payload_json text,
+  status text);
 create table orchestration_v2_projection_threads (thread_id text, title text, updated_at text, payload_json text);
 """
 LEAD = 'mcp:lead'
@@ -78,3 +79,18 @@ def test_a_child_run_cut_off_by_a_restart_is_reported_until_resumed(chat):
     )
     chat.commit()
     assert t3.snapshot(LEAD, '9999')['interrupted_at'] is None
+
+
+def test_a_digest_tells_the_quick_model_what_the_chat_is_doing(chat):
+    rows = [
+        (LEAD, 'reasoning', 1, '{"text": "I am checking the sweep tests"}', 'completed'),
+        (LEAD, 'command_execution', 2, '{"input": "bun test sweep"}', 'failed'),
+        (LEAD, 'assistant_message', 3, '{"text": "Fixing the failing sweep test now."}', 'completed'),
+        (T3_CHILD, 'assistant_message', 4, '{"text": "Lane done: no findings."}', 'completed'),
+    ]
+    chat.executemany('insert into orchestration_v2_projection_turn_items values (?,?,?,?,?)', rows)
+    chat.commit()
+    d = t3.digest(LEAD)
+    steps = d.index('reasoning: I am checking'), d.index('command execution (failed): bun test sweep')
+    assert steps[0] < steps[1]
+    assert 'Worker "Lane": finished; last: assistant message: Lane done: no findings.' in d
