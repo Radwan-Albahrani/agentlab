@@ -136,7 +136,9 @@ def test_the_owners_notes_reach_claude_and_codex(tmp_path, monkeypatch):
     own.write_text('- `work-mail search "<query>"`: my work email, read-only.\n')
     agent_config.write_notes('example', str(tmp_path))
     told = (tmp_path / '.config' / 'agent' / 'environment.md').read_text()
-    assert told == 'Your environment\n\n## From your owner\n\n- `work-mail search "<query>"`: my work email, read-only.\n'
+    assert (
+        told == 'Your environment\n\n## From your owner\n\n- `work-mail search "<query>"`: my work email, read-only.\n'
+    )
     assert 'work-mail' in (tmp_path / '.codex' / 'AGENTS.md').read_text()
     own.unlink()  # gone again: so is the section
     agent_config.write_notes('example', str(tmp_path))
