@@ -1410,7 +1410,7 @@ class DiskSizes(unittest.TestCase):
         mounted, calls, states = [True], [], iter(['running', 'running', 'exited'])
         rcs = rcs or {}
 
-        def run(cmd, check=True):
+        def run(cmd, check=True, **_):
             docker = cmd[0] == 'docker'
             name = 'e2fsck -n' if cmd[:3] == ['e2fsck', '-f', '-n'] else ' '.join(cmd[:2]) if docker else cmd[0]
             calls.append(name)
@@ -1458,7 +1458,8 @@ class DiskSizes(unittest.TestCase):
 
     def test_a_busy_disk_says_what_holds_it(self):
         _, size, mounted, _, warned = self.run_shrink(rcs={'umount': 32})
-        self.assertIn('still using it', warned[0])
+        self.assertIn('mounts inside it:', warned[0])
+        self.assertIn('processes using it:', warned[0])
         self.assertEqual((size, mounted), (8 << 20, True))
 
     def test_a_refused_shrink_keeps_the_image_and_brings_everything_back(self):

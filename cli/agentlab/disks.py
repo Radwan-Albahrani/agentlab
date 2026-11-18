@@ -219,8 +219,19 @@ def _holders(mnt):
 def _unmount(mnt):
     rc, out = run(['umount', mnt], check=False)
     if rc:
-        _, who = run(['fuser', '-vm', mnt], check=False)
-        raise Failed(f'umount {mnt} failed ({rc}): {out[-200:]}; still using it: {who[-400:] or "nothing listed"}')
+        raise Failed(f'umount {mnt} failed ({rc}): {out[-200:]}; {_who_holds(mnt)}')
+
+
+def _who_holds(mnt):
+    """What keeps a disk busy: mounts inside it, and the processes with files on it (fuser, from psmisc, which
+    hosts installed before it was a base package get here)."""
+    _, mounts = run(['findmnt', '-rn', '-o', 'TARGET'], check=False)
+    inside = [m for m in mounts.split() if m.startswith(mnt + '/')]
+    if not shutil.which('fuser'):
+        run(['apt-get', 'install', '-y', '-q', 'psmisc'], check=False, timeout=180)
+    rc, who = run(['fuser', '-vm', mnt], check=False)
+    procs = who.strip() if rc != 127 else 'unknown (fuser could not be installed)'
+    return f'mounts inside it: {", ".join(inside) or "none"}; processes using it: {procs[-400:] or "none"}'
 
 
 def _shrink(cfg, u, want, sleep=time.sleep):

@@ -15,7 +15,7 @@ else
   apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker >/dev/null
 fi
-apt_install nftables jq sqlite3 e2fsprogs git
+apt_install nftables jq sqlite3 e2fsprogs git psmisc
 if [ ! -f /etc/modules-load.d/agentlab.conf ]; then
   echo br_netfilter > /etc/modules-load.d/agentlab.conf
   changed "br_netfilter loads at boot"

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 # The packages host/install/*.sh install from the distro (Docker and cloudflared come from their own repositories).
-BASE = ['ca-certificates', 'curl', 'gnupg', 'nftables', 'jq', 'sqlite3', 'e2fsprogs', 'git']
+BASE = ['ca-certificates', 'curl', 'gnupg', 'nftables', 'jq', 'sqlite3', 'e2fsprogs', 'git', 'psmisc']
 # Java 17+ for Android tools, newest first; keep in step with host/install/65-android-sdk.sh.
 JRES = ['openjdk-21-jre-headless', 'openjdk-25-jre-headless', 'openjdk-17-jre-headless']
 SYSBOX_ARCH = {'x86_64', 'aarch64'}
