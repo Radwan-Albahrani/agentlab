@@ -1,6 +1,6 @@
 import pytest
 from bot import ledger, machine, slack, state, t3, tasks
-from conftest import OWNER, set_settings
+from conftest import OWNER, ROUTE, set_settings
 
 
 def task(running=True, who=None, kind='owner', case=None, outcome='answered', **extra):
@@ -9,12 +9,12 @@ def task(running=True, who=None, kind='owner', case=None, outcome='answered', **
     t = {
         'thread': 'T1',
         'title': 'Check the queue',
-        'project': '/workspace/platform',
+        'route': ROUTE,
         'channel': 'C9',
         'thread_ts': '9.1',
         'outbox': 'x',
         'trigger_ts': '9.1',
-        'status_ts': 'ts9',
+        'line': {'ch': 'C9', 'ts': 'ts9', 'since': 0},
         'start': now,
         'burst_start': now,
         'seen': '',
@@ -214,7 +214,7 @@ def test_a_side_question_is_answered_by_the_quick_model_and_never_reaches_the_ch
     )
     t = task(running=busy)
     turn = dict(t['turn'])
-    tasks.follow_up(t, ask, None, '9.5')
+    tasks.follow_up(t, ask, None, '9.5', 'thread')
     assert not sent and 'running the e2e tests' in asked[0] and 'btw' not in asked[0].split('Question: ')[1][:8]
     assert 'Running the e2e tests.' in fresh_bot.text() and "the agent wasn't interrupted" in fresh_bot.text()
     assert t['turn'] == turn  # a side answer is no turn
@@ -226,7 +226,7 @@ def test_without_the_quick_model_a_status_ask_gets_the_plain_summary(monkeypatch
     monkeypatch.setattr(t3, 'snapshot', lambda tid, since: {**snapshot('completed', 'x')(tid, since), 'running': True})
     monkeypatch.setattr(t3, 'open_run_since', lambda tid: None)
     monkeypatch.setattr(t3, 'last_answer', lambda tid: 'Half way through the migration.')
-    tasks.follow_up(task(), 'status?', None, '9.6')
+    tasks.follow_up(task(), 'status?', None, '9.6', 'thread')
     assert 'Half way through the migration' in fresh_bot.text()
 
 
@@ -241,7 +241,7 @@ def test_a_colleagues_side_question_and_its_answer_reach_the_owners_case(monkeyp
         thread_ts='60.1',
         case={'ch': 'D_OWNER', 'ts': '61.1', 'head': 'own', 'mode': 'private'},
     )
-    tasks.follow_up(t, 'any update?', None, '60.5', 'U_SALAH')
+    tasks.follow_up(t, 'any update?', None, '60.5', 'thread', 'U_SALAH')
     in_case = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m.get('thread_ts') == '61.1']
     assert 'any update?' in str(in_case) and 'Reviewing PR 6257.' in str(in_case)
     assert any(m['channel'] == 'D_U_SALAH' and 'Reviewing PR 6257.' in str(m) for m in fresh_bot.messages)
@@ -252,6 +252,6 @@ def test_a_follow_up_that_waits_behind_the_running_turn_says_so(monkeypatch, t3_
     monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True, 'result': {'delivery': delivery}})
     monkeypatch.setattr(t3, 'digest', lambda tid: 'r')
     monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': True, 'result': 'Running the deep reviews.'})
-    tasks.follow_up(task(), 'the table looks broken on mobile', None, '9.7')
+    tasks.follow_up(task(), 'the table looks broken on mobile', None, '9.7', 'thread')
     told = 'Queued: the agent reads this when its current step ends. Right now: Running the deep reviews.'
     assert (told in fresh_bot.text()) is (delivery == 'queued')

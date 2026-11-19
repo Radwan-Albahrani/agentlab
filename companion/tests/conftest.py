@@ -9,6 +9,7 @@ import pytest
 
 ROOT = tempfile.mkdtemp(prefix='companion-test-')
 OWNER = 'U_OWNER'
+ROUTE = {'project': '/workspace/platform', 'by': 'default', 'why': 'nothing named a project'}  # bot/projects.py
 for sub in ('secrets', 'data', 'files', 't3'):
     os.makedirs(os.path.join(ROOT, sub))
 for name, value in {

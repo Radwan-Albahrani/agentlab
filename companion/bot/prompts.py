@@ -114,6 +114,13 @@ def colleague_turn(guest, owner):
     return f'\n\n({guest} hears only what you send them with "to": "{guest}"; your final message goes to {owner}.)'
 
 
+def owner_in_thread(owner, guest):
+    """Tacked onto the owner's message written in a colleague's thread: the answer is public there."""
+    return (
+        f'\n\n({owner} wrote this in the thread with {guest}; your final message is posted there, so {guest} reads it.)'
+    )
+
+
 def side_answer(question, record):
     """For the quick model: a side question about a chat, answered from its record only."""
     return (

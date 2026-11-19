@@ -4,7 +4,7 @@ import secrets
 
 import pytest
 from bot import errands, gate, ledger, machine, outbox, publish, state, tasks
-from conftest import OWNER, agent_sends, click, receipts
+from conftest import OWNER, ROUTE, agent_sends, click, receipts
 
 
 @pytest.fixture
@@ -25,13 +25,14 @@ def errand(monkeypatch):
         'req-1',
         '50.1',
         None,
+        ROUTE,
         party=machine.party_of(requester='U_SALAH'),
         source_ch='D_SAM',
         source_im=True,
         source_thread=None,
     )
     machine.open_case(t, 'D_OWNER', '50.1', 'errand')
-    machine.begin_turn(t, 'colleague')
+    machine.begin_turn(t, 'colleague', 'thread')
     return t, box, followed
 
 

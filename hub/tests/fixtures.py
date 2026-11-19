@@ -242,8 +242,23 @@ create table pulls (id text primary key, repo text, number integer, updated text
     ]
     con.executemany('insert into tasks values (?,?,?,?,?,?,?,?,?,?,?,"slack",?)', [(*t, NOW) for t in tasks])
     # the audit columns, then who each task is with and where it stands (companion/bot/machine.py)
-    for column in ('started_by', 'via', 'approved_by', 'party', 'phase', 'case_link'):
+    for column in (
+        'started_by',
+        'via',
+        'approved_by',
+        'party',
+        'phase',
+        'case_link',
+        'project',
+        'route_by',
+        'route_why',
+    ):
         con.execute(f'alter table tasks add column {column} text')
+    # where each chat started and why (companion/bot/projects.py); t3 is from a companion too old to say
+    con.execute(
+        "update tasks set project = '/workspace/app/apps/api', route_by = 'named', route_why = 'the ask names \"api\"'"
+        " where id != 't3'"
+    )
     con.execute(
         "update tasks set started_by = 'Sara', via = 'in the requests channel #asks', approved_by = 'Admin' where id = 't2'"
     )

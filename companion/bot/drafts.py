@@ -7,8 +7,8 @@ import os
 import re
 import time
 
-from . import prompts, slack, t3
-from .config import AGENT_FILES, COMP, FILES, NAME, OWNER, default_project, log, publish_channel
+from . import projects, prompts, slack, t3
+from .config import AGENT_FILES, COMP, FILES, NAME, OWNER, log, publish_channel
 from .state import lock, save, state
 from .text import first_sentence, to_slack
 
@@ -233,7 +233,7 @@ def revise(key, st, text, ts):
         return
     slack.react(st['dm'], ts, 'eyes')
     tid, err = t3.start_thread(
-        default_project(),
+        projects.route('draft')['project'],
         f'Revise product update {key}',
         prompts.revise_draft(
             AGENT_DRAFTS, key, slack.name(OWNER), slack.readable(text), st['revision'] + 1, _draft_has_video(key)

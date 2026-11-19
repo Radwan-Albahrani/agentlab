@@ -14,11 +14,21 @@ What it does:
   starting with `btw` is answered on the side: the agent's quick model (Haiku, through the bridge's triage) reads a
   short digest of the chat (its latest steps, workers, PRs) and replies in two sentences at most. The chat is never
   messaged or interrupted.
+- **Answered where it was asked.** Every message is answered in the thread it was written in: its side answer, the
+  "queued" note, the thinking line and the turn's final message. Each turn records its `place` (`thread` or `case`);
+  the one exception is a colleague's turn in a private case, whose final message is yours. The thinking line knows
+  where it was posted and is edited there; when a newer message moves the turn, the line moves with it. An edit that
+  adds the companion's tag to a message counts as a new message.
+- **Where a chat starts.** Every new T3 chat is routed by `bot/projects.py`: only work projects (the codebases) are
+  ever chosen, never a companion's own folder (`/workspace/companions/<name>`), so its own name in an ask leads
+  nowhere. Each route says why (`named`, `channel`, `thread`, `topic`, `default`; `repo` or `checkout` for reviews),
+  and the hub's Cases tab shows it under each case.
 - **Cases.** Every conversation someone else has with it (a colleague's DM or tag, the requests channel, an errand,
   a review they asked for once they talk in it) is a case you follow from one thread in your DM: what they wrote and
   everything it sent them land there, full text. The agent talks to the two of you on purpose: they hear only the
   messages it chooses to send them, and its final message every turn is yours (a turn that sent them nothing says so).
-  Your own messages there (or in the T3 chat directly) are private; theirs wait while you talk to it. Everything
+  Your own messages in the case thread (or in the T3 chat directly) are private; theirs wait while you talk to it.
+  What you write in their thread is public and answered there. Everything
   waiting on you (approvals, posts, replies, logins) has its own card, and a card that is no longer waiting decides
   nothing. The hub's Cases tab shows each case with every message's state, and what waits on you on top.
 - **Explicit states.** A task names who it is with (`party`), where you follow it (`case`), the turn under way

@@ -147,7 +147,8 @@ def _thread(tid, who):
 def gh(monkeypatch):
     fake = FakeGitHub()
     monkeypatch.setattr(reviews, 'app', lambda: fake)
-    monkeypatch.setattr(projects, 'for_repo', lambda repo: '/workspace/platform')
+    platform = {'title': 'app', 'root': '/workspace/platform', 'names': {REPO}, 'vocab': set()}
+    monkeypatch.setattr(projects, '_profiles', lambda: {'p': platform})
     monkeypatch.setattr(t3, 'run_error', lambda tid: '')
     state.state.pop('github_people', None)
     state.state.pop('github_repos', None)
@@ -239,10 +240,13 @@ def test_four_run_at_a_time_and_the_rest_wait(gh, told):
 
 
 def test_a_repo_without_a_project_here_is_cloned_into_the_review_folder(gh, told, monkeypatch):
-    monkeypatch.setattr(projects, 'for_repo', lambda repo: None)
+    monkeypatch.setattr(projects, '_profiles', dict)
+    set_settings({'default_project': '/workspace/platform'})
     started(gh, told)
     project, _, message = told[0]
-    assert project == '/workspace' and 'git init /workspace/.companion/companion/outbox/' in message
+    assert project == '/workspace/platform' and 'git init /workspace/.companion/companion/outbox/' in message
+    t = next(t for t in state.state['tasks'].values() if t.get('review'))
+    assert t['route']['by'] == 'checkout'
 
 
 def test_forks_are_not_run(gh, told, monkeypatch):
@@ -496,7 +500,7 @@ def test_a_lead_chat_that_stops_before_the_review_is_nudged_twice_at_most(gh, to
     assert len(sent) == 2 and 'review.json' in sent[0]
     assert machine.outcome(task) == 'answered'
     task['review']['published'] = 'a' * 40
-    machine.begin_turn(task, 'system')
+    machine.begin_turn(task, 'system', 'thread')
     tasks._finish_turn(task, turn)
     assert len(sent) == 2
 
@@ -566,7 +570,7 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     lines = card_now(fresh_bot, ts).split('\n')
     assert lines[1].endswith('· reviewing') and lines[2].endswith('· reviewing') and lines[3].endswith('· queued')
     first, second = review(5922), review(5923)
-    assert first['thread_ts'] == second['thread_ts'] == ts and first['status_ts'] is None
+    assert first['thread_ts'] == second['thread_ts'] == ts and first['line'] is None
     assert len({state.key_of(first), state.key_of(second)}) == 2
 
     finish(first, {'head': 'a' * 40, 'findings': FINDINGS})

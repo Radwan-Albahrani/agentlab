@@ -295,6 +295,9 @@ def companion(name):
             t.pop('case_link', None) or '',
         )
         t['items'] = [_case_item(it) for it in t.get('items') or []]
+        # where its T3 chat started and why (companion/bot/projects.py)
+        project, by, why = (t.pop(k, None) or '' for k in ('project', 'route_by', 'route_why'))
+        t['route'] = {'project': project, 'by': by, 'why': why} if project else None
         t.pop('started', None), t.pop('ended', None), t.pop('resumes_at', None)
         # the audit (from a companion new enough to record it): who started it, how, who approved it
         t['startedBy'], t['via'], t['approvedBy'] = (t.pop(k, None) or '' for k in ('started_by', 'via', 'approved_by'))

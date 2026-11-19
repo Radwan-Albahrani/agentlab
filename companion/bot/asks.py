@@ -1,7 +1,7 @@
 """Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
-from . import jobs, machine, polls, prompts, publish, reviews, routing, slack, t3, tasks
-from .config import COMP, OWNER, default_project, log
+from . import jobs, machine, polls, projects, prompts, publish, reviews, routing, slack, t3, tasks
+from .config import COMP, OWNER, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
 
@@ -63,7 +63,8 @@ def start(ask):
     folder = f'ask-{head.replace(".", "")}'
     member = [c for c in slack.channels() if c['member']]
     prompt = prompts.ask(text, slack.name(OWNER), channel, member, folder, review, polls.for_prompt())
-    tid, err = t3.start_thread(default_project(), title, prompt)
+    where_to = projects.route('ask', text, '', slack.channel_name(channel) if channel else '')
+    tid, err = t3.start_thread(where_to['project'], title, prompt)
     if not tid:
         slack.post(dm, head, f"Couldn't start: {err}", md=f":warning: I couldn't start on it: {err}")
         COMP.event('failed', f'Could not start: {title}', task=key(dm, head), detail=err, ok=False)
@@ -75,11 +76,12 @@ def start(ask):
         title,
         folder,
         head,
-        slack.note_only(dm, head, tasks.THINKING),
+        tasks.post_line(dm, head, tasks.THINKING),
+        where_to,
         review=review,
         audit=tasks.audit(OWNER, 'from the hub'),
         party=machine.party_of(),
     )
-    machine.begin_turn(t, 'owner')
+    machine.begin_turn(t, 'owner', 'thread')
     log('ask started', tid)
     COMP.event('started', title, task=key(dm, head), detail='from the hub')

@@ -267,6 +267,16 @@ export interface Task {
   caseLink: string;
   /** The ledger: every message in and out and everything waiting on you, oldest first (companion/bot/ledger.py). */
   items: CaseItem[];
+  /** Where its T3 chat started and why (companion/bot/projects.py); null from a companion too old to say. */
+  route: Route | null;
+}
+
+export type RouteBy = 'repo' | 'named' | 'channel' | 'thread' | 'topic' | 'default' | 'checkout' | 'earlier';
+
+export interface Route {
+  project: string;
+  by: RouteBy;
+  why: string;
 }
 
 export type Phase =

@@ -1,7 +1,7 @@
 import pytest
 from bot import inbox, machine, reviews, routing, tasks
 from bot.state import key, state
-from conftest import OWNER, agent_sends, set_settings
+from conftest import OWNER, ROUTE, agent_sends, set_settings
 
 SALAH = {'kind': 'colleague', 'user': 'U_SALAH'}
 
@@ -19,7 +19,7 @@ def channel(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        tasks, 'follow_up', lambda task, text, files, ts, by=None: calls.append(('follow', ts, text, by))
+        tasks, 'follow_up', lambda task, text, files, ts, place, by=None: calls.append(('follow', ts, text, by))
     )
     monkeypatch.setattr(
         reviews,
@@ -156,17 +156,18 @@ def test_their_follow_ups_carry_a_reminder_to_stay_within_what_was_approved(fres
         'thread_ts': '90.1',
         'thread': 'T',
         'outbox': 'f',
+        'route': ROUTE,
         'party': SALAH,
         'case': {'ch': 'D_OWNER', 'ts': '5.0', 'head': 'card', 'mode': 'private'},
         'trigger_ts': '90.1',
         'prs': [],
         'asked': [],
         'options': {},
-        'status_ts': 's',
+        'line': None,
     }
     state['tasks'][key('C_REQ', '90.1')] = task
-    machine.begin_turn(task, 'colleague')
-    tasks.follow_up(task, 'also export the customer list', None, '90.9', 'U_SALAH')
+    machine.begin_turn(task, 'colleague', 'thread')
+    tasks.follow_up(task, 'also export the customer list', None, '90.9', 'thread', 'U_SALAH')
     assert sent[0].startswith('Salah: also export the customer list') and 'beyond what Sam approved' in sent[0]
     mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
     assert mirrored[-1]['blocks'][0]['text'] == '**Salah:**\n> also export the customer list'

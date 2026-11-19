@@ -29,7 +29,7 @@ def route(ev, mentioned):
         return True
     task = state['tasks'].get(key(ch, thr))
     if task and machine.is_colleague(task) and machine.party(task)['user'] == user:
-        jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
+        jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, 'thread', user)
         return True
     a = _asks().get(key(ch, thr))
     if a and a['user'] == user and a['status'] == 'pending':

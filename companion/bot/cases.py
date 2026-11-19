@@ -3,8 +3,9 @@ thread in their DM (machine.py names the case's head and mode; ledger.py holds w
 
 The colleague's thread is theirs and the companion's; the case thread is the owner's and the companion's. Every message
 in and out is a ledger item, and this module renders the items into the case thread: what the colleague wrote, what the
-agent sent them, and anything refused or failed. The agent's final message, every turn, is the owner's (machine
-final_goes_to). The owner's own messages in the case thread (or in T3 directly) are private turns."""
+agent sent them, and anything refused or failed. A colleague's turn ends with the owner (machine final_goes_to). The
+owner's own messages in the case thread (or in T3 directly) are private turns; what the owner writes in the
+colleague's thread is public and answered there (machine turn place)."""
 
 import os
 import time
@@ -190,7 +191,7 @@ def ask(task, text, files, ts):
     COMP.event('private', f'You asked {NAME}', task=key_of(task), detail=slack.ask(text).strip())
     with lock:
         now = now_iso()
-        machine.begin_turn(task, 'owner')
+        machine.begin_turn(task, 'owner', 'case')
         task.update(
             burst_start=now,
             step_from=now,
@@ -202,9 +203,9 @@ def ask(task, text, files, ts):
             question=False,
             last_status='',
             last_status_at=0,
-            status_ts=slack.note_only(*c, THINKING),
-            line_start=time.time(),
         )
+        ts_line = slack.note_only(*c, THINKING)
+        task['line'] = {'ch': c[0], 'ts': ts_line, 'since': time.time()} if ts_line else None
     save()
 
 

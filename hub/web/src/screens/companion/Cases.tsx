@@ -11,6 +11,7 @@ import {
   needsYou,
   isOpen,
   PHASE_PILL,
+  routeLine,
   waitingOnYou,
 } from '../../lib/companion';
 import { plural } from '../../lib/format';
@@ -101,7 +102,9 @@ const styles = stylex.create({
     borderColor: colors.line2,
     color: colors.muted,
   },
-  links: { display: 'flex', justifyContent: 'flex-end', gap: space.sm, flexWrap: 'wrap' },
+  foot: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
+  route: { display: 'flex', alignItems: 'center', gap: space.xs, color: colors.faint, fontSize: text.sm, minWidth: 0 },
+  links: { display: 'flex', justifyContent: 'flex-end', gap: space.sm, flexWrap: 'wrap', marginInlineStart: 'auto' },
 });
 
 const lastAt = (t: Task) => t.items.at(-1)?.at ?? t.startedAt;
@@ -233,12 +236,20 @@ function Case({ t, me }: { t: Task; me: string }) {
             <Item key={it.seq} it={it} who={who} me={me} />
           ))}
         </div>
-        <div {...stylex.props(styles.links)}>
-          {t.caseLink && <LinkButton label="Case in Slack" icon="slack" to={t.caseLink} small />}
-          {t.slack && (
-            <LinkButton label={t.party === 'errand' ? 'Your thread' : 'Their thread'} icon="slack" to={t.slack} small />
+        <div {...stylex.props(styles.foot)}>
+          {t.route && (
+            <span {...stylex.props(styles.route)} title={t.route.why}>
+              <Icon name="files" size={14} />
+              {routeLine(t.route)}
+            </span>
           )}
-          {t.t3 && <LinkButton label="Open in T3" icon="chat" to={t.t3} small />}
+          <div {...stylex.props(styles.links)}>
+            {t.caseLink && <LinkButton label="Case in Slack" icon="slack" to={t.caseLink} small />}
+            {t.slack && (
+              <LinkButton label={t.party === 'errand' ? 'Your thread' : 'Their thread'} icon="slack" to={t.slack} small />
+            )}
+            {t.t3 && <LinkButton label="Open in T3" icon="chat" to={t.t3} small />}
+          </div>
         </div>
       </div>
     </Expandable>

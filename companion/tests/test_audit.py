@@ -5,14 +5,14 @@ import sqlite3
 import pytest
 from bot import errands, inbox, projects, publish, routing, slack, state, t3, tasks
 from bot.state import key
-from conftest import OWNER, set_settings
+from conftest import OWNER, ROUTE, set_settings
 
 from companion import Companion
 
 
 @pytest.fixture
 def chats(t3_quiet, monkeypatch):
-    monkeypatch.setattr(projects, 'pick', lambda ask, convo, chan: ('/workspace/x', 'test'))
+    monkeypatch.setattr(projects, '_profiles', dict)
     monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, ts: [])
     return t3_quiet
 
@@ -52,8 +52,8 @@ def test_an_approved_request_names_who_asked_where_and_who_approved(chats):
 def test_an_errand_is_for_the_colleague_and_started_by_whoever_triggered_it(chats, monkeypatch):
     monkeypatch.setattr(t3, 'start_thread', lambda project, title, message: ('T_E', ''))
     p = {'ch': 'C1', 'ts': '14.1', 'thread_ts': None, 'user': 'U_SALAH', 'im': False, 'texts': ['the invoices']}
-    errands.track(dict(p, tagged=True), 'D_OWNER', '14.2', 'T_E', 'Salah: invoices', 'f', '')
-    errands.track(p, 'D_OWNER', '14.3', 'T_E', 'Salah: invoices', 'f', '')
+    errands.track(dict(p, tagged=True), 'D_OWNER', '14.2', 'T_E', 'Salah: invoices', 'f', '', ROUTE)
+    errands.track(p, 'D_OWNER', '14.3', 'T_E', 'Salah: invoices', 'f', '', ROUTE)
     tagged = publish.card('a', state.state['tasks'][key('D_OWNER', '14.2')])
     noticed = publish.card('b', state.state['tasks'][key('D_OWNER', '14.3')])
     assert (tagged['kind'], tagged['requester'], tagged['started_by'], tagged['via']) == (

@@ -2,13 +2,13 @@ import json
 import os
 import time
 
-from bot import config, ledger, machine, prompts, publish, state
-from conftest import COMPANION_DIR, set_settings
+from bot import config, ledger, machine, projects, prompts, publish, state
+from conftest import COMPANION_DIR, ROUTE, set_settings
 
 
 def test_save_writes_only_the_task_that_changed():
-    a = state.new_task('C1', '1.1', 'T1', 'First', 'f1', '1.1', None)
-    state.new_task('C1', '2.1', 'T2', 'Second', 'f2', '2.1', None)
+    a = state.new_task('C1', '1.1', 'T1', 'First', 'f1', '1.1', None, ROUTE)
+    state.new_task('C1', '2.1', 'T2', 'Second', 'f2', '2.1', None, ROUTE)
     db = config.COMP.db
     before = db.execute('select max(updated) from store').fetchone()[0]
     time.sleep(0.01)
@@ -19,7 +19,9 @@ def test_save_writes_only_the_task_that_changed():
 
 
 def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
-    machine.begin_turn(state.new_task('C1', '3.1', 'T3', 'Check the queue', 'f3', '3.1', None), 'owner')
+    machine.begin_turn(
+        state.new_task('C1', '3.1', 'T3', 'Check the queue', 'f3', '3.1', None, ROUTE), 'owner', 'thread'
+    )
     publish.tick()
     with open(os.path.join(COMPANION_DIR, 'heartbeat.json')) as f:
         heartbeat = json.load(f)
@@ -52,8 +54,8 @@ def test_events_are_appended():
 
 
 def test_a_card_reflects_the_phase_and_what_the_task_waits_for():
-    t = state.new_task('C1', '4.1', 'T4', 'x', 'f4', '4.1', None)
-    machine.begin_turn(t, 'owner')
+    t = state.new_task('C1', '4.1', 'T4', 'x', 'f4', '4.1', None, ROUTE)
+    machine.begin_turn(t, 'owner', 'thread')
     a = ledger.add(t, 'approval', action='Merge')
     ledger.move(t, a, 'awaiting_owner')
     card = publish.card('k', t)
@@ -65,8 +67,8 @@ def test_a_card_reflects_the_phase_and_what_the_task_waits_for():
 
 
 def test_the_ledger_is_published_for_the_hub():
-    t = state.new_task('C1', '5.1', 'T5', 'x', 'f5', '5.1', None)
-    machine.begin_turn(t, 'owner')
+    t = state.new_task('C1', '5.1', 'T5', 'x', 'f5', '5.1', None, ROUTE)
+    machine.begin_turn(t, 'owner', 'thread')
     it = ledger.add(t, 'message', to='colleague', label='Salah', text='On it.')
     ledger.move(t, it, 'sent')
     publish._last = 0.0
@@ -77,14 +79,14 @@ def test_the_ledger_is_published_for_the_hub():
     assert data['label'] == 'Salah' and [h[0] for h in data['history']] == ['received', 'sent']
 
 
-def test_where_the_owner_works_and_the_default_project_are_live_settings():
-    assert state.new_task('C9', '9.1', 'T9', 'Before', 'f9', '9.1', None)['project'] == '/workspace'
+def test_where_the_owner_works_and_the_default_project_are_live_settings(monkeypatch):
+    monkeypatch.setattr(projects, '_profiles', dict)
+    assert projects.route('errand')['project'] == '/workspace'
     set_settings({'org': 'Example Co', 'default_project': '/workspace/app'})
     assert config.org() == 'Example Co'
-    assert state.new_task('C9', '9.2', 'T9', 'After', 'f9', '9.2', None)['project'] == '/workspace/app'
-    assert state.new_task('C9', '9.3', 'T9', 'Named', 'f9', '9.3', None, project='/workspace/x')['project'] == (
-        '/workspace/x'
-    )
+    assert projects.route('errand') == projects.made('/workspace/app', 'default', 'nothing named a project')
+    t = state.new_task('C9', '9.3', 'T9', 'Named', 'f9', '9.3', None, projects.made('/workspace/x', 'named', 'x'))
+    assert t['route'] == {'project': '/workspace/x', 'by': 'named', 'why': 'x'} and 'project' not in t
     assert 'outside Example Co' in prompts.approvals('Sam', 'Ali', 'tell Ali')
     errand = prompts.errand('Ali', 'wrote', 'Sam', 'add me to the dashboard', [], [], '/files/x')
     assert errand.index('connected (MCP) tools') < errand.index("Needs Sam's OK first")

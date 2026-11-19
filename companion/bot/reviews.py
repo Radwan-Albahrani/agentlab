@@ -317,7 +317,7 @@ def for_reply(channel, thread_ts, text, others=False):
 def answer(task, text, files, ts):
     """Pass a reply on to its review, without the leading PR reference that picked it."""
     msg = LEADING_REF.sub('', slack.ask(text), count=1).strip()
-    tasks.follow_up(task, msg or text, files, ts)
+    tasks.follow_up(task, msg or text, files, ts, 'thread')
 
 
 def which(channel, thread_ts):
@@ -713,21 +713,22 @@ def start(item, e):
     _write(box, 'threads.json', json.dumps(f['threads'], indent=1, ensure_ascii=False))
     _write(box, '.files.json', json.dumps([{'path': x['path'], 'patch': x['patch']} for x in f['files']]))
     _write(box, '.token', a.token(f['installation']), private=True)
-    project = projects.for_repo(f['repo'])
+    where_to = projects.route('review', repo=f['repo'])
+    in_project = where_to['by'] == 'repo'
     agent_box = prompts.outbox(folder)
     message = brief.lead(
         f,
         owner=slack.name(OWNER),
         box=agent_box,
-        workdir='' if project else f'{agent_box}/code',
-        project=project or '',
+        workdir='' if in_project else f'{agent_box}/code',
+        project=where_to['project'] if in_project else '',
         rereview=rereview,
     )
     pr_id, short = f'{f["repo"]}#{f["number"]}', _short(f'{f["repo"]}#{f["number"]}')
     title = f'Review {short}: {f["title"]}'[:90]
     ch, tts = b['channel'], _thread(b)
     k = f'{key(ch, tts)}:{folder}'  # several reviews share the batch thread
-    tid, err = t3.start_thread(project or '/workspace', title, message)
+    tid, err = t3.start_thread(where_to['project'], title, message)
     if not tid:
         raise GitHubError(0, f"T3 didn't start the chat: {err}")
     origin = item.get('origin') or {}
@@ -739,7 +740,7 @@ def start(item, e):
         folder,
         b['card'],
         None,
-        project or '/workspace',
+        where_to,
         key=k,
         audit=tasks.audit(origin.get('by') or OWNER, origin.get('via') or 'from the hub', origin.get('approved_by')),
         review={
@@ -756,7 +757,7 @@ def start(item, e):
         },
         party=machine.party_of(),
     )
-    machine.begin_turn(t, 'system')
+    machine.begin_turn(t, 'system', 'thread')
     e.update(task=k, title=f['title'], url=f['url'], rereview=rereview, began=time.time())
     _show()
     log('review started', pr_id, tid)

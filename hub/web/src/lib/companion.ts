@@ -1,7 +1,22 @@
-import type { CaseItem, Event, ItemState, Phase, Poll, Task } from '../api/types';
+import type { CaseItem, Event, ItemState, Phase, Poll, Route, RouteBy, Task } from '../api/types';
 import { clock, duration, plural } from './format';
 
 type Tone = 'info' | 'warn' | 'ok' | 'bad' | 'idle';
+
+/** Why a chat started in its project (companion/bot/projects.py BY). */
+export const ROUTE_BY: Record<RouteBy, string> = {
+  repo: "the PR's repository",
+  named: 'named in the ask',
+  channel: 'the channel',
+  thread: 'mentioned in the thread',
+  topic: 'by topic',
+  default: 'the default project',
+  checkout: 'a fresh checkout of the repository',
+  earlier: 'chosen before routes were recorded',
+};
+
+/** "netzero-platform/apps/node-api · named in the ask" */
+export const routeLine = (r: Route) => `${r.project.replace(/^\/workspace\//, '')} · ${ROUTE_BY[r.by]}`;
 
 /** Where a task stands (companion/bot/machine.py), as a pill. */
 export const PHASE_PILL: Record<Phase, [string, Tone]> = {

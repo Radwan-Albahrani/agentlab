@@ -2,16 +2,16 @@ import json
 import os
 
 from bot import ledger, machine, outbox, posts, prompts, slack, state
-from conftest import agent_sends, click
+from conftest import ROUTE, agent_sends, click
 
 
 def task_in(channel='C_TECH', thread='300.1', guest=None):
     t = state.new_task(
-        channel, thread, 'T1', 'logo', f'{channel}-{thread}', thread, None, party=machine.party_of(guest)
+        channel, thread, 'T1', 'logo', f'{channel}-{thread}', thread, None, ROUTE, party=machine.party_of(guest)
     )
     if guest:
         machine.open_case(t, 'D_OWNER', '900.1', 'own')
-    machine.begin_turn(t, 'colleague' if guest else 'owner')
+    machine.begin_turn(t, 'colleague' if guest else 'owner', 'thread')
     os.makedirs(os.path.join(outbox.OUTBOX, t['outbox']), exist_ok=True)
     return t
 

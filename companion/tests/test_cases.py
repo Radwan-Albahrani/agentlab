@@ -6,7 +6,7 @@ import os
 
 import pytest
 from bot import jobs, ledger, machine, routing, slack, state, t3, tasks
-from conftest import OWNER, agent_sends, click, receipts
+from conftest import OWNER, ROUTE, agent_sends, click, receipts, set_settings
 
 SALAH_DM = 'D_U_SALAH'  # Salah's DM with the bot
 
@@ -86,7 +86,7 @@ def test_the_colleague_hears_only_what_the_agent_sends_and_its_final_message_is_
     assert 'Nothing was sent' not in case_thread
     assert kinds(t) == [('in', '', 'received'), ('message', 'colleague', 'sent'), ('final', 'case', 'sent')]
     assert t['turn'] | {'at': 0, 'ended': 0} == {
-        'n': 1, 'by': 'colleague', 'state': 'ended', 'outcome': 'answered', 'at': 0, 'ended': 0
+        'n': 1, 'by': 'colleague', 'place': 'thread', 'state': 'ended', 'outcome': 'answered', 'at': 0, 'ended': 0
     }  # fmt: skip
     assert t['phase'] == 'answered'
 
@@ -162,7 +162,7 @@ def test_a_colleague_writing_while_the_owner_talks_waits_its_turn(case, fresh_bo
         False,
     )  # fmt: skip
     n = len(sent)
-    tasks.follow_up(t, 'the staging log is attached now', None, '92.1', 'U_SALAH')
+    tasks.follow_up(t, 'the staging log is attached now', None, '92.1', 'thread', 'U_SALAH')
     assert len(sent) == n and t['queue'][0]['text'] == 'the staging log is attached now'
     assert 'the staging log is attached now' in in_case(fresh_bot, t)  # the owner sees it at once
     finish(t, monkeypatch, 'Holding.')  # the owner's turn ends: Salah's message goes to the agent now, as his turn
@@ -223,11 +223,13 @@ def test_the_agents_question_comes_to_the_owner_and_their_reply_answers_it(case,
 
 def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_shared_case(monkeypatch, t3_quiet, fresh_bot):
     monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
-    t = state.new_task('C_TECH', '80.1', 'T_REV', 'Review #6257', 'rev-box', '80.1', None, party=machine.party_of())
+    t = state.new_task(
+        'C_TECH', '80.1', 'T_REV', 'Review #6257', 'rev-box', '80.1', None, ROUTE, party=machine.party_of()
+    )
     t['audit'] = tasks.audit('U_SALAH', 'in #tech')
-    machine.begin_turn(t, 'system')
+    machine.begin_turn(t, 'system', 'thread')
     machine.end_turn(t, 'answered')
-    tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'U_SALAH')
+    tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'thread', 'U_SALAH')
     assert t['party'] == {'kind': 'colleague', 'user': 'U_SALAH'} and t['case']['mode'] == 'shared'
     assert 'migration check' in in_case(fresh_bot, t)
     tasks.reply(t, 'The migration drops a column still read by the map.')
@@ -237,11 +239,11 @@ def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_shared_case(monk
 
 def test_the_owners_own_task_keeps_no_case(monkeypatch, t3_quiet, fresh_bot):
     monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
-    t = state.new_task('C_TECH', '82.1', 'T_OWN', 'logo', 'own-box', '82.1', None, party=machine.party_of())
+    t = state.new_task('C_TECH', '82.1', 'T_OWN', 'logo', 'own-box', '82.1', None, ROUTE, party=machine.party_of())
     t['audit'] = tasks.audit(OWNER, 'in #tech')
-    machine.begin_turn(t, 'owner')
+    machine.begin_turn(t, 'owner', 'thread')
     machine.end_turn(t, 'answered')
-    tasks.follow_up(t, 'make it blue too', None, '83.1', 'U_SALAH')
+    tasks.follow_up(t, 'make it blue too', None, '83.1', 'thread', 'U_SALAH')
     assert 'case' not in t and t['party']['kind'] == 'owner'
 
 
@@ -249,7 +251,7 @@ def test_side_questions_are_answered_on_the_side_and_start_no_turn(case, fresh_b
     t, sent = case
     finish(t, monkeypatch, 'Done.')
     n, turn = len(sent), dict(t['turn'])
-    tasks.follow_up(t, '/btw what is it doing?', None, '94.1', 'U_SALAH')
+    tasks.follow_up(t, '/btw what is it doing?', None, '94.1', 'thread', 'U_SALAH')
     assert len(sent) == n and t['turn'] == turn  # the chat was not messaged; no new turn
     assert 'It is checking the stack.' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
     side = ledger.items(t)[-1]
@@ -270,7 +272,7 @@ def test_moves_the_state_machine_does_not_allow_are_bugs_not_states(case):
     with pytest.raises(ledger.IllegalMoveError):
         ledger.move(t, it, 'awaiting_owner')
     with pytest.raises(machine.IllegalStateError):
-        machine.begin_turn(t, 'owner')  # the colleague's turn is still running
+        machine.begin_turn(t, 'owner', 'thread')  # the colleague's turn is still running
     with pytest.raises(machine.IllegalStateError):
         machine.open_case(t, 'D_OWNER', '1.0', 'own')  # it has one
 
@@ -289,7 +291,7 @@ def test_a_task_saved_before_these_states_is_converted_once(fresh_bot):
     assert old['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'head': 'own', 'mode': 'private', 'md': 'head'}
     assert old['turn']['state'] == 'ended' and old['turn']['outcome'] == 'asked'
     assert kinds(old) == [('message', 'channel', 'sent'), ('approval', '', 'awaiting_owner')]
-    assert old['phase'] == 'waiting_owner' and old['status_ts'] is None
+    assert old['phase'] == 'waiting_owner' and old['line'] is None
     assert not any(k in old for k in machine.OLD)
     assert not fresh_bot.messages  # converted, not shown again
     click_on = ledger.on_card(old, '71.1')
@@ -304,3 +306,66 @@ def test_an_old_record_the_conversion_does_not_understand_keeps_its_task(fresh_b
     machine.prepare_all([odd])
     assert odd['party']['kind'] == 'owner' and machine.running(odd) and odd['items'] == []
     assert 'post_draft' not in odd and 'active' not in odd
+
+
+def test_the_owner_asking_in_the_colleagues_thread_is_answered_in_that_thread(case, fresh_bot):
+    """Each message is answered where it was written: the owner's word in Salah's thread is answered there, not in
+    the owner's DM, and is in the case like everyone's."""
+    t, sent = case
+    tasks.follow_up(t, '<@BCOMPANION> bro why is there n+1', None, '60.3', 'thread')
+    assert (t['turn']['by'], t['turn']['place'], machine.final_goes_to(t)) == ('owner', 'thread', 'thread')
+    assert 'your final message is posted there, so Salah reads it' in sent[-1]
+    fresh_bot.messages.clear()
+    tasks.follow_up(t, '<@BCOMPANION> updates?', None, '60.4', 'thread')
+    side = [m for m in posted(fresh_bot, SALAH_DM, '60.1') if 'It is checking the stack.' in text_of(m)]
+    assert side and 'Side answer' in text_of(side)
+    assert not any('Side answer' in text_of(m) for m in posted(fresh_bot, 'D_OWNER'))
+    owners = [i for i in ledger.items(t) if i['kind'] == 'in' and i.get('by') == OWNER]
+    assert [i['text'] for i in owners] == ['bro why is there n+1', 'updates?']
+    assert ledger.items(t)[-1]['to'] == 'colleague' and ledger.items(t)[-1]['side']
+
+
+def test_the_owner_asking_privately_is_answered_privately(case, fresh_bot):
+    t, _ = case
+    tasks.follow_up(t, 'status?', None, '61.5', 'case')
+    assert any('It is checking the stack.' in text_of(m) for m in posted(fresh_bot, 'D_OWNER', t['case']['ts']))
+    assert not any('It is checking the stack.' in text_of(m) for m in posted(fresh_bot, SALAH_DM))
+
+
+def test_the_thinking_line_is_edited_where_it_was_posted_and_follows_the_turn(case, fresh_bot, monkeypatch):
+    t, _ = case
+    assert t['line']['ch'] == SALAH_DM
+    old = t['line']['ts']
+    tasks.follow_up(t, 'look at the logs first', None, '61.6', 'case')  # the owner, privately, mid-turn
+    assert t['line']['ch'] == 'D_OWNER' and any(u['channel'] == SALAH_DM and u['ts'] == old for u in fresh_bot.updates)
+    fresh_bot.updates.clear()
+    monkeypatch.setattr(t3, 'snapshot', snapshot('running', 'Reading the logs', running=True))
+    monkeypatch.setattr(tasks, 'STATUS_EVERY', 0)
+    tasks.tick(t)
+    assert fresh_bot.updates and all(u['channel'] == 'D_OWNER' for u in fresh_bot.updates)
+
+
+def test_a_running_line_saved_before_lines_knew_their_place_is_found_in_slack(case, fresh_bot, monkeypatch):
+    t, _ = case
+    line = t.pop('line')
+    t['status_ts'] = line['ts']
+    monkeypatch.setattr(tasks, '_has', lambda ch, tts, ts: ch == SALAH_DM)
+    tasks.adopt_lines([t])
+    assert t['line']['ch'] == SALAH_DM and t['line']['ts'] == line['ts'] and 'status_ts' not in t
+
+
+@pytest.mark.usefixtures('case')
+def test_an_edit_that_adds_the_tag_is_a_message_to_the_companion(monkeypatch):
+    set_settings({'access': ['U_SALAH']})
+    calls = []
+    monkeypatch.setattr(tasks, 'follow_up', lambda task, text, files, ts, place, by=None: calls.append((ts, by)))
+    msg = {'ts': '60.7', 'thread_ts': '60.1', 'user': 'U_SALAH'}
+    edit = {'channel': SALAH_DM, 'subtype': 'message_changed', 'channel_type': 'im'}
+    routing.route(
+        dict(edit, message=dict(msg, text='updates? (typo fixed)'), previous_message=dict(msg, text='x')), False
+    )
+    assert calls == []  # an edit without a new tag changes nothing
+    tagged = dict(edit, message=dict(msg, text='<@BCOMPANION> updates?'), previous_message=dict(msg, text='updates?'))
+    routing.route(tagged, False)
+    routing.route(tagged, False)  # Slack may send it twice
+    assert calls == [('60.7', 'U_SALAH')]

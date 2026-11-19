@@ -14,6 +14,7 @@ import {
   filterTasks,
   pollSummary,
   resumesLabel,
+  routeLine,
   slackParts,
   slackPlain,
   taskAge,
@@ -39,6 +40,7 @@ const task = (over: Partial<Task>): Task => ({
   phase: 'answered',
   caseLink: '',
   items: [],
+  route: null,
   ...over,
 });
 
@@ -186,6 +188,16 @@ describe('pollSummary', () => {
     expect(pollSummary(poll([2, 2]))).toMatch(/^Leading: O0, O1 · 2 votes each · /);
     expect(pollSummary(poll([1, 3], false))).toMatch(/^Winner: O1 · 3 votes · 3 people voted · closed /);
     expect(pollSummary(poll([0, 0]))).toMatch(/^No votes yet · closes /);
+  });
+});
+
+describe('where a chat started', () => {
+  it('names the project under the workspace and why it was chosen', () => {
+    const r = { project: '/workspace/netzero-platform/apps/node-api', by: 'named' as const, why: 'the ask names "node-api"' };
+    expect(routeLine(r)).toBe('netzero-platform/apps/node-api · named in the ask');
+    expect(routeLine({ ...r, project: '/workspace/netzero-platform', by: 'default' })).toBe(
+      'netzero-platform · the default project',
+    );
   });
 });
 
