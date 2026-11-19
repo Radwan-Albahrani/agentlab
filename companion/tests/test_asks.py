@@ -202,7 +202,7 @@ def test_only_the_owner_can_close_a_poll_early(poll):
 def tagged(t3_quiet, monkeypatch):
     told = []
     monkeypatch.setattr(t3, 'start_thread', lambda project, title, message: told.append(message) or ('T_TAG', ''))
-    monkeypatch.setattr(projects, 'pick', lambda ask, convo, chan: ('/workspace/x', 'test'))
+    monkeypatch.setattr(projects, '_profiles', dict)
     tasks.start('C_RANDOM', '70.1', '70.2', '<@BCOMPANION> make a poll ends at 2pm')
     task = state.state['tasks'][state.key('C_RANDOM', '70.1')]
     box = os.path.join(outbox.OUTBOX, task['outbox'])
@@ -410,8 +410,8 @@ def test_a_later_message_about_a_poll_brings_the_poll_instructions(poll, tagged,
     task, _, _ = tagged
     sent = []
     monkeypatch.setattr(t3, 'send', lambda tid, msg: sent.append(msg) or {'ok': True})
-    tasks.follow_up(task, '<@BCOMPANION> add a vote from Ali on Fatto', None, '70.9')
-    tasks.follow_up(task, '<@BCOMPANION> thanks!', None, '71.0')
+    tasks.follow_up(task, '<@BCOMPANION> add a vote from Ali on Fatto', None, '70.9', 'thread')
+    tasks.follow_up(task, '<@BCOMPANION> thanks!', None, '71.0', 'thread')
     assert '"type": "poll_change"' in sent[0] and p['id'] in sent[0]
     assert 'poll_change' not in sent[1]
 

@@ -578,6 +578,14 @@ class Screens(unittest.TestCase):
         self.assertTrue(all('by' not in i for t in tasks.values() for i in t['items']))  # no Slack ids on the page
         self.assertEqual((tasks['t3']['party'], tasks['t4']['party'], tasks['t4']['items']), ('errand', 'owner', []))
 
+    def test_each_task_says_where_its_chat_started_and_why(self):
+        tasks = {t['id']: t for t in screens.companion('scout')['tasks']}
+        self.assertEqual(
+            tasks['t2']['route'], {'project': '/workspace/app/apps/api', 'by': 'named', 'why': 'the ask names "api"'}
+        )
+        self.assertIsNone(tasks['t3']['route'])  # a companion too old to say
+        self.assertTrue(all(k not in t for t in tasks.values() for k in ('project', 'route_by', 'route_why')))
+
     def test_pulls_and_polls(self):
         c = screens.companion('scout')
         self.assertEqual(c['pulls']['items'][0]['id'], 'example/app#12')

@@ -25,6 +25,37 @@ from .when import say
 THINKING = ':seedling: thinking…'
 
 
+def post_line(ch, tts, note):
+    """A new thinking line: {ch, ts, since}, or None when Slack refused it. It is always edited where it was posted,
+    whoever's turn it is now."""
+    ts = slack.note_only(ch, tts, note)
+    return {'ch': ch, 'ts': ts, 'since': time.time()} if ts else None
+
+
+def set_line(task, text, note):
+    slack.update(task['line']['ch'], task['line']['ts'], text, note=note)
+
+
+def adopt_lines(tasks):
+    """After a restart: a running turn's line saved before lines knew their place is looked up in Slack (its thread or
+    the case) and kept; one in neither is dropped and a new one is posted on the next beat."""
+    for t in tasks:
+        if 'status_ts' not in t:
+            continue
+        ts, since = t.pop('status_ts'), t.pop('line_start', 0) or time.time()
+        places = [(t['channel'], t['thread_ts']), *([cases.of(t)] if t.get('case') else [])]
+        t['line'] = next(({'ch': ch, 'ts': ts, 'since': since} for ch, tts in places if ts and _has(ch, tts, ts)), None)
+        log('line of', key_of(t), 'adopted in', t['line'] and t['line']['ch'])
+
+
+def _has(ch, tts, ts):
+    try:
+        msgs = slack.app.client.conversations_replies(channel=ch, ts=tts, oldest=ts, latest=ts, inclusive=True)
+        return any(m['ts'] == ts for m in msgs['messages'])
+    except Exception:
+        return False
+
+
 def quiet(task):
     """A PR review: its progress shows on the batch card (reviews.py), so its thread gets only questions."""
     return bool(review_of(task))
@@ -66,8 +97,8 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
     else:
         where = 'a DM with you' if channel.startswith('D') else f'Slack channel {channel}, thread {thread_ts}'
     chan = slack.channel_name(channel)
-    project, why = projects.pick(ask, '\n'.join(lines), chan)
-    log('project', project, '-', why)
+    where_to = projects.route('task', ask, '\n'.join(lines), chan)
+    log('route', where_to)
     title = first_sentence(ask, 70).rstrip('.')
     here = '' if channel.startswith('D') else channel
     member = [c for c in slack.channels() if c['member']]
@@ -90,13 +121,13 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
         approved,
         history,
     )
-    tid, err = t3.start_thread(project, title, prompt)
+    tid, err = t3.start_thread(where_to['project'], title, prompt)
     if not tid:
         slack.post(channel, thread_ts, f":warning: I couldn't start the chat in {AGENT}: {err}")
         slack.react(channel, trigger_ts, 'eyes', remove=True)
         COMP.event('failed', f'Could not start: {title}', task=k, detail=err, ok=False)
         return
-    status = slack.note_only(channel, thread_ts, THINKING)
+    status = post_line(channel, thread_ts, THINKING)
     if elsewhere:
         via = via or f'in {elsewhere[0]}'
     how = audit(
@@ -105,9 +136,9 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
         OWNER if approved else None,
     )
     task = new_task(
-        channel, thread_ts, tid, title, folder, trigger_ts, status, project, audit=how, party=machine.party_of(guest)
+        channel, thread_ts, tid, title, folder, trigger_ts, status, where_to, audit=how, party=machine.party_of(guest)
     )
-    machine.begin_turn(task, 'colleague' if machine.is_colleague(task) else 'owner')
+    machine.begin_turn(task, 'colleague' if machine.is_colleague(task) else 'owner', 'thread')
     if machine.is_colleague(task):
         cases.open_case(task, ask, f'in {elsewhere[0]}' if elsewhere else how['via'], card=approved or None)
     save()
@@ -154,23 +185,21 @@ def is_side_question(msg):
     return is_status_ask(msg) or bool(BTW.match(msg) and BTW.sub('', msg).strip())
 
 
-def side_reply(task, question, ts, at=None, lead=''):
-    """Answer a side question with the quick model from the chat's record, without messaging the chat; `at`: where
-    to post it (default: where the task talks); `lead`: a line before the answer. Falls back to the plain status
-    summary (to just `lead`, when there is one)."""
-    ch, tts = at or where(task)
+def side_reply(task, question, ts, place, lead=''):
+    """Answer a side question with the quick model from the chat's record, without messaging the chat, at `place`
+    (machine.PLACES): where it was asked. `lead`: a line before the answer. Falls back to the plain status summary
+    (to just `lead`, when there is one)."""
+    ch, tts = at(task, place)
     question = BTW.sub('', question).strip() or question
     res = t3.triage(prompts.side_answer(question, t3.digest(task['thread'])))
     text = str(res.get('result') or '').strip() if res.get('ok') else ''
     if not text and not lead:
-        status_reply(task, ts)
+        status_reply(task, ts, place)
         return
     text = f'{lead} Right now: {text}' if lead and text else lead or text
     slack.post(ch, tts, first_sentence(no_emoji(text), 150), md=text, note="Side answer · the agent wasn't interrupted")
     if task.get('case'):  # recorded for the case; it went where it was asked, not through the outbox
-        to = (
-            'colleague' if (ch, tts) == (task['channel'], task['thread_ts']) and machine.is_colleague(task) else 'owner'
-        )
+        to = 'colleague' if place == 'thread' and machine.is_colleague(task) else 'owner'
         ledger.add(
             task, 'message', 'sent', to=to, label=cases.who(task) if to == 'colleague' else '', text=text, side=True
         )
@@ -179,9 +208,13 @@ def side_reply(task, question, ts, at=None, lead=''):
 
 
 def where(task):
-    """(channel, thread) the turn under way shows its progress in: the case thread on the owner's turn in a case, else
-    the task's own thread."""
-    return cases.of(task) if machine.owners_turn(task) else (task['channel'], task['thread_ts'])
+    """(channel, thread) the turn under way shows its progress in: where its message was written (machine.place)."""
+    return at(task, machine.place(task))
+
+
+def at(task, place):
+    """(channel, thread) of a place ('thread' | 'case', machine.PLACES)."""
+    return cases.of(task) if place == 'case' else (task['channel'], task['thread_ts'])
 
 
 def answer_place(task):
@@ -189,9 +222,10 @@ def answer_place(task):
     return cases.of(task) if machine.final_goes_to(task) == 'case' else (task['channel'], task['thread_ts'])
 
 
-def follow_up(task, text, files, ts, by=None, decision=False):
-    """A new message for the task's chat. by: who wrote it (None: the owner); decision: the owner's Approve / Reject
-    passed on to the agent, not a message anyone typed. Side questions are answered on the side and start no turn."""
+def follow_up(task, text, files, ts, place, by=None, decision=False):
+    """A new message for the task's chat, written at `place` (machine.PLACES): it is answered there. by: who wrote it
+    (None: the owner); decision: the owner's Approve / Reject passed on to the agent, not a message anyone typed.
+    Side questions are answered on the side, where they were asked, and start no turn."""
     ch = task['channel']
     msg = slack.ask(text).strip()
     m = re.fullmatch(r'\s*([1-9])\s*[.)]?\s*', msg)
@@ -204,10 +238,10 @@ def follow_up(task, text, files, ts, by=None, decision=False):
         started_by = (task.get('audit') or {}).get('by')
         if started_by and started_by != OWNER:  # e.g. a review a colleague asked for: they talk to the companion now
             cases.open_late(task, by, text)
-    if other and task.get('case'):
+    if task.get('case') and place == 'thread' and not decision:  # everyone's words in the thread, the owner's too
         cases.heard(task, by, text, files or ())
     if is_side_question(msg) and not files and not decision and not picked:
-        side_reply(task, msg, ts)
+        side_reply(task, msg, ts, place)
         return
     colleague = other and machine.is_colleague(task) and by == machine.party(task)['user']
     if colleague and machine.owners_turn(task):  # the owner is talking to the agent: theirs comes next
@@ -219,6 +253,8 @@ def follow_up(task, text, files, ts, by=None, decision=False):
         msg += prompts.follow_up_reminder(slack.name(OWNER))
     if colleague and machine.case_mode(task) == 'private':
         msg += prompts.colleague_turn(slack.name(by), slack.name(OWNER))
+    if not other and not decision and place == 'thread' and machine.case_mode(task) == 'private':
+        msg += prompts.owner_in_thread(slack.name(OWNER), cases.who(task))
     folder = f'{ch}-{task["thread_ts"].replace(".", "")}'
     paths = slack.download(files, folder)
     between, more = ([], []) if quiet(task) else since_last(task, ts, folder)  # a batch thread mixes reviews
@@ -250,20 +286,27 @@ def follow_up(task, text, files, ts, by=None, decision=False):
         slack.note_only(*errands.approver(task), ':inbox_tray: The agent gets your decision when its current step ends')
     elif queued:
         lead = ':inbox_tray: Queued: the agent reads this when its current step ends.'
-        jobs.run_later(side_reply, task, 'What is it doing right now?', ts, None, lead)
+        jobs.run_later(side_reply, task, 'What is it doing right now?', ts, place, lead)
     turn_by = 'decision' if decision else 'colleague' if other else 'owner'
+    turn_place = 'thread' if decision else place  # a decision is answered where the work is (or privately: machine)
     now = now_iso()
     with lock:
         if machine.running(task):
-            machine.retake_turn(task, turn_by)
+            machine.retake_turn(task, turn_by, turn_place)
         else:
-            machine.begin_turn(task, turn_by)
-            task.update(burst_start=now, step_from=now, status_ts=None, ended='')
+            machine.begin_turn(task, turn_by, turn_place)
+            task.update(burst_start=now, step_from=now, line=None, ended='')
         task.update(
             trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, question=False, last_status='', last_status_at=0
         )
-        if not task.get('status_ts') and not quiet(task):
-            task.update(status_ts=slack.note_only(*where(task), THINKING), line_start=time.time())
+        line = task.get('line')
+        if line and line['ch'] != where(task)[0]:  # the turn moved: its progress follows it
+            set_line(
+                task, 'Continued where the newer message was written', ':seedling: continued below a newer message'
+            )
+            task['line'] = None
+        if not task.get('line') and not quiet(task):
+            task['line'] = post_line(*where(task), THINKING)
     save()
 
 
@@ -280,8 +323,8 @@ def since_last(task, ts, folder):
     return slack.transcript([m for m in msgs if seen < m['ts'] < ts], folder)
 
 
-def status_reply(task, ts):
-    """Answer "status?" from T3's record without messaging the busy chat."""
+def status_reply(task, ts, place):
+    """Answer "status?" from T3's record without messaging the busy chat, at `place`: where it was asked."""
     tid = task['thread']
     s = t3.snapshot(tid, task.get('burst_start') or '')
     run = t3.open_run_since(tid)
@@ -298,8 +341,7 @@ def status_reply(task, ts):
     if s['requests']:
         out.append(":question: It's waiting on your answer to a question above.")
     slack.post(
-        task['channel'],
-        task['thread_ts'],
+        *at(task, place),
         f'Still working{since}',
         md='\n\n'.join(out),
         note="Status from T3 · the agent wasn't interrupted",
@@ -334,8 +376,8 @@ def working_line(task, s, now):
 
 def _close_line(task, end):
     """Close the thinking line where the turn showed its progress."""
-    if task.get('status_ts'):
-        elapsed = time.time() - (task.get('line_start') or parse_iso(task.get('burst_start')))
+    if task.get('line'):
+        elapsed = time.time() - task['line']['since']
         n = task.get('workers_said', 0)
         bits = [
             'Picked this up',
@@ -344,8 +386,8 @@ def _close_line(task, end):
             end,
         ]
         line = ':seedling: ' + ' · '.join(b for b in bits if b)
-        slack.update(where(task)[0], task['status_ts'], no_emoji(line), note=line)
-    task['status_ts'] = None
+        set_line(task, no_emoji(line), line)
+    task['line'] = None
 
 
 def _sent_to_colleague(task):
@@ -436,10 +478,10 @@ def retry_transient(task, s, now):
     wait = RETRY_WAITS[n - 1]
     task['retry_at'] = now + wait
     line = f':hourglass_flowing_sand: The model is busy, so I\'ll say "continue" in {wait} s ({n}/{len(RETRY_WAITS)})'
-    if task.get('status_ts'):
-        slack.update(where(task)[0], task['status_ts'], 'Retrying soon', note=line)
+    if task.get('line'):
+        set_line(task, 'Retrying soon', line)
     elif not quiet(task):
-        task['status_ts'] = slack.note_only(*where(task), line)
+        task['line'] = post_line(*where(task), line)
     return True
 
 
@@ -474,10 +516,10 @@ def pause(task, resumes_at, run, now):
     task.update(retry_at=None, retries=0)
     machine.settle(task)
     line = paused_line(resumes_at)
-    if task.get('status_ts') and not quiet(task):
-        slack.update(where(task)[0], task['status_ts'], 'Paused for the usage limit', note=line)
+    if task.get('line') and not quiet(task):
+        set_line(task, 'Paused for the usage limit', line)
     elif not quiet(task):
-        task['status_ts'] = slack.note_only(*where(task), line)
+        task['line'] = post_line(*where(task), line)
     if first:
         log('paused for the usage limit', task['thread'], resumes_at)
         COMP.event(
@@ -524,14 +566,14 @@ def resume_if_running(task):
     if time.time() - parse_iso(task.get('start')) > 3 * 86400 or not t3.has_open_run(task['thread']):
         return False
     now = now_iso()
-    machine.begin_turn(task, 't3')  # nobody in Slack started it: the owner, in T3 directly
+    machine.begin_turn(task, 't3', 'case' if task.get('case') else 'thread')  # the owner, in T3: privately
     task.update(
         burst_start=now,
         step_from=now,
         quiet_since=0,
         last_status='',
         last_status_at=0,
-        status_ts=None,
+        line=None,
         ended='',
     )
     log('following a turn started outside Slack', task['thread'])
@@ -561,11 +603,11 @@ def tick(task):
         unpause(task)
         if quiet(task):
             return
-        if not task.get('status_ts'):
-            task.update(status_ts=slack.note_only(ch, tts, THINKING), line_start=time.time())
+        if not task.get('line'):
+            task['line'] = post_line(ch, tts, THINKING)
         line = working_line(task, s, now)
         if line != task['last_status'] and now - task['last_status_at'] >= STATUS_EVERY:
-            slack.update(ch, task['status_ts'], 'thinking…', note=line)
+            set_line(task, 'thinking…', line)
             task.update(last_status=line, last_status_at=now)
         return
     if not task['quiet_since']:
@@ -676,9 +718,7 @@ def _finish_turn(task, s):
     task['retries'] = 0
     final = task.get('latest', '')
     took = parse_iso(s['last_done']) - parse_iso(task['burst_start']) if s['last_done'] else 0
-    foot = ' · '.join(
-        x for x in (AGENT, (task.get('project') or '').rsplit('/', 1)[-1], took >= 60 and mins(took)) if x
-    )
+    foot = ' · '.join(x for x in (AGENT, task['route']['project'].rsplit('/', 1)[-1], took >= 60 and mins(took)) if x)
     status = s['last_status']
     no_action = NO_ACTION.match(final or '') if machine.party(task)['kind'] == 'errand' else None
     no_reply = NO_REPLY.match(final or '')
@@ -723,4 +763,4 @@ def _finish_turn(task, s):
     if waiting and waiting['by'] == OWNER:
         jobs.run_later(cases.ask, task, waiting['text'], waiting['files'], waiting['ts'])
     elif waiting:
-        jobs.run_later(follow_up, task, waiting['text'], waiting['files'], waiting['ts'], waiting['by'])
+        jobs.run_later(follow_up, task, waiting['text'], waiting['files'], waiting['ts'], 'thread', waiting['by'])

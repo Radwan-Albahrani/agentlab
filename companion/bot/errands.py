@@ -1,7 +1,7 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
-from . import cases, gate, jobs, ledger, machine, prompts, slack, t3, tasks
-from .config import COMP, NAME, OWNER, default_project, log, mode
+from . import cases, gate, jobs, ledger, machine, projects, prompts, slack, t3, tasks
+from .config import COMP, NAME, OWNER, log, mode
 from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
 from .when import say
@@ -46,17 +46,18 @@ def start(p, what=''):
     files = slack.download(p['files'], folder)
     owner = slack.name(OWNER)
     title = f'{who}: {first_sentence(asked, 60)}'
+    where_to = projects.route('errand')
     tid, err = t3.start_thread(
-        default_project(), title, prompts.errand(who, how.replace('you', owner), owner, asked, lines, files, folder)
+        where_to['project'], title, prompts.errand(who, how.replace('you', owner), owner, asked, lines, files, folder)
     )
     if not tid:
         COMP.event('failed', f'Could not start errand for {who}', detail=err, ok=False)
         slack.post(dm, head, f":warning: I couldn't start on it: {err}")
         return
-    track(p, dm, head, tid, title, folder, link)
+    track(p, dm, head, tid, title, folder, link, where_to)
 
 
-def track(p, dm, head, tid, title, folder, link):
+def track(p, dm, head, tid, title, folder, link, where_to):
     """Register an errand's chat as a task in the owner's DM thread."""
     task = new_task(
         dm,
@@ -65,7 +66,8 @@ def track(p, dm, head, tid, title, folder, link):
         title,
         folder,
         head,
-        slack.note_only(dm, head, tasks.THINKING),
+        tasks.post_line(dm, head, tasks.THINKING),
+        where_to,
         party=machine.party_of(requester=p['user']),
         audit=tasks.audit(
             OWNER if p.get('tagged') else p['user'],
@@ -78,7 +80,7 @@ def track(p, dm, head, tid, title, folder, link):
         source_thread=p['thread_ts'] or (None if p['im'] else p['ts']),
     )
     machine.open_case(task, dm, head, 'errand')  # the errand's thread is the owner's: it is the case
-    machine.begin_turn(task, 'colleague')
+    machine.begin_turn(task, 'colleague', 'thread')
     cases.heard(task, p['user'], '\n'.join(p['texts']), p.get('files'), first=True)
     log('errand started for', p['user'], tid)
     COMP.event('started', title, task=key(dm, head), detail=f'errand for {slack.name(p["user"])}')
@@ -219,7 +221,7 @@ def decide(task, k, approved, card):
         close_head(task, ':x: Rejected · nothing changed', 'x')
     COMP.event('approved' if approved else 'rejected', f'You {it["state"]}: {it["action"]}'[:200], task=k)
     save()
-    jobs.run_later(tasks.follow_up, task, msg, None, card, None, True)
+    jobs.run_later(tasks.follow_up, task, msg, None, card, 'thread', None, True)
 
 
 def after_turn(task, completed):

@@ -2,7 +2,6 @@
 
 import json
 import threading
-import time
 from datetime import UTC, datetime
 
 from .config import COMP, default_project
@@ -78,17 +77,18 @@ def parse_iso(iso):
     return datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp() if iso else 0.0
 
 
-def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, project=None, **extra):
+def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, line, route, **extra):
+    """line: its thinking line (tasks.post_line) or None; route: where its chat started and why (projects.route)."""
     now = now_iso()
     t = {
         'thread': thread,
         'title': title,
-        'project': project or default_project(),
+        'route': route,
         'channel': channel,
         'thread_ts': thread_ts,
         'outbox': outbox,
         'trigger_ts': trigger_ts,
-        'status_ts': status_ts,
+        'line': line,
         'start': now,
         'burst_start': now,
         'seen': now,
@@ -100,7 +100,6 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
         'last_status_at': 0,
         'quiet_since': 0,
         'options': {},
-        'line_start': time.time(),
         **extra,
     }
     with lock:
@@ -112,4 +111,10 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, status_ts, p
 def prepare_for_start():
     """Normalise loaded tasks after a restart (their states: machine.prepare_all)."""
     for t in state['tasks'].values():
-        t.setdefault('project', default_project())
+        if 'route' not in t:  # saved before routes were recorded (projects.BY 'earlier'): its chat stays where it is
+            t['route'] = {
+                'project': t.get('project') or default_project(),
+                'by': 'earlier',
+                'why': 'started before routes',
+            }
+        t.pop('project', None)

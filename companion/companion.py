@@ -3,7 +3,9 @@
 companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
   events(id, at, kind, title, task, "to", detail, ok)   append-only
   tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated,
-        resumes_at, started_by, via, approved_by, party, phase, case_link) upserted, never deleted.
+        resumes_at, started_by, via, approved_by, party, phase, case_link, project, route_by, route_why) upserted,
+        never deleted. project: the T3 project its chat started in; route_by: why (bot/projects.py BY: repo | named |
+        channel | thread | topic | default | checkout | earlier); route_why: the evidence, for people.
     kind: task | errand | review. party: owner | colleague | errand (who the conversation is with).
     phase: the task's state machine (bot/machine.py): working | waiting_owner | waiting_answer | paused | answered |
       nothing_to_do | stopped | failed. case_link: the owner's case thread in Slack ('' without a case).
@@ -61,6 +63,9 @@ CARD = (
     'party',
     'phase',
     'case_link',
+    'project',
+    'route_by',
+    'route_why',
 )
 ITEM = ('id', 'task', 'seq', 'kind', 'state', 'at', 'data')
 SCHEMA_SQL = f"""
@@ -93,7 +98,7 @@ class Companion:
         self.db.execute('pragma journal_mode=wal')
         self.db.executescript(SCHEMA_SQL)
         have = {r[1] for r in self.db.execute('pragma table_info(tasks)')}
-        for column in ('resumes_at', 'started_by', 'via', 'approved_by', 'party', 'phase', 'case_link'):  # older db
+        for column in CARD[CARD.index('resumes_at') :]:  # older db
             if column not in have:
                 self.db.execute(f'alter table tasks add column {column} text')
         self._write('settings-schema.json', self.schema)

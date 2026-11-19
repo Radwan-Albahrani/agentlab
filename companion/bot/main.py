@@ -86,6 +86,7 @@ def run():
         os.makedirs(d, exist_ok=True)
     prepare_for_start()
     machine.prepare_all(list(state['tasks'].values()))
+    tasks.adopt_lines(list(state['tasks'].values()))
     polls.migrate()
     log(f'{NAME} for {AGENT}: owner {OWNER}, bridge {BRIDGE}, {len(state["tasks"])} known threads, mode {mode()}')
     me = slack.app.client.auth_test()  # also verifies the bot token

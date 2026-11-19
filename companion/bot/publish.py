@@ -75,6 +75,9 @@ def card(k, t):
         'party': p['kind'],
         'phase': phase,
         'case_link': slack.link(c['ch'], c['ts']) if c else '',
+        'project': t['route']['project'],
+        'route_by': t['route']['by'],
+        'route_why': t['route']['why'],
     }
 
 

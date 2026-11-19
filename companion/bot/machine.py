@@ -10,8 +10,13 @@ case   {ch, ts, head, mode}   where the owner follows a party's conversation (ne
                errand   the errand's own thread in the owner's DM (the task's thread is the case)
          mode  private  the colleague hears only what the agent sends them; its final message is the owner's
                shared   the agent answers in the thread the colleague is in (a review they asked for), copied here
-turn   {n, by, state, outcome, at, ended}
+turn   {n, by, place, state, outcome, at, ended}
          by       owner | colleague | decision | t3 (started in T3 directly) | system (a retry, a nudge)
+         place    where the message the agent is answering was written, so where it is answered:
+                    thread  the task's own thread (where the colleague, or the owner in public, wrote)
+                    case    the owner's case thread (the owner, privately)
+                  Its thinking line and side answers go there; so does its final message, except that a
+                  colleague's turn in a private case ends with the owner (final_goes_to).
          state    running -> ended
          outcome  answered | asked | silent | nothing_to_do | failed | stopped (set when it ends)
          A task is running exactly while its turn is; nothing else says so.
@@ -27,6 +32,7 @@ from .state import save
 PARTIES = ('owner', 'colleague', 'errand')
 HEADS = ('own', 'card', 'errand')
 MODES = ('private', 'shared')
+PLACES = ('thread', 'case')
 TURN_BY = ('owner', 'colleague', 'decision', 't3', 'system')
 OUTCOMES = ('answered', 'asked', 'silent', 'nothing_to_do', 'failed', 'stopped')
 PHASES = ('working', 'waiting_owner', 'waiting_answer', 'paused', 'answered', 'nothing_to_do', 'stopped', 'failed')
@@ -80,34 +86,49 @@ def final_goes_to(task):
     c = task.get('case') or {}
     if not c or c['head'] == 'errand':  # the owner's own thread (an errand's thread is in the owner's DM)
         return 'thread'
-    if c['mode'] == 'private':
-        return 'case'
-    return 'case' if turn(task).get('by') in ('owner', 't3') else 'thread'  # shared: the colleague reads the thread
+    if c['mode'] == 'private' and turn(task).get('by') in ('colleague', 'decision', 'system'):
+        return 'case'  # the colleague hears only what the agent sends them
+    return place(task)
 
 
 def turn(task):
     return task.get('turn') or {}
 
 
-def begin_turn(task, by):
-    """A new turn: whoever's message (or decision) the agent is now answering."""
-    if by not in TURN_BY:
-        raise IllegalStateError(f'turn by {by!r}')
+def begin_turn(task, by, place):
+    """A new turn: whoever's message (or decision) the agent is now answering, and where it was written."""
+    if by not in TURN_BY or place not in PLACES:
+        raise IllegalStateError(f'turn by {by!r} at {place!r}')
+    if place == 'case' and not task.get('case'):
+        raise IllegalStateError('no case to answer in')
     t = turn(task)
     if t.get('state') == 'running':
         raise IllegalStateError(f'turn {t["n"]} is still running')
-    task['turn'] = {'n': t.get('n', 0) + 1, 'by': by, 'state': 'running', 'outcome': '', 'at': time.time(), 'ended': 0}
+    task['turn'] = {
+        'n': t.get('n', 0) + 1,
+        'by': by,
+        'place': place,
+        'state': 'running',
+        'outcome': '',
+        'at': time.time(),
+        'ended': 0,
+    }
     settle(task)
 
 
-def retake_turn(task, by):
-    """The running turn is taken over (the owner's word in a case while the chat was idle but marked running)."""
-    if by not in TURN_BY:
-        raise IllegalStateError(f'turn by {by!r}')
+def place(task):
+    """Where the current (or last) turn is answered: 'thread' | 'case'."""
+    return turn(task).get('place') or 'thread'
+
+
+def retake_turn(task, by, place):
+    """The running turn is taken over by a new message (`by`, written at `place`): it is answered there now."""
+    if by not in TURN_BY or place not in PLACES:
+        raise IllegalStateError(f'turn by {by!r} at {place!r}')
     if turn(task).get('state') != 'running':
-        begin_turn(task, by)
+        begin_turn(task, by, place)
         return
-    task['turn']['by'] = by
+    task['turn'].update(by=by, place=place)
 
 
 def end_turn(task, outcome):
@@ -183,8 +204,11 @@ def prepare_all(tasks):
     for t in tasks:
         if 'turn' not in t:
             migrate(t)
+        if 'place' not in t['turn']:  # saved before turns had a place: where it was being answered then
+            t['turn']['place'] = 'case' if t['turn']['by'] in ('owner', 't3') and t.get('case') else 'thread'
         if not running(t):
-            t['status_ts'] = None
+            t['line'] = None
+            t.pop('status_ts', None), t.pop('line_start', None)  # an old line of a turn that ended: nothing live
         settle(t)
 
 
@@ -229,6 +253,7 @@ def migrate(task):
     task['turn'] = {
         'n': 1,
         'by': by,
+        'place': 'case' if by == 'owner' and task.get('case') else 'thread',
         'state': 'running' if live else 'ended',
         'outcome': '' if live else OLD_OUTCOMES.get(task.get('outcome') or '', 'answered'),
         'at': 0,

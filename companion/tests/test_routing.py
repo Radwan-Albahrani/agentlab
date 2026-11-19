@@ -14,7 +14,9 @@ def started(monkeypatch):
         calls.append(('task', ts, elsewhere) + ((guest,) if guest else ()))
 
     monkeypatch.setattr(tasks, 'start', start)
-    monkeypatch.setattr(tasks, 'follow_up', lambda task, text, files, ts, by=None: calls.append(('follow', ts, by)))
+    monkeypatch.setattr(
+        tasks, 'follow_up', lambda task, text, files, ts, place, by=None: calls.append(('follow', ts, by))
+    )
     return calls
 
 

@@ -41,13 +41,30 @@ def _bot_reads(ev):
     return slack.bot_in(ev['channel'])
 
 
+def tagged_by_edit(ev):
+    """An edit that adds the companion's tag to a message: the message as it is now, or None. Only the tag counts:
+    other edits change nothing already asked."""
+    if ev.get('subtype') != 'message_changed':
+        return None
+    new, old, tag = ev.get('message') or {}, ev.get('previous_message') or {}, f'<@{slack.bot_user()}>'
+    if new.get('bot_id') or tag not in (new.get('text') or '') or tag in (old.get('text') or ''):
+        return None
+    return dict(new, channel=ev['channel'], channel_type=ev.get('channel_type'))
+
+
 def route(ev, mentioned):
+    edited = tagged_by_edit(ev)
+    if edited:
+        log('tag added by an edit', ev['channel'], edited['ts'])
+        ev, mentioned, once = edited, True, edited['ts'] + ':tagged'
+    else:
+        once = ev.get('ts')
     if ev.get('bot_id') or ev.get('subtype') in IGNORED:
         return
     ch, ts, user = ev['channel'], ev['ts'], ev.get('user')
     in_dm, thr = ch.startswith('D'), ev.get('thread_ts')
     tts = thr or ts
-    if not _once(ts):
+    if not _once(once):
         return
     if ch == requests_channel() and inbox.route(ev, mentioned):
         return
@@ -86,17 +103,17 @@ def route(ev, mentioned):
             jobs.run_later(requests.guest_tagged, ev)
             return
         if task:
-            jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, user)
+            jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, 'thread', user)
         elif mentioned or not thr:
             jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''), None, user)
         return
     case = in_dm and thr and key(ch, thr) not in state['tasks'] and cases.at(ch, thr)
     if case and not ev.get('files') and tasks.is_side_question(slack.ask(ev.get('text', '')).strip()):
-        jobs.run_later(tasks.side_reply, case, slack.ask(ev.get('text', '')).strip(), ts, cases.of(case))
+        jobs.run_later(tasks.side_reply, case, slack.ask(ev.get('text', '')).strip(), ts, 'case')
         return
     if case and machine.running(case) and case.get('question'):  # the agent asked the owner there: the answer
         cases.heard(case, OWNER, ev.get('text', ''), ev.get('files'), private=True)
-        jobs.run_later(tasks.follow_up, case, ev.get('text', ''), ev.get('files'), ts)
+        jobs.run_later(tasks.follow_up, case, ev.get('text', ''), ev.get('files'), ts, 'case')
         return
     if case:  # the owner talking to the companion about a colleague's conversation: private
         jobs.run_later(cases.ask, case, ev.get('text', ''), ev.get('files'), ts)
@@ -116,7 +133,7 @@ def route(ev, mentioned):
     elif review:
         jobs.run_later(reviews.answer, review, ev.get('text', ''), ev.get('files'), ts)
     elif task and (mentioned or in_dm):
-        jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts)
+        jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, 'thread')
     elif mentioned and not in_dm and not slack.bot_in(ch):
         requests.await_invite(ev)
     elif (mentioned or (in_dm and not thr)) and not reviews.from_slack(ch, tts, ts, ev.get('text', '')):
