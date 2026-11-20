@@ -6,16 +6,17 @@ import time
 from . import facts, scheduler, spool
 from .peaks import Peaks
 from .settings import POLL_S, STALE_S
+from .spool import Job
 
 
 class Broker:
-    def __init__(self):
+    def __init__(self) -> None:
         self.peaks = Peaks()
         self.last_start = 0.0
 
-    def tick(self):
+    def tick(self) -> None:
         folders = spool.agents()
-        jobs = []
+        jobs: list[Job] = []
         for agent, folder in list(folders.items()):
             try:
                 spool.prepare(folder)
@@ -34,13 +35,13 @@ class Broker:
         for agent, folder in folders.items():
             spool.publish_status(folder, [j for j in jobs if j.agent == agent])
 
-    def learn(self, folder):
+    def learn(self, folder: str) -> None:
         for signature, peak_mb in spool.finished(folder):
             if peak_mb:
                 self.peaks.record(signature, peak_mb)
 
-    def live_jobs(self, agent, folder):
-        out = []
+    def live_jobs(self, agent: str, folder: str) -> list[Job]:
+        out: list[Job] = []
         for job in spool.jobs(agent, folder):
             if time.time() - job.seen > STALE_S:
                 spool.forget(folder, job)
@@ -51,7 +52,7 @@ class Broker:
         return out
 
 
-def main():
+def main() -> None:
     broker = Broker()
     while True:
         try:

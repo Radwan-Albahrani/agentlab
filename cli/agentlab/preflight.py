@@ -6,6 +6,12 @@ import platform
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
+
+from .config import Cluster
+
+Runner = Callable[..., subprocess.CompletedProcess[str]]  # subprocess.run, or a test's stand-in
+Problem = tuple[str, str, str]  # (id, message, fix)
 
 # The packages host/install/*.sh install from the distro (Docker and cloudflared come from their own repositories).
 BASE = ['ca-certificates', 'curl', 'gnupg', 'nftables', 'jq', 'sqlite3', 'e2fsprogs', 'git', 'psmisc']
@@ -14,26 +20,26 @@ JRES = ['openjdk-21-jre-headless', 'openjdk-25-jre-headless', 'openjdk-17-jre-he
 SYSBOX_ARCH = {'x86_64', 'aarch64'}
 
 
-def lists_empty():
+def lists_empty() -> bool:
     return not glob.glob('/var/lib/apt/lists/*Packages')
 
 
-def candidate(package, run=subprocess.run):
+def candidate(package: str, run: Runner = subprocess.run) -> bool:
     p = run(['apt-cache', 'policy', package], capture_output=True, text=True, check=False)
     m = re.search(r'Candidate:\s*(\S+)', p.stdout or '')
-    return bool(m) and m.group(1) != '(none)'
+    return m is not None and m.group(1) != '(none)'
 
 
-def jre(run=subprocess.run):
+def jre(run: Runner = subprocess.run) -> str:
     return next((p for p in JRES if candidate(p, run)), '')
 
 
-def kernel():
+def kernel() -> tuple[int, int]:
     m = re.match(r'(\d+)\.(\d+)', platform.release())
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
-def wsl():
+def wsl() -> bool:
     try:
         with open('/proc/version') as f:
             return 'microsoft' in f.read().lower()
@@ -41,9 +47,9 @@ def wsl():
         return False
 
 
-def problems(cfg, refresh=False, run=subprocess.run):
+def problems(cfg: Cluster, refresh: bool = False, run: Runner = subprocess.run) -> list[Problem]:
     """[(id, message, fix)] that would stop an install step; `refresh` updates apt's lists first."""
-    out = []
+    out: list[Problem] = []
     if not shutil.which('apt-get') or not shutil.which('dpkg'):
         return [
             (

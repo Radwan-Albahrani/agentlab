@@ -1,17 +1,31 @@
 import os
+from typing import TypedDict
 
 from . import apply, cloudflare, config, deploy, disks, render, tomledit
+from .apply import Applied
+from .config import Cluster
 from .util import Failed, Needs, Plan, need_root, say, warn, write_if_changed
 
 
-def listing(cfg):
-    rows = [{k: a[k] for k in ('id', 'owner', 'memory', 'cpus', 'path')} for a in cfg['agents']]
+class AgentRow(TypedDict):
+    id: str
+    owner: str
+    memory: str
+    cpus: float
+    path: str
+
+
+def listing(cfg: Cluster) -> list[AgentRow]:
+    rows: list[AgentRow] = [
+        {'id': a['id'], 'owner': a['owner'], 'memory': a['memory'], 'cpus': a['cpus'], 'path': a['path']}
+        for a in cfg['agents']
+    ]
     for r in rows:
         say(f'  {r["id"]:<16} {r["owner"]:<32} {r["memory"]:>5} RAM  {r["cpus"]} CPU  {r["path"]}')
     return rows
 
 
-def adopt(cfg, agent_id):
+def adopt(cfg: Cluster, agent_id: str) -> dict[str, str | None]:
     need_root('agentctl agent adopt')
     a = config.agent(cfg, agent_id)
     if apply.adopt(a, Plan(False)):
@@ -20,13 +34,13 @@ def adopt(cfg, agent_id):
     return {'adopted': None}
 
 
-def _checked(text):
+def _checked(text: str) -> Cluster:
     return config.loads(text)
 
 
-def limits(memory=None, cpus=None):
+def limits(memory: str | None = None, cpus: str | None = None) -> dict[str, str | float | None]:
     """{key: value} for the agent block: memory as given ('12g'), cpus as a number; 'default' means None (drop it)."""
-    out = {}
+    out: dict[str, str | float | None] = {}
     if memory is not None:
         out['memory'] = None if memory == 'default' else memory.lower()
     if cpus is not None:
@@ -34,7 +48,14 @@ def limits(memory=None, cpus=None):
     return out
 
 
-def add(config_path, agent_id, owner, dry=False, memory=None, cpus=None):
+def add(
+    config_path: str,
+    agent_id: str,
+    owner: str,
+    dry: bool = False,
+    memory: str | None = None,
+    cpus: str | None = None,
+) -> Applied:
     with open(config_path) as f:
         text = f.read()
     extra = {k: v for k, v in limits(memory, cpus).items() if v is not None}
@@ -54,7 +75,7 @@ def add(config_path, agent_id, owner, dry=False, memory=None, cpus=None):
     return out
 
 
-def cloudflare_names(config_path):
+def cloudflare_names(config_path: str) -> None:
     """With Cloudflare set up, its names and routes follow the agents (pair hosts, the people allowed in)."""
     cfg = config.load(config_path)
     if not cloudflare.configured(cfg):
@@ -68,7 +89,7 @@ def cloudflare_names(config_path):
         warn(f'the agents are up, but Cloudflare was not updated: {e} (agentctl cloudflare setup retries it)')
 
 
-def next_ports(cfg):
+def next_ports(cfg: Cluster) -> dict[str, int]:
     """When agents are published on host ports, the next free block laid out like the last agent's (7101-7105,
     7111-7115 -> 7121-7125); {} when none are."""
     shown = [a['publish'] for a in cfg['agents'] if a['publish']]
@@ -87,7 +108,9 @@ def next_ports(cfg):
     return {tool: base + o for tool, o in offsets.items()}
 
 
-def set_limits(config_path, agent_id, memory=None, cpus=None, dry=False):
+def set_limits(
+    config_path: str, agent_id: str, memory: str | None = None, cpus: str | None = None, dry: bool = False
+) -> Applied:
     """Change an agent's memory or CPUs; apply redeploys only that agent (once it is not mid-turn)."""
     with open(config_path) as f:
         text = f.read()
@@ -108,7 +131,9 @@ def set_limits(config_path, agent_id, memory=None, cpus=None, dry=False):
     return apply.apply(cfg, config_path)
 
 
-def remove(config_path, agent_id, keep_data=False, yes=False, dry=False):
+def remove(
+    config_path: str, agent_id: str, keep_data: bool = False, yes: bool = False, dry: bool = False
+) -> dict[str, list[str]]:
     with open(config_path) as f:
         text = f.read()
     cfg = config.load(config_path)

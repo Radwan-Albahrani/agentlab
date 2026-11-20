@@ -4,8 +4,23 @@ import getpass
 import os
 import re
 import sys
+from collections.abc import Callable
+from typing import TextIO, TypedDict
 
+from .config import Cluster
 from .util import AGENT_UID, OUT, Failed, need_root, say
+
+
+class SecretRow(TypedDict):
+    name: str
+    about: str
+    set: bool
+
+
+class SavedSecret(TypedDict):
+    name: str
+    path: str
+
 
 # Must match host/watch/agent_requests.py SECRET_KEYS.
 COMPANION_KEYS = (
@@ -20,7 +35,7 @@ COMPANION_KEYS = (
 COMPANION = re.compile(r'^companion/([a-z0-9][a-z0-9-]{0,28}[a-z0-9])/([a-z0-9.-]+)$')
 
 
-def known(cfg):
+def known(cfg: Cluster) -> dict[str, tuple[str, str]]:
     """{name: (what it is, file)} for the secrets this cluster uses."""
     data = cfg['data']
     out = {
@@ -45,14 +60,14 @@ def known(cfg):
     return out
 
 
-def listing(cfg):
+def listing(cfg: Cluster) -> list[SecretRow]:
     return [
         {'name': name, 'about': about, 'set': os.path.isfile(path) and os.path.getsize(path) > 0}
         for name, (about, path) in known(cfg).items()
     ]
 
 
-def read_value(about, stdin=None, prompt=getpass.getpass):
+def read_value(about: str, stdin: TextIO | None = None, prompt: Callable[[str], str] = getpass.getpass) -> str:
     stdin = stdin or sys.stdin
     at_terminal = stdin.isatty() and not OUT.json
     value = (prompt(f'Paste {about} (hidden), then Enter: ') if at_terminal else stdin.read()).strip()
@@ -61,7 +76,9 @@ def read_value(about, stdin=None, prompt=getpass.getpass):
     return value
 
 
-def set_secret(cfg, name, stdin=None, prompt=getpass.getpass):
+def set_secret(
+    cfg: Cluster, name: str, stdin: TextIO | None = None, prompt: Callable[[str], str] = getpass.getpass
+) -> SavedSecret:
     need_root('agentctl secret set')
     secrets = known(cfg)
     if name not in secrets:

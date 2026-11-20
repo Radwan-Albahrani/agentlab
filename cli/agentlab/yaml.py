@@ -2,12 +2,14 @@
 
 import json
 import re
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 PLAIN = re.compile(r'^[A-Za-z_./][A-Za-z0-9_./@=-]*$')
 AMBIGUOUS = {'y', 'n', 'yes', 'no', 'on', 'off', 'true', 'false', 'null', '~'}
 
 
-def _scalar(v):
+def _scalar(v: object) -> str:
     if v is None:
         return 'null'
     if isinstance(v, bool):
@@ -18,9 +20,9 @@ def _scalar(v):
     return s if PLAIN.match(s) and s.lower() not in AMBIGUOUS else json.dumps(s)
 
 
-def _lines(v, indent):
+def _lines(v: Mapping[Any, object] | Sequence[object], indent: int) -> list[str]:
     pad = '  ' * indent
-    out = []
+    out: list[str] = []
     if isinstance(v, dict):
         for k, item in v.items():
             key = _scalar(k)
@@ -40,10 +42,10 @@ def _lines(v, indent):
     return out
 
 
-def _empty(v):
+def _empty(v: object) -> str:
     return '{}' if isinstance(v, dict) else '[]'
 
 
-def dump(data, header=''):
+def dump(data: Mapping[str, object] | Sequence[object], header: str = '') -> str:
     head = ''.join(f'# {line}\n' if line else '#\n' for line in header.splitlines())
     return head + '\n'.join(_lines(data, 0)) + '\n'

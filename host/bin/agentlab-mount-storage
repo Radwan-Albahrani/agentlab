@@ -5,11 +5,13 @@ import json
 import os
 import subprocess
 import sys
+from typing import Any
 
 PATH = os.environ.get('AGENTLAB_CLUSTER', '/srv/agentlab/rendered/cluster.json')
+Json = dict[str, Any]  # cluster.json; this boot script runs alone, without host/cluster.py's types
 
 
-def units(cfg):
+def units(cfg: Json) -> list[tuple[str, str]]:
     st, data = cfg.get('storage') or {}, cfg.get('data', '/srv/agentlab')
     if st.get('mode', 'shared') == 'shared':
         return [(st['pool_image'], f'{data}/agents')] if st.get('pool_size') else []
@@ -17,7 +19,7 @@ def units(cfg):
     return [(f'{data}/disks/{os.path.basename(m)}.img', m) for m in mounts]
 
 
-def main():
+def main() -> int:
     try:
         with open(PATH) as f:
             cfg = json.load(f)

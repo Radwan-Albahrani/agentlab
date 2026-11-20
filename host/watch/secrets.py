@@ -5,16 +5,31 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Callable
+from typing import Literal, TypedDict
 
 import cluster
 
 from . import host, store
 from .settings import AGENT_UID, AGENTCTL, SECRETS_DIR, SECRETS_MAP
 
+Change = Literal['added', 'changed']
+RuleKind = Literal['copy', 'restart', 'redeploy']
+Rule = dict[str, str]  # one {kind: target}, e.g. {"restart": "core"}
+Result = tuple[bool, str]  # (ok, message)
+Step = Callable[[str, str, dict[str, str]], Result]  # (secret file, target, placeholders)
 
-def fingerprints(root=SECRETS_DIR):
+
+class MapEntry(TypedDict, total=False):
+    apply: list[Rule]  # the other keys are the hub's
+
+
+SecretsMap = dict[str, MapEntry]  # its "_about" string is never a secret file's name
+
+
+def fingerprints(root: str = SECRETS_DIR) -> dict[str, str]:
     """{relative path: sha256}, skipping hidden entries."""
-    out = {}
+    out: dict[str, str] = {}
     for folder, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs if not d.startswith('.'))
         for name in sorted(files):
@@ -26,15 +41,17 @@ def fingerprints(root=SECRETS_DIR):
     return out
 
 
-def changes(known, current):
+def changes(known: dict[str, str], current: dict[str, str]) -> tuple[list[tuple[str, Change]], list[str]]:
     """([(name, 'added' | 'changed')], [removed]); the first look only records."""
     if not known:
         return [], []
-    changed = [(n, 'added' if n not in known else 'changed') for n, h in current.items() if known.get(n) != h]
+    changed: list[tuple[str, Change]] = [
+        (n, 'added' if n not in known else 'changed') for n, h in current.items() if known.get(n) != h
+    ]
     return changed, sorted(set(known) - set(current))
 
 
-def match(rules, name):
+def match(rules: SecretsMap, name: str) -> tuple[MapEntry | None, dict[str, str]]:
     """(rule entry, {placeholder: value}) for a secret file, or (None, {})."""
     if name in rules:
         return rules[name], {}
@@ -48,7 +65,7 @@ def match(rules, name):
     return None, {}
 
 
-def with_agent(names, cfg=None):
+def with_agent(names: dict[str, str], cfg: cluster.Cluster | None = None) -> dict[str, str]:
     """Adds {agent_home} for a companion's secret: the home of the agent it belongs to."""
     if 'companion' not in names:
         return names
@@ -58,13 +75,13 @@ def with_agent(names, cfg=None):
     return {**names, 'agent_home': f'{path}/home'} if path else names
 
 
-def _fill(value, names):
+def _fill(value: str, names: dict[str, str]) -> str:
     for k, v in names.items():
         value = value.replace('{' + k + '}', v)
     return value
 
 
-def _copy(name, dst, _names):
+def _copy(name: str, dst: str, _names: dict[str, str]) -> Result:
     if '{' in dst:
         return False, f'no place to install it ({dst})'
     if not os.path.isdir(os.path.dirname(dst)):
@@ -76,7 +93,7 @@ def _copy(name, dst, _names):
     return True, f'installed for the agent ({os.path.basename(dst)})'
 
 
-def _restart(_name, target, _names):
+def _restart(_name: str, target: str, _names: dict[str, str]) -> Result:
     stack = f'agentlab-{target}'
     names = [c['name'] for c in store.load('containers.json', {}).get('items') or [] if c.get('stack') == stack]
     if not names:
@@ -85,15 +102,15 @@ def _restart(_name, target, _names):
     return rc == 0, f'restarted {stack}' if rc == 0 else out[-200:]
 
 
-def _redeploy(_name, target, _names):
+def _redeploy(_name: str, target: str, _names: dict[str, str]) -> Result:
     rc, out = host.run(['python3', AGENTCTL, 'apply', '--stack', f'agentlab-{target}'], timeout=1800)
     return rc == 0, f'recreated agentlab-{target}' if rc == 0 else out[-200:]
 
 
-RULES = {'copy': _copy, 'restart': _restart, 'redeploy': _redeploy}
+RULES: dict[RuleKind, Step] = {'copy': _copy, 'restart': _restart, 'redeploy': _redeploy}
 
 
-def apply(name, rule, names=None):
+def apply(name: str, rule: Rule, names: dict[str, str] | None = None) -> Result:
     kind = next((k for k in RULES if k in rule), None)
     if not kind:
         return False, f'unknown rule {rule}'
@@ -103,7 +120,7 @@ def apply(name, rule, names=None):
         return False, f'{type(e).__name__}: {e}'
 
 
-def _extra_restart(_name, prefix, _names):
+def _extra_restart(_name: str, prefix: str, _names: dict[str, str]) -> Result:
     rows = store.load('containers.json', {}).get('items') or []
     names = [
         c['name'] for c in rows if c.get('name', '').startswith(prefix) and c.get('stack') not in (None, '', 'coolify')
@@ -114,8 +131,8 @@ def _extra_restart(_name, prefix, _names):
     return rc == 0, f'restarted {", ".join(names)}' if rc == 0 else out[-200:]
 
 
-def _extra_copy(folder):
-    def copy(name, dst, _names):
+def _extra_copy(folder: str) -> Step:
+    def copy(name: str, dst: str, _names: dict[str, str]) -> Result:
         homes = [os.path.realpath(f'{a["path"]}/home') + os.sep for a in cluster.load().get('agents') or []]
         real = os.path.realpath(dst)
         if not any(real.startswith(h) for h in homes):
@@ -131,13 +148,13 @@ def _extra_copy(folder):
     return copy
 
 
-def check_extra(state, extra):
+def check_extra(state: store.State, extra: cluster.ExtraSecrets | None) -> None:
     """check() for [hub] extra_secrets: its map lives outside the repo, so only narrow restart/copy rules."""
-    folder = (extra or {}).get('folder') or ''
-    if not folder or not os.path.isdir(folder):
+    folder = (extra.get('folder') or '') if extra else ''
+    if not extra or not folder or not os.path.isdir(folder):
         state.pop('extra_secrets', None)
         return
-    rules = {}
+    rules: SecretsMap = {}  # someone else's file: rule targets go through str()
     if extra.get('map'):
         try:
             with open(extra['map']) as f:
@@ -146,9 +163,9 @@ def check_extra(state, extra):
             store.event('secret', 'extra secrets map unreadable', str(e), ok=False)
     current = fingerprints(folder)
     changed, removed = changes(state.get('extra_secrets', {}), current)
-    allowed = {'restart': _extra_restart, 'copy': _extra_copy(folder)}
+    allowed: dict[str, Step] = {'restart': _extra_restart, 'copy': _extra_copy(folder)}
     for name, what in changed:
-        results = []
+        results: list[Result] = []
         for rule in (rules.get(name) or {}).get('apply', []):
             kind = next((k for k in allowed if k in rule), None)
             if not kind:
@@ -166,10 +183,10 @@ def check_extra(state, extra):
     state['extra_secrets'] = current
 
 
-def check(state):
+def check(state: store.State) -> None:
     try:
         with open(SECRETS_MAP) as f:
-            rules = json.load(f)
+            rules: SecretsMap = json.load(f)
     except (OSError, ValueError) as e:
         store.event('secret', 'secrets-map.json unreadable', str(e), ok=False)
         return
@@ -186,4 +203,4 @@ def check(state):
     for name in removed:
         store.event('secret', f'{name} removed')
     state['secrets'] = current
-    check_extra(state, (cluster.load().get('hub') or {}).get('extra_secrets'))
+    check_extra(state, (cluster.load().get('hub') or cluster.Hub()).get('extra_secrets'))

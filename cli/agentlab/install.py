@@ -3,12 +3,19 @@
 import glob
 import os
 import subprocess
+from collections.abc import Collection, Mapping
+from typing import TypedDict
 
 from . import cloudflare, config, images, preflight
+from .config import Cluster
 from .util import OUT, REPO, Failed, Needs, Plan, need_root, say, size_bytes, warn
 
 
-def step_env(cfg, config_path):
+class Installed(TypedDict):
+    steps: list[str]
+
+
+def step_env(cfg: Cluster, config_path: str) -> dict[str, str]:
     total = size_bytes(cfg['limits']['total_memory'])
     return {
         **os.environ,
@@ -38,7 +45,7 @@ def step_env(cfg, config_path):
     }
 
 
-def units(cfg, config_path, plan):
+def units(cfg: Cluster, config_path: str, plan: Plan) -> None:
     """Re-render the host's systemd units on an installed host, e.g. the slice's cap after total_memory changes."""
     if plan.dry or not os.path.exists('/etc/systemd/system/agentlab.slice'):
         return
@@ -51,7 +58,7 @@ def units(cfg, config_path, plan):
         warn(f'host units not updated (exit {p.returncode}): run agentctl install --only units')
 
 
-def tunnel_first(cfg, env, config_path):
+def tunnel_first(cfg: Cluster, env: Mapping[str, str], config_path: str) -> None:
     """Create the tunnel token before the cloudflared step when the API token is saved."""
     if cfg['auth']['ingress'] != 'cloudflared' or os.path.exists(env['AGENTLAB_TUNNEL_TOKEN']):
         return
@@ -61,17 +68,19 @@ def tunnel_first(cfg, env, config_path):
     cloudflare.setup(cfg, Plan(False), config_path)
 
 
-def steps():
+def steps() -> list[str]:
     return sorted(glob.glob(os.path.join(REPO, 'host', 'install', '[0-9][0-9]-*.sh')))
 
 
-def install(cfg, config_path, only=None, skip_images=False):
+def install(
+    cfg: Cluster, config_path: str, only: Collection[str] | None = None, skip_images: bool = False
+) -> Installed:
     need_root('agentctl install')
     blocked = preflight.problems(cfg, refresh=True)
     if blocked:
         raise Needs('; '.join(f'{message} (fix: {fix})' for _, message, fix in blocked))
     env = step_env(cfg, config_path)
-    manual = []
+    manual: list[str] = []
     for path in steps():
         name = os.path.basename(path)[3:-3]
         if only and name not in only:

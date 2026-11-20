@@ -8,20 +8,33 @@ import shutil
 import socket
 import time
 import urllib.request
+from collections.abc import Callable
+from typing import Literal, TypedDict
 
 from . import cloudflare, config, coolify, deploy, disks, health, preflight, render, wslhost
+from .config import Cluster
 from .util import LOCK, is_root, lock_holder, run, size_bytes
 
 LOCK_HOURS = 6
 PF_EXITING = 0x4
 DUMPING = ('do_coredump', 'coredump_wait', 'wait_task_inactive')
 
+Severity = Literal['ok', 'info', 'warning', 'error']  # 'ok' only on a passed check
+
+
+class Check(TypedDict):
+    id: str
+    ok: bool
+    severity: Severity
+    message: str
+    fix: str
+
 
 class Checks:
-    def __init__(self):
-        self.items = []
+    def __init__(self) -> None:
+        self.items: list[Check] = []
 
-    def add(self, cid, ok, message, fix='', severity='error'):
+    def add(self, cid: str, ok: object, message: str, fix: str = '', severity: Severity = 'error') -> None:
         self.items.append(
             {
                 'id': cid,
@@ -32,12 +45,12 @@ class Checks:
             }
         )
 
-    def sudo(self, cid, what):
+    def sudo(self, cid: str, what: str) -> None:
         """A check this user may not see (root-only files, nft, the Docker socket): a warning, not a failure."""
         self.add(cid, False, f'not checked without root: {what}', 'run `sudo agentctl doctor` to include it', 'warning')
 
 
-def _private(path):
+def _private(path: str) -> bool | None:
     """Whether a root-only file exists, or None when this user can't look (a 0700 secrets folder)."""
     if not path:
         return False
@@ -49,12 +62,12 @@ def _private(path):
 OLD_SYSBOX_DROPIN = '/etc/systemd/system/sysbox-mgr.service.d/agentlab.conf'  # host/install/20-sysbox.sh removes it
 
 
-def _kernel():
+def _kernel() -> tuple[int, int]:
     m = re.match(r'(\d+)\.(\d+)', platform.release())
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
-def _wsl():
+def _wsl() -> bool:
     try:
         with open('/proc/version') as f:
             return 'microsoft' in f.read().lower()
@@ -62,7 +75,7 @@ def _wsl():
         return False
 
 
-def _os_name():
+def _os_name() -> tuple[str, str, str]:
     try:
         with open('/etc/os-release') as f:
             info = dict(line.rstrip().split('=', 1) for line in f if '=' in line)
@@ -71,7 +84,7 @@ def _os_name():
         return 'unknown', '', ''
 
 
-def _mem_total():
+def _mem_total() -> int:
     try:
         with open('/proc/meminfo') as f:
             return int(next(line for line in f if line.startswith('MemTotal')).split()[1]) * 1024
@@ -79,11 +92,11 @@ def _mem_total():
         return 0
 
 
-def _active(unit):
+def _active(unit: str) -> bool:
     return run(['systemctl', 'is-active', unit], check=False)[1] == 'active'
 
 
-def _listening(port, host='127.0.0.1'):
+def _listening(port: int, host: str = '127.0.0.1') -> bool:
     try:
         with socket.create_connection((host, port), timeout=2):
             return True
@@ -91,7 +104,7 @@ def _listening(port, host='127.0.0.1'):
         return False
 
 
-def host(cfg, c):
+def host(cfg: Cluster, c: Checks) -> None:
     name, distro, version = _os_name()
     c.add(
         'os',
@@ -142,7 +155,7 @@ def host(cfg, c):
     storage(cfg, c)
 
 
-def _wsl_autostart(c):
+def _wsl_autostart(c: Checks) -> None:
     if not os.access(wslhost.POWERSHELL, os.X_OK):
         return
     t = wslhost.task()
@@ -157,9 +170,10 @@ def _wsl_autostart(c):
     )
 
 
-def storage(cfg, c):
+def storage(cfg: Cluster, c: Checks) -> None:
     root = cfg['data'] if os.path.isdir(cfg['data']) else '/'
     fs = disks.usage(root)
+    assert fs is not None  # root exists: checked just above, or '/'
     units = disks.units(cfg)
     if not units:
         c.add(
@@ -188,7 +202,7 @@ def storage(cfg, c):
         )
 
 
-def docker(cfg, c):
+def docker(cfg: Cluster, c: Checks) -> bool:
     has = shutil.which('docker') is not None
     rc, version = run(['docker', 'version', '--format', '{{.Server.Version}}'], check=False) if has else (1, '')
     if rc and has and not is_root() and 'permission denied' in version.lower():
@@ -208,7 +222,7 @@ def docker(cfg, c):
     return True
 
 
-def sysbox(c):
+def sysbox(c: Checks) -> None:
     runtimes = run(['docker', 'info', '--format', '{{json .Runtimes}}'], check=False)[1]
     c.add(
         'sysbox',
@@ -224,7 +238,7 @@ def sysbox(c):
     )
 
 
-def android(cfg, c):
+def android(cfg: Cluster, c: Checks) -> None:
     if not cfg['android']['enabled']:
         return
     kvm = os.path.exists('/dev/kvm') and (not is_root() or os.access('/dev/kvm', os.R_OK | os.W_OK))
@@ -238,7 +252,7 @@ def android(cfg, c):
     c.add('android-sdk', os.path.exists(f'{sdk}/emulator/emulator'), f'Android SDK in {sdk}', 'agentctl install')
 
 
-def _domain_levels(cfg, c):
+def _domain_levels(cfg: Cluster, c: Checks) -> None:
     zone = cfg['cloudflare']['zone']
     if not zone:
         return
@@ -253,7 +267,7 @@ def _domain_levels(cfg, c):
         )
 
 
-def access(cfg, c):
+def access(cfg: Cluster, c: Checks) -> None:
     mode, ingress = cfg['auth']['mode'], cfg['auth']['ingress']
     if mode == 'none' and not config.ports_only(cfg):
         c.add(
@@ -299,7 +313,7 @@ def access(cfg, c):
         )
 
 
-def _cloudflared(cfg, c):
+def _cloudflared(cfg: Cluster, c: Checks) -> None:
     token = f'{cfg["data"]}/secrets/cloudflare-tunnel.token'
     if _private(token) is None:
         c.sudo('tunnel-token', f'tunnel token in {token}')
@@ -315,7 +329,7 @@ def _cloudflared(cfg, c):
     _domain_levels(cfg, c)
 
 
-def _cloudflare_token(cfg, c):
+def _cloudflare_token(cfg: Cluster, c: Checks) -> None:
     try:
         probes = cloudflare.probe_token(cfg)
     except Exception as e:
@@ -340,7 +354,7 @@ def _cloudflare_token(cfg, c):
         )
 
 
-def _cloudflare_access(cfg, c):
+def _cloudflare_access(cfg: Cluster, c: Checks) -> None:
     c.add(
         'audience',
         bool(cfg['auth']['cloudflare']['team'] and cfg['auth']['cloudflare']['audience']),
@@ -375,16 +389,16 @@ def _cloudflare_access(cfg, c):
             f'set [auth.cloudflare] login_method to one of: {", ".join(names) or "(none yet: add one in Zero Trust)"}',
         )
         return
-    names = ', '.join(str(i.get('name', '')) for i in idps)
+    offered = ', '.join(str(i.get('name', '')) for i in idps)
     c.add(
         'login-methods',
         True,
-        f'Zero Trust login methods offered: {names or "none listed (the one-time PIN by email still works)"}'
-        + ('; [auth.cloudflare] login_method can pin people to one' if names else ''),
+        f'Zero Trust login methods offered: {offered or "none listed (the one-time PIN by email still works)"}'
+        + ('; [auth.cloudflare] login_method can pin people to one' if offered else ''),
     )
 
 
-def _client_only(cfg, c):
+def _client_only(cfg: Cluster, c: Checks) -> None:
     if not cloudflare.configured(cfg) or (
         not is_root() and not os.access(cfg['cloudflare']['api_token_file'], os.R_OK)
     ):
@@ -401,7 +415,7 @@ def _client_only(cfg, c):
 WINDOWS_TAILSCALE = '/mnt/c/Program Files/Tailscale/tailscale.exe'
 
 
-def tailscale_cli():
+def tailscale_cli() -> str | None:
     """The tailscale command: Linux's own, or on WSL the Windows one."""
     if shutil.which('tailscale'):
         return 'tailscale'
@@ -410,7 +424,7 @@ def tailscale_cli():
     return None
 
 
-def _tailscale(cfg, c):
+def _tailscale(cfg: Cluster, c: Checks) -> None:
     cli = tailscale_cli()
     rc, out = run([cli, 'status', '--json'], check=False) if cli else (1, '')
     try:
@@ -463,7 +477,7 @@ def _tailscale(cfg, c):
     )
 
 
-def _tinyauth(cfg, c):
+def _tinyauth(cfg: Cluster, c: Checks) -> None:
     t = cfg['tinyauth']
     for key in ('google_client_id_file', 'google_client_secret_file'):
         if _private(t[key]) is None:
@@ -495,7 +509,7 @@ def _tinyauth(cfg, c):
     c.add('tinyauth', ok, f'tinyauth answers on {t["domain"]}', 'agentctl apply; then agentctl status')
 
 
-def coolify_check(cfg, c):
+def coolify_check(cfg: Cluster, c: Checks) -> None:
     if cfg['deploy'] != 'coolify':
         return
     if _private(cfg['coolify']['token_file']) is None:
@@ -514,7 +528,7 @@ def coolify_check(cfg, c):
         )
 
 
-def cluster(cfg, c):
+def cluster(cfg: Cluster, c: Checks) -> None:
     for a in cfg['agents']:
         c.add(
             f'agent-dir-{a["id"]}',
@@ -564,7 +578,7 @@ def cluster(cfg, c):
             c.add(f'stack-{stack}', not down, msg, f'docker start {" ".join(names)}' if down else 'agentctl apply')
 
 
-def prerequisites(cfg, c):
+def prerequisites(cfg: Cluster, c: Checks) -> None:
     blocked = preflight.problems(cfg)
     for cid, message, fix in blocked:
         c.add(cid, False, message, fix, 'warning' if cid == 'host-packages' and 'empty' in message else 'error')
@@ -572,7 +586,7 @@ def prerequisites(cfg, c):
         c.add('host-supported', True, 'this host has what the install steps need')
 
 
-def run_all(cfg):
+def run_all(cfg: Cluster) -> list[Check]:
     c = Checks()
     host(cfg, c)
     prerequisites(cfg, c)
@@ -586,7 +600,7 @@ def run_all(cfg):
     return c.items
 
 
-def updates(cfg, c):
+def updates(cfg: Cluster, c: Checks) -> None:
     from . import update  # noqa: PLC0415 - update imports apply, which doctor doesn't otherwise need
 
     if cfg['updates']['agentlab'] != 'daily':
@@ -616,7 +630,7 @@ def updates(cfg, c):
         c.add('update-last', True, f'last update {last.get("at", "?")}: {last.get("commit", "")} ok')
 
 
-def lock(c, path=LOCK, hours=LOCK_HOURS):
+def lock(c: Checks, path: str = LOCK, hours: float = LOCK_HOURS) -> None:
     """A change holding agentctl's lock for hours is likely stuck, and every other change waits behind it."""
     import fcntl  # noqa: PLC0415
 
@@ -640,9 +654,9 @@ def lock(c, path=LOCK, hours=LOCK_HOURS):
     )
 
 
-def _stuck_tasks(proc):
+def _stuck_tasks(proc: str) -> dict[str, tuple[str, str]]:
     """{pid: (name, why)} for threads in uninterruptible sleep while dying or dumping core: they never wake."""
-    out = {}
+    out: dict[str, tuple[str, str]] = {}
     for pid in filter(str.isdigit, os.listdir(proc)):
         try:
             tids = os.listdir(f'{proc}/{pid}/task')
@@ -666,7 +680,7 @@ def _stuck_tasks(proc):
     return out
 
 
-def _container_of(proc, pid):
+def _container_of(proc: str, pid: str) -> str:
     try:
         with open(f'{proc}/{pid}/cgroup') as f:
             m = re.search(r'(?:docker-|/docker/)([0-9a-f]{64})', f.read())
@@ -675,7 +689,7 @@ def _container_of(proc, pid):
     return m.group(1) if m else ''
 
 
-def stuck(c, proc='/proc', sleep=time.sleep):
+def stuck(c: Checks, proc: str = '/proc', sleep: Callable[[float], object] = time.sleep) -> None:
     """A task hung in the kernel can't be killed, and a normal reboot tends to hang waiting on it (#31)."""
     found = _stuck_tasks(proc)
     if found:

@@ -1,11 +1,16 @@
 """Shared helpers: output (--json for agents), running commands, dry runs, atomic writes; nothing prompts."""
 
+import importlib
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Protocol, Self, TypedDict
+
+Json = dict[str, Any]  # a parsed JSON object of no fixed shape
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 AGENT_UID = 1000  # the agent user inside the image; host files it uses are owned by this uid (see disks.py)
@@ -16,6 +21,7 @@ class Failed(Exception):  # noqa: N818 - agentctl's one error type; Needs is a k
     """A command or check failed in a way the user must fix; printed without a traceback."""
 
     code = FAILED
+    result: Json  # set by some raisers: the --json result to report with the error
 
 
 class Needs(Failed):
@@ -24,18 +30,26 @@ class Needs(Failed):
     code = NEEDS
 
 
+class Change(TypedDict):
+    change: str
+    command: list[str] | None
+    done: bool
+
+
 class Output:
     """With --json, messages, warnings and changes are collected and printed once as JSON at the end."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.json = False
-        self.messages, self.warnings, self.changes = [], [], []
+        self.messages: list[str] = []
+        self.warnings: list[str] = []
+        self.changes: list[Change] = []
 
 
 OUT = Output()
 
 
-def say(*parts):
+def say(*parts: object) -> None:
     text = ' '.join(str(p) for p in parts)
     if OUT.json:
         OUT.messages.append(text.strip())
@@ -43,14 +57,22 @@ def say(*parts):
         print(text, flush=True)
 
 
-def warn(msg):
+def warn(msg: str) -> None:
     if OUT.json:
         OUT.warnings.append(msg)
     else:
         print(f'! {msg}', file=sys.stderr, flush=True)
 
 
-def run(cmd, *, check=True, capture=True, timeout=600, input_text=None, env=None):
+def run(
+    cmd: Sequence[str],
+    *,
+    check: bool = True,
+    capture: bool = True,
+    timeout: float = 600,
+    input_text: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> tuple[int, str]:
     """(exit code, output); raises Failed on non-zero when check is set; a missing program is exit 127."""
     try:
         p = subprocess.run(
@@ -69,10 +91,10 @@ def run(cmd, *, check=True, capture=True, timeout=600, input_text=None, env=None
 class Plan:
     """Runs changes for real, or on a dry run only prints them. Reads always run: a dry run must see the real state."""
 
-    def __init__(self, dry):
+    def __init__(self, dry: bool) -> None:
         self.dry = dry
 
-    def do(self, what, cmd=None, fn=None):
+    def do(self, what: str, cmd: list[str] | None = None, fn: Callable[[], object] | None = None) -> object:
         OUT.changes.append({'change': what, 'command': cmd, 'done': not self.dry})
         if self.dry:
             say(f'  would {what}' + (f': {" ".join(cmd)}' if cmd else ''))
@@ -87,18 +109,18 @@ SIZE = re.compile(r'^(\d+(?:\.\d+)?)([kmgt]?)b?$', re.IGNORECASE)
 UNITS = {'': 1, 'k': 2**10, 'm': 2**20, 'g': 2**30, 't': 2**40}
 
 
-def size_bytes(text):
+def size_bytes(text: object) -> int:
     m = SIZE.match(str(text).strip())
     if not m:
         raise ValueError(f'not a size: {text!r} (use e.g. 12g or 60G)')
     return int(float(m.group(1)) * UNITS[m.group(2).lower()])
 
 
-def gb(text):
+def gb(text: object) -> float:
     return round(size_bytes(text) / 2**30, 1)
 
 
-def write_if_changed(path, text, mode=None):
+def write_if_changed(path: str, text: str, mode: int | None = None) -> bool:
     """True when the file was (re)written. Atomic, so readers never see half a file."""
     try:
         with open(path) as f:
@@ -115,7 +137,7 @@ def write_if_changed(path, text, mode=None):
     return True
 
 
-def differs(path, text):
+def differs(path: str, text: str) -> bool:
     try:
         with open(path) as f:
             return f.read() != text
@@ -123,7 +145,7 @@ def differs(path, text):
         return True
 
 
-def load_json(path, default=None):
+def load_json(path: str, default: Any = None) -> Any:
     try:
         with open(path) as f:
             return json.load(f)
@@ -131,21 +153,37 @@ def load_json(path, default=None):
         return default
 
 
-def agent_folder(home, rel, create=True):
+class Folder(Protocol):
+    """What agentctl uses of host/safe.py's Folder (that module lives outside this package)."""
+
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> None: ...
+    def names(self, suffix: str = '') -> list[str]: ...
+    def is_file(self, name: str) -> bool: ...
+    def mtime(self, name: str) -> float: ...
+    def read(self, name: str, limit: int = 65536) -> str | None: ...
+    def read_json(self, name: str) -> Any: ...
+    def write(self, name: str, text: str, uid: int = ..., mode: int = ...) -> None: ...
+    def write_json(self, name: str, data: object, uid: int = ..., mode: int = ...) -> None: ...
+    def exists(self, name: str) -> bool: ...
+    def remove(self, name: str) -> None: ...
+
+
+def agent_folder(home: str, rel: str, create: bool = True) -> Folder:
     """host/safe.py's Folder: a folder inside an agent's home, opened without following the agent's symlinks."""
     host = os.path.join(REPO, 'host')
     if host not in sys.path:
         sys.path.insert(0, host)
-    import safe  # noqa: PLC0415 - lives with the host services, which use it the same way
+    safe = importlib.import_module('safe')  # lives with the host services, which use it the same way
+    folder: Folder = safe.Folder(home, rel, create=create)
+    return folder
 
-    return safe.Folder(home, rel, create=create)
 
-
-def is_root():
+def is_root() -> bool:
     return hasattr(os, 'geteuid') and os.geteuid() == 0
 
 
-def need_root(what):
+def need_root(what: str) -> None:
     if not is_root():
         raise Failed(f'{what} needs root: run it with sudo')
 
@@ -153,7 +191,7 @@ def need_root(what):
 LOCK = '/run/agentlab-agentctl.lock'  # held by the agentctl change running now
 
 
-def lock_holder(path=LOCK):
+def lock_holder(path: str = LOCK) -> str:
     """'pid N (agentctl …), for 3h' from what the holder wrote into the lock file, or ''."""
     try:
         with open(path) as f:

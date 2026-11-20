@@ -4,13 +4,14 @@ import contextlib
 import json
 import os
 import stat
+from types import TracebackType
 
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 AGENT_UID = 1000
 
 
 class Folder:
-    def __init__(self, base, rel, create=False, uid=AGENT_UID):
+    def __init__(self, base: str, rel: str, create: bool = False, uid: int = AGENT_UID) -> None:
         self.fd = os.open(base, DIR_FLAGS)
         try:
             for part in [p for p in rel.split('/') if p]:
@@ -30,28 +31,30 @@ class Folder:
             os.close(self.fd)
             raise
 
-    def __enter__(self):
+    def __enter__(self) -> 'Folder':
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+    ) -> None:
         os.close(self.fd)
 
-    def names(self, suffix=''):
+    def names(self, suffix: str = '') -> list[str]:
         return sorted(n for n in os.listdir(self.fd) if n.endswith(suffix))
 
-    def is_file(self, name):
+    def is_file(self, name: str) -> bool:
         try:
             return stat.S_ISREG(os.stat(name, dir_fd=self.fd, follow_symlinks=False).st_mode)
         except FileNotFoundError:
             return False
 
-    def mtime(self, name):
+    def mtime(self, name: str) -> float:
         try:
             return os.stat(name, dir_fd=self.fd, follow_symlinks=False).st_mtime
         except FileNotFoundError:
             return 0
 
-    def read(self, name, limit=65536):
+    def read(self, name: str, limit: int = 65536) -> str | None:
         """Contents of a regular file, else None."""
         try:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
@@ -64,14 +67,14 @@ class Folder:
         finally:
             os.close(fd)
 
-    def read_json(self, name):
+    def read_json(self, name: str) -> object:  # agent-written: callers check the shape
         text = self.read(name)
         try:
             return json.loads(text) if text else None
         except ValueError:
             return None
 
-    def write(self, name, text, uid=AGENT_UID, mode=0o644):
+    def write(self, name: str, text: str, uid: int = AGENT_UID, mode: int = 0o644) -> None:
         tmp = f'.{name}.{os.getpid()}.tmp'
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp, dir_fd=self.fd)
@@ -84,16 +87,16 @@ class Folder:
             os.close(fd)
         os.replace(tmp, name, src_dir_fd=self.fd, dst_dir_fd=self.fd)
 
-    def write_json(self, name, data, **kw):
-        self.write(name, json.dumps(data), **kw)
+    def write_json(self, name: str, data: object, uid: int = AGENT_UID, mode: int = 0o644) -> None:
+        self.write(name, json.dumps(data), uid=uid, mode=mode)
 
-    def exists(self, name):
+    def exists(self, name: str) -> bool:
         try:
             os.stat(name, dir_fd=self.fd, follow_symlinks=False)
             return True
         except FileNotFoundError:
             return False
 
-    def remove(self, name):
+    def remove(self, name: str) -> None:
         with contextlib.suppress(FileNotFoundError, IsADirectoryError, PermissionError):
             os.unlink(name, dir_fd=self.fd)

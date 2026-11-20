@@ -6,42 +6,78 @@ else in it; agentlab never changes those rules, it only moves them down when the
 
 import hashlib
 import json
+from collections.abc import Collection, Iterable
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from . import config, render
-from .util import Failed, Needs, warn
+from .config import Cluster
+from .util import Failed, Json, Needs, warn
+
+if TYPE_CHECKING:
+    from .cloudflare import Setup  # cloudflare imports this module
 
 
-def _set(values):
+class Wanted(NamedTuple):
+    """One of agentlab's Gateway rules, as `wanted` lists them."""
+
+    suffix: str
+    filters: list[str]
+    action: str
+    traffic: str
+    identity: str
+
+
+class RuleSpec(TypedDict):
+    """What a rule matches and does; its hash is stamped into the description."""
+
+    filters: list[str]
+    action: str
+    traffic: str
+    identity: str
+
+
+class Rule(RuleSpec):
+    name: str
+    description: str
+    enabled: bool
+    precedence: int
+
+
+class Seen(TypedDict):
+    rules: int  # the account's own rules
+
+
+def _set(values: Iterable[str]) -> str:
     return '{' + ' '.join(json.dumps(v) for v in values) + '}'
 
 
-def _who(emails, domains):
+def _who(emails: Collection[str], domains: Collection[str]) -> str:
     parts = [f'identity.email in {_set(sorted(emails))}'] if emails else []
     parts += [f'identity.email matches {json.dumps(".*@" + d.replace(".", "[.]") + "$")}' for d in sorted(domains)]
     return ' or '.join(parts)
 
 
-def wanted(cfg):
+def wanted(cfg: Cluster) -> list[Wanted]:
     """[(suffix, filters, action, traffic, identity)] in the order they run. Gateway's network rules see the address
     a private hostname resolves to inside the tunnel (the edge's)."""
     emails = {e.lower() for e in cfg_people(cfg)}
     domains = {d.lower() for d in cfg['auth']['allow_domains']}
-    out = []
+    out: list[Wanted] = []
     if config.private_network(cfg):
         edge = f'net.dst.ip == {render.EDGE_IP} and net.dst.port in {{80 443}}'
-        out.append(('allow', ['l4'], 'allow', edge, _who(emails, domains)))
+        out.append(Wanted('allow', ['l4'], 'allow', edge, _who(emails, domains)))
     return out
 
 
-def cfg_people(cfg):
+def cfg_people(cfg: Cluster) -> list[str]:
     return render.people(cfg)
 
 
-def _stamp(spec):
+def _stamp(spec: RuleSpec) -> str:
     return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
 
 
-def ensure(s):
+def ensure(s: 'Setup') -> Seen:
     """Make agentlab's rules match `wanted`, ahead of every other rule; `s` is a cloudflare.Setup."""
     from .cloudflare import PERMISSIONS, ApiError  # noqa: PLC0415 - cloudflare imports this module
 
@@ -64,12 +100,13 @@ def ensure(s):
             f'{path}/{r["id"]}',
             {**{k: r[k] for k in RULE_FIELDS if k in r and r[k] is not None}, 'precedence': to},
         )
-    keep, bodies = set(), []
+    keep: set[str] = set()
+    bodies: list[tuple[Rule, str]] = []
     for n, (suffix, filters, action, traffic, identity) in enumerate(specs):
         name = s.named(suffix)
         keep.add(name)
-        spec = {'filters': filters, 'action': action, 'traffic': traffic, 'identity': identity}
-        body = {
+        spec: RuleSpec = {'filters': filters, 'action': action, 'traffic': traffic, 'identity': identity}
+        body: Rule = {
             'name': name,
             'description': f'made by agentlab ({_stamp(spec)}); agentctl cloudflare setup keeps it in step',
             'enabled': True,
@@ -112,7 +149,7 @@ RULE_FIELDS = (
 )
 
 
-def places(theirs, n):
+def places(theirs: list[Json], n: int) -> tuple[list[int], list[tuple[Json, int]]]:
     """(n precedences for agentlab's network rules, [(rule, new precedence)] for the account's network rules to move).
     Network and HTTP rules run in separate orders, so only the account's network rules matter for where agentlab's
     go: the n highest free numbers below its first one. Numbers are unique across all rules, so HTTP and DNS rules'
@@ -120,18 +157,20 @@ def places(theirs, n):
     rules in the way move up past them, keeping their order (moves run last first, so none ever collide)."""
     if not n:
         return [], []
-    held = {r['precedence']: r for r in theirs if isinstance(r.get('precedence'), int)}
+    held: dict[int, Json] = {r['precedence']: r for r in theirs if isinstance(r.get('precedence'), int)}
     network = sorted((r for r in held.values() if 'l4' in (r.get('filters') or [])), key=lambda r: r['precedence'])
     first = network[0]['precedence'] if network else max(held, default=0) + 1000
     below = [p for p in range(first - 1, -1, -1) if p not in held][:n]
     if len(below) == n:
         return sorted(below), []
-    slots, p = [], 0
+    slots: list[int] = []
+    p = 0
     while len(slots) < n:
         if p not in held:
             slots.append(p)
         p += 1
-    moves, floor = [], slots[-1] + 1
+    moves: list[tuple[Json, int]] = []
+    floor = slots[-1] + 1
     for r in network:
         if r['precedence'] >= floor:
             break
@@ -143,16 +182,21 @@ def places(theirs, n):
     return slots, moves[::-1]
 
 
-def _spec(body):
-    return {k: body[k] for k in ('filters', 'action', 'traffic', 'identity')}
+def _spec(body: Rule) -> RuleSpec:
+    return {
+        'filters': body['filters'],
+        'action': body['action'],
+        'traffic': body['traffic'],
+        'identity': body['identity'],
+    }
 
 
-def mine(s, rule):
+def mine(s: 'Setup', rule: Json) -> bool:
     name = str(rule.get('name', ''))
     return name == s.name or name.startswith(s.name + ' ')
 
 
-def drop(s):
+def drop(s: 'Setup') -> None:
     """No client in front any more: agentlab's Gateway rules go; nobody else's are touched."""
     path = f'/accounts/{s.account}/gateway/rules'
     try:

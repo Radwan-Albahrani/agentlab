@@ -8,35 +8,48 @@ import os
 import re
 import subprocess
 import time
-from typing import Any
+from collections.abc import Callable, Collection, Iterable
+from typing import TypedDict
 
 from . import coolify, render
-from .util import Failed, run, say, warn
+from .config import AgentCfg, Cluster
+from .coolify import StackKind
+from .util import Failed, Plan, run, say, warn
 
 LABEL = 'io.agentlab.cluster'
 
 
-def rendered(cfg, *parts):
+class ContainerRow(TypedDict):
+    """One row of `docker ps` for a stack; state and status are Docker's own words."""
+
+    name: str
+    state: str
+    status: str
+    service: str
+    rendered: str
+
+
+def rendered(cfg: Cluster, *parts: str) -> str:
     return os.path.join(cfg['data'], 'rendered', *parts)
 
 
-def stack_folder(cfg, stack):
+def stack_folder(cfg: Cluster, stack: str) -> str:
     return rendered(cfg, 'compose', stack)
 
 
-def compose_file(cfg, stack):
+def compose_file(cfg: Cluster, stack: str) -> str:
     return os.path.join(stack_folder(cfg, stack), 'docker-compose.yml')
 
 
-def _digest(text):
+def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _marker(cfg, stack):
+def _marker(cfg: Cluster, stack: str) -> str:
     return os.path.join(stack_folder(cfg, stack), '.deployed')
 
 
-def changed_since_deploy(cfg, stack, text):
+def changed_since_deploy(cfg: Cluster, stack: str, text: str) -> bool:
     try:
         with open(_marker(cfg, stack)) as f:
             return f.read().strip() != _digest(text)
@@ -44,19 +57,19 @@ def changed_since_deploy(cfg, stack, text):
         return True
 
 
-def mark_deployed(cfg, stack, text):
+def mark_deployed(cfg: Cluster, stack: str, text: str) -> None:
     with open(_marker(cfg, stack), 'w') as f:
         f.write(_digest(text))
 
 
-def networks(cfg):
+def networks(cfg: Cluster) -> list[tuple[str, str, str]]:
     """[(network, bridge interface, subnet)]: the edge's and one per agent."""
     return [(render.EDGE_NETWORK, render.EDGE_BRIDGE, render.EDGE_SUBNET)] + [
         (render.network(a['id']), render.bridge(a['id']), a['subnet']) for a in cfg['agents']
     ]
 
 
-def ensure_networks(cfg, plan):
+def ensure_networks(cfg: Cluster, plan: Plan) -> None:
     """Fixed subnets (the firewall names each agent's address); the agent is always .2."""
     for name, bridge, subnet in networks(cfg):
         rc, out = run(
@@ -91,13 +104,13 @@ def ensure_networks(cfg, plan):
         )
 
 
-def project(cfg, stack):
+def project(cfg: Cluster, stack: str) -> str:
     if cfg['deploy'] == 'coolify':
         return coolify.stack_uuid(stack_folder(cfg, stack)) or stack
     return stack
 
 
-def containers(cfg, stack, service=None, all_states=False):
+def containers(cfg: Cluster, stack: str, service: str | None = None, all_states: bool = False) -> list[str]:
     cmd = ['docker', 'ps', '-q', '--filter', f'label=com.docker.compose.project={project(cfg, stack)}']
     if service:
         cmd += ['--filter', f'label=com.docker.compose.service={service}']
@@ -106,9 +119,9 @@ def containers(cfg, stack, service=None, all_states=False):
     return run(cmd, check=False)[1].split()
 
 
-def stale_images(cfg, stack):
+def stale_images(cfg: Cluster, stack: str) -> list[str]:
     """Image tags newer than what running containers use; compared by creation time, since ids never match under containerd."""
-    out = set()
+    out: set[str] = set()
     for cid in containers(cfg, stack):
         rc, info = run(['docker', 'inspect', '-f', '{{.Config.Image}} {{.Created}}', cid], check=False)
         if rc or len(info.split()) != 2:
@@ -120,7 +133,7 @@ def stale_images(cfg, stack):
     return sorted(out)
 
 
-def _when(stamp):
+def _when(stamp: str) -> datetime.datetime:
     m = re.fullmatch(r'([\d-]+T[\d:]+)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)', stamp.strip())
     if not m:
         return datetime.datetime.min.replace(tzinfo=datetime.UTC)
@@ -139,7 +152,7 @@ class T3(enum.Enum):
 ASK_T3_S = 60
 
 
-def ask_t3(cfg: dict[str, Any], agent: dict[str, Any], question: str) -> object:
+def ask_t3(cfg: Cluster, agent: AgentCfg, question: str) -> object:
     """The agent's own answer about its T3 chats (`agent-t3 <question>` in its container, JSON), or why there is none.
     The host never opens the database itself: the agent's image carries the typed reader."""
     ids = containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
@@ -158,7 +171,7 @@ def ask_t3(cfg: dict[str, Any], agent: dict[str, Any], question: str) -> object:
     return got
 
 
-def agent_busy(cfg: dict[str, Any], agent: dict[str, Any]) -> bool:
+def agent_busy(cfg: Cluster, agent: AgentCfg) -> bool:
     """Whether a T3 turn is in progress (no end time and no finished status); a stopped agent is idle, one that
     can't answer counts as busy."""
     got = ask_t3(cfg, agent, 'busy')
@@ -167,11 +180,11 @@ def agent_busy(cfg: dict[str, Any], agent: dict[str, Any]) -> bool:
     return got if isinstance(got, bool) else True
 
 
-def agent_of(cfg, stack):
+def agent_of(cfg: Cluster, stack: str) -> AgentCfg | None:
     return next((a for a in cfg['agents'] if stack == f'agentlab-agent-{a["id"]}'), None)
 
 
-def why_deploy(cfg, stack, text, force=False):
+def why_deploy(cfg: Cluster, stack: str, text: str, force: bool = False) -> tuple[str, str]:
     """(reason to deploy or '', skip message or ''); a changed image restarts an agent only while idle, unless --force."""
     if force:
         return 'asked for', ''
@@ -189,7 +202,7 @@ def why_deploy(cfg, stack, text, force=False):
     return f'newer image: {", ".join(stale)}', ''
 
 
-def deploy(cfg, stack, kind, key, plan, force=False):
+def deploy(cfg: Cluster, stack: str, kind: StackKind, key: str | None, plan: Plan, force: bool = False) -> bool:
     """Bring one stack up to its rendered file and current images; True when it was (or would be) deployed."""
     path = compose_file(cfg, stack)
     with open(path) as f:
@@ -211,14 +224,15 @@ def deploy(cfg, stack, kind, key, plan, force=False):
     if not plan.dry:
         DEPLOYED.add(stack)
         mark_deployed(cfg, stack, text)
-        retry = None
+        retry: Callable[[list[str]], None] | None = None
         if cfg['deploy'] == 'coolify':
 
-            def retry(stuck):
+            def redeploy(stuck: list[str]) -> None:
                 for name in stuck:
                     force_remove(name)
                 coolify.deploy(api, cfg, stack, kind, key, stack_folder(cfg, stack), text)
 
+            retry = redeploy
         settle(cfg, stack, kind, text, on_stuck=retry)
         agent = agent_of(cfg, stack)
         if agent:  # the new container waits for this before its first downloads
@@ -233,11 +247,20 @@ STUCK_S = 3 * 60  # no container of the new render while an old one still stands
 LEFTOVER = re.compile(r'^[0-9a-f]{12}_')
 
 
-def deployed_this_run(stack):
+def deployed_this_run(stack: str) -> bool:
     return stack in DEPLOYED
 
 
-def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None, on_stuck=None):
+def settle(
+    cfg: Cluster,
+    stack: str,
+    kind: StackKind,
+    text: str,
+    timeout_s: int = SETTLE_S,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+    on_stuck: Callable[[list[str]], None] | None = None,
+) -> None:
     """Wait until every service runs in a container from this render; fail with their states otherwise. When an old
     container still stands STUCK_S in with no new one made for its service, on_stuck(the names) gets one go at it."""
     import time  # noqa: PLC0415 - patched in tests through the arguments
@@ -245,7 +268,8 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None, o
     sleep, clock = sleep or time.sleep, clock or time.time
     want, services = render.rendered_digest(text), compose_services(text)
     start = clock()
-    deadline, broken = start + timeout_s, []
+    deadline = start + timeout_s
+    broken: list[tuple[str, str]] = []
     while True:
         rows = stack_containers(cfg, stack)
         ours = [r for r in rows if not LEFTOVER.match(r['name']) and (not want or r['rendered'] == want)]
@@ -283,11 +307,11 @@ def settle(cfg, stack, kind, text, timeout_s=SETTLE_S, sleep=None, clock=None, o
     raise Failed(f'{stack} {why}: {states}{coolify_status(cfg, stack)}')
 
 
-def force_remove(name):
+def force_remove(name: str) -> None:
     """docker rm -f; when the runtime never reports the container's exit (a task stuck in the kernel, such as a crash
     dump that never finishes), its shim is killed first. The stuck task itself stays until the host reboots."""
 
-    def remove():
+    def remove() -> tuple[int, str]:
         try:
             return run(['docker', 'rm', '-f', name], check=False, timeout=120)
         except subprocess.TimeoutExpired:
@@ -309,19 +333,19 @@ def force_remove(name):
     )
 
 
-def docker_error(name):
+def docker_error(name: str) -> str:
     rc, out = run(['docker', 'inspect', '-f', '{{.State.Error}}', name], check=False)
     return out.strip() if rc == 0 else ''
 
 
-def _up(row, kind):
+def _up(row: ContainerRow, kind: StackKind) -> bool:
     return row['state'] == 'running' or (kind == 'companion' and row['status'].startswith('Exited (0)'))
 
 
-def compose_services(text):
+def compose_services(text: str) -> set[str]:
     """Service names of a rendered compose file (two-space keys under `services:`)."""
     body = text.split('\nservices:\n', 1)[-1] if '\nservices:\n' in text else ''
-    names = set()
+    names: set[str] = set()
     for line in body.splitlines():
         if line and not line.startswith(' '):
             break
@@ -331,18 +355,18 @@ def compose_services(text):
     return names
 
 
-def stack_containers(cfg, stack):
+def stack_containers(cfg: Cluster, stack: str) -> list[ContainerRow]:
     fmt = '{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}\t{{.Label "agentlab.rendered"}}'
     cmd = ['docker', 'ps', '-a', '--filter', f'label=com.docker.compose.project={project(cfg, stack)}', '--format', fmt]
     out = []
     for line in run(cmd, check=False)[1].splitlines():
-        parts = line.split('\t')
-        if len(parts) == 5:
-            out.append(dict(zip(('name', 'state', 'status', 'service', 'rendered'), parts, strict=True)))
+        match line.split('\t'):
+            case [name, state, status, service, digest]:
+                out.append(ContainerRow(name=name, state=state, status=status, service=service, rendered=digest))
     return out
 
 
-def coolify_status(cfg, stack):
+def coolify_status(cfg: Cluster, stack: str) -> str:
     """'; Coolify reports …' for a failure message, when Coolify deploys this stack and answers."""
     uuid = coolify.stack_uuid(stack_folder(cfg, stack)) if cfg['deploy'] == 'coolify' else None
     if not uuid:
@@ -354,7 +378,7 @@ def coolify_status(cfg, stack):
     return f'; Coolify reports the service as {status}' if status else ''
 
 
-def connect(cfg, plan):
+def connect(cfg: Cluster, plan: Plan) -> None:
     """Connect the edge, gate and hub to every agent network; recreates drop this, so it reruns every apply."""
     for service, alias in (('edge', None), ('gate', 'gate'), ('hub', 'hub')):
         for cid in containers(cfg, 'agentlab-core', service):
@@ -366,7 +390,7 @@ def connect(cfg, plan):
                     plan.do(f'connect {service} to {net}', cmd)
 
 
-def isolate(cfg, plan, agents=None):
+def isolate(cfg: Cluster, plan: Plan, agents: Iterable[AgentCfg] | None = None) -> None:
     """Keep each agent container on its own network only (Coolify adds one; the firewall knows only agentlab-<id>)."""
     for a in cfg['agents'] if agents is None else agents:
         for cid in containers(cfg, f'agentlab-agent-{a["id"]}', 'agent'):
@@ -375,7 +399,7 @@ def isolate(cfg, plan, agents=None):
                 plan.do(f'take agent {a["id"]} off {net}', ['docker', 'network', 'disconnect', net, cid])
 
 
-def stop(cfg, stack, plan):
+def stop(cfg: Cluster, stack: str, plan: Plan) -> None:
     if cfg['deploy'] == 'coolify' and coolify.stack_uuid(stack_folder(cfg, stack)):
         uuid = coolify.stack_uuid(stack_folder(cfg, stack))
         plan.do(f'stop {stack}', fn=lambda: coolify.Api(cfg).call('POST', f'/services/{uuid}/stop'))
@@ -383,7 +407,7 @@ def stop(cfg, stack, plan):
         plan.do(f'stop {stack}', ['docker', 'compose', '-p', stack, '-f', compose_file(cfg, stack), 'stop'])
 
 
-def revive(cfg, plan, only=None):
+def revive(cfg: Cluster, plan: Plan, only: Collection[str] | None = None) -> None:
     """Start agentlab's long-running containers that are stopped (a deploy only follows compose changes, so a container
     stopped by hand or by a disk shrink that couldn't restart it stayed down through every apply)."""
     for stack in render.stacks(cfg):
@@ -401,7 +425,7 @@ def revive(cfg, plan, only=None):
                 plan.do(f'start {name} (it was stopped)', ['docker', 'start', cid])
 
 
-def start(cfg, stack, plan):
+def start(cfg: Cluster, stack: str, plan: Plan) -> None:
     if cfg['deploy'] == 'coolify' and coolify.stack_uuid(stack_folder(cfg, stack)):
         uuid = coolify.stack_uuid(stack_folder(cfg, stack))
         plan.do(f'start {stack}', fn=lambda: coolify.Api(cfg).call('POST', f'/services/{uuid}/start'))
@@ -409,7 +433,7 @@ def start(cfg, stack, plan):
         plan.do(f'start {stack}', ['docker', 'compose', '-p', stack, '-f', compose_file(cfg, stack), 'up', '-d'])
 
 
-def remove(cfg, stack, plan):
+def remove(cfg: Cluster, stack: str, plan: Plan) -> None:
     """Stop and delete a stack's containers (never its data)."""
     folder = stack_folder(cfg, stack)
     uuid = coolify.stack_uuid(folder) if cfg['deploy'] == 'coolify' else None
@@ -426,18 +450,18 @@ def remove(cfg, stack, plan):
         plan.do(f'remove {folder}', fn=lambda: _rmtree(folder))
 
 
-def _rmtree(folder):
+def _rmtree(folder: str) -> None:
     for name in os.listdir(folder):
         os.remove(os.path.join(folder, name))
     os.rmdir(folder)
 
 
-def remove_network(name, plan):
+def remove_network(name: str, plan: Plan) -> None:
     if run(['docker', 'network', 'inspect', name], check=False)[0] == 0:
         plan.do(f'remove network {name}', fn=lambda: _disconnect_and_remove(name))
 
 
-def _disconnect_and_remove(name, tries=20, sleep=time.sleep):
+def _disconnect_and_remove(name: str, tries: int = 20, sleep: Callable[[float], None] = time.sleep) -> None:
     """Retried: Coolify deletes a stack in the background, so its containers can still be leaving."""
     for _ in range(tries):
         info = json.loads(run(['docker', 'network', 'inspect', name])[1])[0]
@@ -450,7 +474,7 @@ def _disconnect_and_remove(name, tries=20, sleep=time.sleep):
     raise Failed(f'could not remove network {name}: {out}')
 
 
-def orphans(cfg):
+def orphans(cfg: Cluster) -> list[str]:
     """Rendered stacks no longer in the config (an agent or companion removed by hand from cluster.toml)."""
     folder = rendered(cfg, 'compose')
     known = set(render.stacks(cfg))

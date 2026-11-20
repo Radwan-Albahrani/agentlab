@@ -9,7 +9,8 @@ POOL_HEADROOM_MB = 2048  # keeps admissions below the slice's MemoryHigh
 AGENT_HEADROOM_MB = 1024  # room for the agent's own T3, chats and MCP servers
 MEMORY_PRESSURE_MAX = 10  # PSI memory "some" avg10, %; swap in use alone isn't pressure (pages stay swapped out)
 
-IO_PRESSURE_MAX = (_cfg.get('limits') or {}).get('throttle', {}).get('io_psi_max', 25)  # PSI io "some" avg10, %
+_throttle = (_cfg.get('limits') or cluster.Limits()).get('throttle', cluster.Throttle())
+IO_PRESSURE_MAX = _throttle.get('io_psi_max', 25)  # PSI io "some" avg10, %
 ADMIT_GAP_S = 10  # PSI avg10 needs this long to show a new job's load
 
 MAX_WAIT_S = 480  # then the job runs anyway, so agents' tool calls never time out

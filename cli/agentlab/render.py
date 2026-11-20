@@ -3,8 +3,14 @@
 import grp
 import hashlib
 import re
+from typing import Any
 
 from . import config, images, yaml
+from .config import AgentCfg, Cluster, CompanionCfg
+from .coolify import StackKind
+from .images import ImageName
+
+Doc = dict[str, Any]  # a compose file, service or Traefik config: YAML for outside tools, no fixed shape
 
 TRAEFIK = 'traefik:v3.3.4'
 CLOUDFLARED = 'cloudflare/cloudflared:2026.10.1'
@@ -33,36 +39,36 @@ TINYAUTH_HEADERS = ['Remote-User', 'Remote-Email', 'Remote-Name', 'Remote-Groups
 PRIORITY = {'tool': 500, 'menu': 400, 't3': 200, 'gate': 100}
 
 
-def network(agent_id):
+def network(agent_id: str) -> str:
     return f'agentlab-{agent_id}'
 
 
-def bridge(agent_id):
+def bridge(agent_id: str) -> str:
     """The host interface of an agent's network (Linux caps names at 15 characters)."""
     name = f'al-{agent_id}'
     return name if len(name) <= 15 else 'al-' + hashlib.sha1(agent_id.encode()).hexdigest()[:12]
 
 
-def stacks(cfg):
+def stacks(cfg: Cluster) -> dict[str, tuple[StackKind, str | None]]:
     """{stack name: (kind, key)} in deploy order (core first)."""
-    out = {'agentlab-core': ('core', None)}
+    out: dict[str, tuple[StackKind, str | None]] = {'agentlab-core': ('core', None)}
     out.update({f'agentlab-agent-{a["id"]}': ('agent', a['id']) for a in cfg['agents']})
     out.update({f'agentlab-companion-{c["name"]}': ('companion', c['name']) for c in cfg['companions']})
     return out
 
 
-def _image(cfg, name):
+def _image(cfg: Cluster, name: ImageName) -> dict[str, str]:
     out = {'image': images.ref(cfg, name)}
     if images.local(cfg):
         out['pull_policy'] = 'never'
     return out
 
 
-def _external(name):
+def _external(name: str) -> Doc:
     return {name: {'external': True, 'name': name}}
 
 
-def public_hosts(cfg):
+def public_hosts(cfg: Cluster) -> list[str]:
     """Every hostname people or apps reach; the tunnel, DNS and certificates cover exactly these."""
     hosts = [
         cfg['domain'],
@@ -74,7 +80,7 @@ def public_hosts(cfg):
     return list(dict.fromkeys(h for h in hosts if h))
 
 
-def private_names(cfg):
+def private_names(cfg: Cluster) -> list[str]:
     """The names Cloudflare routes privately to this cluster (T3 app names only with HTTPS)."""
     if not config.private_network(cfg):
         return []
@@ -82,13 +88,13 @@ def private_names(cfg):
     return [h for h in hosts if h]
 
 
-def wildcard(host):
+def wildcard(host: str) -> str:
     """The wildcard certificate name covering `host` (*.<parent>); '' when the parent is a bare TLD."""
     parent = host.split('.', 1)[1] if '.' in host else ''
     return f'*.{parent}' if parent.count('.') >= 1 else ''
 
 
-def edge_service(cfg):
+def edge_service(cfg: Cluster) -> Doc:
     data, auth = cfg['data'], cfg['auth']
     private = config.private_network(cfg)
     # No host ports: the tunnel container reaches the edge directly (Coolify's proxy may hold 80).
@@ -118,7 +124,7 @@ def edge_service(cfg):
         ]
         ports += ['80:80', '443:443']
         volumes.append(f'{data}/edge-acme:/acme')
-    environment = {}
+    environment: dict[str, str] = {}
     if config.private_https(cfg):
         # Private names: DNS challenge with a file-mounted token, via public resolvers (Docker's DNS answers with aliases).
         command += [
@@ -131,7 +137,7 @@ def edge_service(cfg):
         ]
         environment['CF_DNS_API_TOKEN_FILE'] = ACME_TOKEN
         volumes += [f'{data}/edge-acme:/acme', f'{cfg["cloudflare"]["acme_token_file"]}:{ACME_TOKEN}:ro']
-    out = {
+    out: Doc = {
         'image': TRAEFIK,
         'restart': 'unless-stopped',
         'command': command,
@@ -147,7 +153,7 @@ def edge_service(cfg):
     return out
 
 
-def cloudflared_service(cfg):
+def cloudflared_service(cfg: Cluster) -> Doc:
     """The tunnel container for private names; its token comes from a file, never the compose text."""
     return {
         'image': CLOUDFLARED,
@@ -167,18 +173,18 @@ def cloudflared_service(cfg):
     }
 
 
-def people(cfg):
+def people(cfg: Cluster) -> list[str]:
     """Everyone allowed to sign in by name: agent owners and admins."""
     return sorted({a['owner'] for a in cfg['agents']} | set(cfg['auth']['admins']))
 
 
-def tinyauth_whitelist(cfg):
+def tinyauth_whitelist(cfg: Cluster) -> str:
     """tinyauth's OAuth whitelist: the people by name plus one /regex/ entry per allowed email domain."""
     domains = [r'/^[^@]+@' + re.escape(d) + '$/' for d in cfg['auth']['allow_domains']]
     return ','.join(people(cfg) + domains)
 
 
-def tinyauth_service(cfg):
+def tinyauth_service(cfg: Cluster) -> Doc:
     t = cfg['tinyauth']
     return {
         'image': t['image'],
@@ -202,17 +208,17 @@ def tinyauth_service(cfg):
     }
 
 
-def person_mounts(cfg):
+def person_mounts(cfg: Cluster) -> list[str]:
     if cfg['storage']['mode'] != 'per-person':
         return []
     return sorted({f'{cfg["data"]}/people/{config.person(a["owner"])}' for a in cfg['agents']})
 
 
-def storage_root(cfg):
+def storage_root(cfg: Cluster) -> str:
     return f'{cfg["data"]}/people' if cfg['storage']['mode'] == 'per-person' else f'{cfg["data"]}/agents'
 
 
-def core(cfg):
+def core(cfg: Cluster) -> Doc:
     data = cfg['data']
     mounts = [f'{data}/rendered:/etc/agentlab:ro']
     none = cfg['auth']['mode'] == 'none'
@@ -223,7 +229,7 @@ def core(cfg):
     if config.private_https(cfg):
         gate_mounts = [*mounts, f'{data}/{GATE_SECRETS_DIR}:{GATE_SECRETS}:ro']
         gate_env['GATE_SECRETS'] = GATE_SECRETS
-    services = {
+    services: dict[str, Doc] = {
         'edge': edge_service(cfg),
         'gate': {
             **_image(cfg, 'gate'),
@@ -286,14 +292,14 @@ def core(cfg):
     return {'services': services, 'networks': _external(EDGE_NETWORK)}
 
 
-def kvm_gid():
+def kvm_gid() -> int | None:
     try:
         return grp.getgrnam('kvm').gr_gid
     except KeyError:
         return None
 
 
-def hub_address(cfg):
+def hub_address(cfg: Cluster) -> str:
     """host[:port] people reach the hub on: its own name, or on Tailscale the shared MagicDNS name on hub_port."""
     auth = cfg['auth']
     if auth['ingress'] == 'tailscale' and cfg['hub_domain'] == cfg['domain']:
@@ -301,9 +307,9 @@ def hub_address(cfg):
     return cfg['hub_domain']
 
 
-def agent(cfg, a):
+def agent(cfg: Cluster, a: AgentCfg) -> Doc:
     data, aid, home = cfg['data'], a['id'], a['path']
-    svc = {
+    svc: Doc = {
         **({'image': a['image']} if a['image'] else _image(cfg, 'agent')),
         'restart': 'unless-stopped',
         'hostname': a['hostname'],
@@ -362,14 +368,14 @@ def agent(cfg, a):
     return {'services': {'agent': svc, 'files': files(cfg, a)}, 'networks': _external(network(aid))}
 
 
-def files_data(cfg, a):
+def files_data(cfg: Cluster, a: AgentCfg) -> str:
     """File Browser's config and database on the host, so the agent can't rewrite them."""
     return f'{cfg["data"]}/files/{a["id"]}'
 
 
-def files(cfg, a):
+def files(cfg: Cluster, a: AgentCfg) -> Doc:
     """The agent's File Browser at /_agentlab/files/; no login of its own, the gate already authorized."""
-    svc = {
+    svc: Doc = {
         'image': FILEBROWSER,
         'restart': 'unless-stopped',
         'user': '1000:1000',
@@ -387,7 +393,7 @@ def files(cfg, a):
     return svc
 
 
-def files_config(cfg):
+def files_config(cfg: Cluster) -> str:
     """config.yaml for every agent's File Browser."""
     rules = [{'folderName': n} for n in ('node_modules', '.git', '.next', 'dist', '.turbo')]
     return yaml.dump(
@@ -406,15 +412,15 @@ def files_config(cfg):
     )
 
 
-def agent_of(cfg, comp):
+def agent_of(cfg: Cluster, comp: CompanionCfg) -> AgentCfg:
     return next(a for a in cfg['agents'] if a['id'] == comp['agent'])
 
 
-def companion_checkout(cfg, comp):
+def companion_checkout(cfg: Cluster, comp: CompanionCfg) -> str:
     return f'{agent_of(cfg, comp)["path"]}/workspace/companions/{comp["name"]}'
 
 
-def companion(cfg, comp):
+def companion(cfg: Cluster, comp: CompanionCfg) -> Doc:
     """The companion runs its agent's checkout read-only, as uid 1000."""
     data, name, aid = cfg['data'], comp['name'], comp['agent']
     agent_home = agent_of(cfg, comp)['path']
@@ -452,27 +458,31 @@ def companion(cfg, comp):
     }
 
 
-def go_literal(text):
+def go_literal(text: str) -> str:
     """Escape for Go's RE2 inside a Traefik rule: only regex metacharacters, so the result stays valid RE2."""
     return ''.join('\\' + ch if ch in '\\.+*?()|[]{}^$' else ch for ch in text)
 
 
-def edge(cfg):
+def edge(cfg: Cluster) -> Doc:
     """Traefik's dynamic config in two passes (docs/architecture.md, "Edge: two passes")."""
     auth = cfg['auth']
     mode, ingress = auth['mode'], auth['ingress']
-    routers, services, middlewares = {}, {}, {}
+    routers: dict[str, Doc] = {}
+    services: dict[str, Doc] = {}
+    middlewares: dict[str, Doc] = {}
     https = ingress == 'public' or config.private_https(cfg)
     # Private HTTPS keeps plain HTTP on `ingress`; the gate redirects it once Access covers 443.
     pass1 = ['ingress', 'websecure'] if https else ['ingress']
 
-    def route(name, rule, service, chain, entrypoints, priority=None):
+    def route(
+        name: str, rule: str, service: str, chain: list[str], entrypoints: list[str], priority: int | None = None
+    ) -> None:
         if https and 'websecure' in entrypoints and len(entrypoints) > 1:
             # A tls router serves TLS only, so plain HTTP needs its own router (#25).
             plain = [e for e in entrypoints if e != 'websecure']
             route(f'{name}-http', rule, service, chain, plain, priority)
             entrypoints = ['websecure']
-        r = {'entryPoints': entrypoints, 'rule': rule, 'service': service}
+        r: Doc = {'entryPoints': entrypoints, 'rule': rule, 'service': service}
         if chain:
             r['middlewares'] = chain
         if priority is not None:
@@ -484,10 +494,10 @@ def edge(cfg):
                 r['tls']['domains'] = [{'main': wildcard(host.group(1))}]
         routers[name] = r
 
-    def lb(name, url):
+    def lb(name: str, url: str) -> None:
         services[name] = {'loadBalancer': {'servers': [{'url': url}], 'passHostHeader': True}}
 
-    def strip(name, site=None):
+    def strip(name: str, site: str | None = None) -> str:
         """Delete what a client could forge ('' removes a header)."""
         forged = CLIENT_HEADERS + (TINYAUTH_HEADERS if mode == 'tinyauth' else [])
         headers = dict.fromkeys(forged, '')
@@ -536,7 +546,7 @@ def edge(cfg):
             entry = ['websecure'] if config.private_https(cfg) else pass1
             route(f'pair-{a["id"]}', f'Host(`{a["pair_host"]}`)', f'{a["id"]}-t3', [strip('strip')], entry)
 
-    def site(name):
+    def site(name: str) -> str:
         return f'Header(`X-Agentlab-Site`, `{name}`)'
 
     middlewares['strip-accounts'] = {'stripPrefix': {'prefixes': ['/_agentlab/accounts']}}
@@ -573,7 +583,7 @@ def edge(cfg):
     return {'http': {'routers': routers, 'services': services, 'middlewares': middlewares}}
 
 
-def firewall(cfg):
+def firewall(cfg: Cluster) -> str:
     """nftables rules: agents may answer but never open connections to the core, other agents or the host."""
     ips = [config.agent_ip(a) for a in cfg['agents']]
     elements = f'        elements = {{ {", ".join(ips)} }}\n' if ips else ''
@@ -599,7 +609,7 @@ def firewall(cfg):
     )
 
 
-def all_files(cfg):
+def all_files(cfg: Cluster) -> dict[str, str]:
     files = {
         'cluster.json': config.to_json(cfg),
         'edge/dynamic.yml': yaml.dump(edge(cfg), GENERATED),
@@ -608,7 +618,7 @@ def all_files(cfg):
     by_id = {a['id']: a for a in cfg['agents']}
     by_name = {c['name']: c for c in cfg['companions']}
     for stack, (kind, key) in stacks(cfg).items():
-        if kind == 'core':
+        if kind == 'core' or key is None:  # only the core stack has no key
             body = core(cfg)
         elif kind == 'agent':
             body = agent(cfg, by_id[key])
@@ -621,7 +631,7 @@ def all_files(cfg):
 RENDERED_LABEL = 'agentlab.rendered'
 
 
-def stamped(body):
+def stamped(body: Doc) -> Doc:
     """Label every service with the stack's render digest, so a deploy can tell its own containers."""
     digest = hashlib.sha256(yaml.dump(body, '').encode()).hexdigest()[:16]
     for service in body.get('services', {}).values():
@@ -629,7 +639,7 @@ def stamped(body):
     return body
 
 
-def rendered_digest(text):
+def rendered_digest(text: str) -> str:
     """The digest stamped into a rendered compose file, or '' (a file rendered before stamping existed)."""
     m = re.search(rf'{re.escape(RENDERED_LABEL)}: "?(\w+)', text)
     return m.group(1) if m else ''

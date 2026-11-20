@@ -25,28 +25,28 @@ class Job:
     known: bool = False  # a measured peak exists for this signature
 
 
-def homes():
+def homes() -> dict[str, str]:
     """{agent id: home}; re-reads cluster.json each call so new agents join without a restart."""
     return {a['id']: os.path.join(a['path'], 'home') for a in cluster.load().get('agents') or [] if a.get('path')}
 
 
-def agents():
+def agents() -> dict[str, str]:
     return {aid: home for aid, home in homes().items() if os.path.isdir(home)}
 
 
-def folder(home):
+def folder(home: str) -> Folder:
     return Folder(home, SPOOL, create=True)
 
 
-def prepare(home):
+def prepare(home: str) -> None:
     with folder(home) as f:
         f.write_json('settings.json', {'max_wait_s': MAX_WAIT_S})
         f.write_json('broker.alive', {'at': time.time()})
 
 
-def jobs(agent, home):
+def jobs(agent: str, home: str) -> list[Job]:
     """A job counts as running once admitted or started on its own after the max wait."""
-    out = []
+    out: list[Job] = []
     with folder(home) as f:
         for name in f.names('.job'):
             meta = f.read_json(name)
@@ -72,9 +72,9 @@ def jobs(agent, home):
     return out
 
 
-def finished(home):
+def finished(home: str) -> list[tuple[str, int | None]]:
     """[(signature, peak_mb or None)] of ended jobs; consumes their records."""
-    out = []
+    out: list[tuple[str, int | None]] = []
     with folder(home) as f:
         for name in f.names('.done'):
             record = f.read_json(name)
@@ -85,18 +85,18 @@ def finished(home):
     return out
 
 
-def admit(home, job):
+def admit(home: str, job: Job) -> None:
     with folder(home) as f:
         f.write_json(job.id + '.go', {'estimate_mb': job.estimate_mb})
 
 
-def forget(home, job):
+def forget(home: str, job: Job) -> None:
     with folder(home) as f:
         for ext in ('.job', '.go', '.run'):
             f.remove(job.id + ext)
 
 
-def publish_status(home, agent_jobs):
+def publish_status(home: str, agent_jobs: list[Job]) -> None:
     ordered = sorted(agent_jobs, key=lambda j: j.created)
     with folder(home) as f:
         f.write_json(

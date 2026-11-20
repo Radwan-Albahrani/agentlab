@@ -4,6 +4,8 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
+from typing import Literal, TypeGuard, get_args
 
 import cluster
 from safe import Folder
@@ -11,6 +13,9 @@ from safe import Folder
 from . import host, store
 from .settings import AGENTCTL, DATA
 
+Action = Literal['create', 'remove', 'secret', 'settings', 'restart', 'stop', 'start']
+Payload = dict[str, object]  # the request file's JSON object, from the agent
+Result = tuple[bool, str]  # (ok, message for the agent)
 NAME = re.compile(r'^(create|remove|secret|settings|restart|stop|start)~companion~([a-z0-9][a-z0-9-]{0,28}[a-z0-9])$')
 MAX_PAYLOAD = 64 * 1024
 MAX_PER_TICK = 20  # an agent flooding its folder can't keep the watcher busy
@@ -25,12 +30,18 @@ SECRET_KEYS = {
 }
 
 
-def parse(filename):
+def parse(filename: str) -> tuple[Action, str] | None:
     m = NAME.match(filename)
-    return (m.group(1), m.group(2)) if m else None
+    if not m or not _is_action(action := m.group(1)):
+        return None
+    return action, m.group(2)
 
 
-def companion_containers(name):
+def _is_action(name: str) -> TypeGuard[Action]:
+    return name in get_args(Action)
+
+
+def companion_containers(name: str) -> list[str]:
     """Asks Docker first (the snapshot may miss new companions), then the inventory (Coolify uuid-named stacks)."""
     stack = f'agentlab-companion-{name}'
     rc, out = host.run(
@@ -40,7 +51,7 @@ def companion_containers(name):
     return names or [c['name'] for c in store.load('containers.json', {}).get('items') or [] if c.get('stack') == stack]
 
 
-def _docker(action, name, _agent, _payload):
+def _docker(action: Action, name: str, _agent: str, _payload: Payload) -> Result:
     names = companion_containers(name)
     if not names:
         return False, f'companion {name} has no container yet'
@@ -48,7 +59,7 @@ def _docker(action, name, _agent, _payload):
     return rc == 0, f'{action} {name}: done' if rc == 0 else out[-300:]
 
 
-def _agentctl(*args):
+def _agentctl(*args: str) -> Result:
     rc, out = host.run(['python3', AGENTCTL, '--json', *args], timeout=1800)
     try:
         reply = json.loads(out[out.index('{') :])
@@ -57,19 +68,19 @@ def _agentctl(*args):
     return reply.get('ok', False), reply.get('error') or '; '.join(reply.get('messages') or []) or 'done'
 
 
-def _create(_action, name, agent, payload):
+def _create(_action: Action, name: str, agent: str, payload: Payload) -> Result:
     display = str(payload.get('display_name') or name)[:60]
     kind = str(payload.get('kind') or 'slack')
     return _agentctl('companion', 'create', agent, name, '--display-name', display, '--kind', kind)
 
 
-def _remove(_action, name, agent, _payload):
+def _remove(_action: Action, name: str, agent: str, _payload: Payload) -> Result:
     return _agentctl('companion', 'remove', agent, name)
 
 
-def _secret(_action, name, _agent, payload):
+def _secret(_action: Action, name: str, _agent: str, payload: Payload) -> Result:
     key, value = payload.get('key'), payload.get('value')
-    if key not in SECRET_KEYS:
+    if not isinstance(key, str) or key not in SECRET_KEYS:
         return False, f'unknown secret {key!r}; known: {", ".join(sorted(SECRET_KEYS))}'
     if not isinstance(value, str) or not value.strip():
         return False, 'the secret value must be a non-empty string'
@@ -79,7 +90,7 @@ def _secret(_action, name, _agent, payload):
     return True, f'{key} saved for {name}; it restarts within a minute to pick it up'
 
 
-def _settings(_action, name, _agent, payload):
+def _settings(_action: Action, name: str, _agent: str, payload: Payload) -> Result:
     os.makedirs(f'{DATA}/companions', exist_ok=True)
     with Folder(f'{DATA}/companions', name, create=True) as f:
         current = f.read_json('settings.json')
@@ -88,7 +99,7 @@ def _settings(_action, name, _agent, payload):
     return True, f'settings of {name} updated: {", ".join(sorted(payload)) or "nothing"}'
 
 
-HANDLERS = {
+HANDLERS: dict[Action, Callable[[Action, str, str, Payload], Result]] = {
     'create': _create,
     'remove': _remove,
     'secret': _secret,
@@ -99,15 +110,15 @@ HANDLERS = {
 }
 
 
-def decide(action, name, agent, mine, payload):
+def decide(action: Action, name: str, agent: str, mine: set[str], payload: object) -> Result:
     if action != 'create' and name not in mine:
         return False, f'{name} is not one of your companions'
     if action in ('create', 'secret', 'settings') and not isinstance(payload, dict):
         return False, 'this request needs a JSON object in the file'
-    return HANDLERS[action](action, name, agent, payload)
+    return HANDLERS[action](action, name, agent, payload if isinstance(payload, dict) else {})  # others ignore it
 
 
-def _payload(text):
+def _payload(text: str | None) -> object:
     if not text or not text.strip():
         return {}
     try:
@@ -116,7 +127,7 @@ def _payload(text):
         return None
 
 
-def handle(agent, mine):
+def handle(agent: cluster.Agent, mine: set[str]) -> None:
     home = os.path.join(agent['path'], 'home')
     if not os.path.isdir(home):
         return
@@ -151,9 +162,9 @@ def handle(agent, mine):
             store.event('companion', f'{agent["id"]}: {action} {name}', message, ok=ok)
 
 
-def handle_all():
+def handle_all() -> None:
     cfg = cluster.load()
-    owned = {}
+    owned: dict[str, set[str]] = {}
     for c in cfg.get('companions') or []:
         owned.setdefault(c.get('agent'), set()).add(c.get('name'))
     for a in cfg.get('agents') or []:

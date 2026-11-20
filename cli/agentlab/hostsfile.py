@@ -1,17 +1,19 @@
 """agentlab's marked block in /etc/hosts; apply only removes it now, nothing outside it is touched."""
 
-from .util import write_if_changed
+from collections.abc import Sequence
+
+from .util import Plan, write_if_changed
 
 PATH = '/etc/hosts'
 BEGIN = '# BEGIN agentlab (private names: cloudflared resolves them to the edge)'
 END = '# END agentlab'
 
 
-def block(names):
+def block(names: Sequence[str]) -> str:
     return '' if not names else '\n'.join([BEGIN, *(f'127.0.0.1 {n}' for n in names), END]) + '\n'
 
 
-def merged(text, names):
+def merged(text: str, names: Sequence[str]) -> str:
     """`text` with agentlab's block replaced by one for `names` (or removed when there are none)."""
     lines = text.splitlines(keepends=True)
     if BEGIN in text and END in text:
@@ -24,7 +26,7 @@ def merged(text, names):
     return kept + block(names)
 
 
-def ensure(names, plan, path=PATH):
+def ensure(names: Sequence[str], plan: Plan, path: str = PATH) -> None:
     try:
         with open(path) as f:
             text = f.read()

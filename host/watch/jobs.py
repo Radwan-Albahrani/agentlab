@@ -6,9 +6,30 @@ import json
 import os
 import re
 import time
+from typing import Literal, NotRequired, TypedDict
 
 from . import host, store
 from .settings import AGENTCTL
+
+JobArgs = dict[str, object]  # the admin's form, checked by command()
+JobState = Literal['running', 'done', 'failed']  # 'queued' is the hub's name for a file still in jobs/queue
+
+
+class Job(TypedDict):
+    """jobs/<id>.json."""
+
+    id: str
+    op: str
+    args: JobArgs
+    by: str
+    queued: float
+    title: str
+    state: NotRequired[JobState]
+    ok: NotRequired[bool]
+    message: NotRequired[str]
+    started: NotRequired[float]
+    finished: NotRequired[float]
+
 
 ID = re.compile(r'^[a-z][a-z0-9-]{0,30}[a-z0-9]$|^[a-z]$')
 EMAIL = re.compile(r'^[^@\s/]+@[^@\s/]+\.[^@\s/]+$')
@@ -21,17 +42,17 @@ LOST_AFTER_S = 15  # a unit gone with no exit code
 RUN_AND_KEEP_EXIT = '"$@"; echo $? > "$0"'  # sh -c: run agentctl, then write its exit code to the file in $0
 
 
-def _memory(v):
-    v = str(v).strip().lower()
+def _memory(raw: object) -> str | None:
+    v = str(raw).strip().lower()
     return v if v in ('default', 'auto') or SIZE.match(v) else None
 
 
-def _cpus(v):
-    v = str(v).strip().lower()
+def _cpus(raw: object) -> str | None:
+    v = str(raw).strip().lower()
     return v if v == 'default' or (CPUS.match(v) and float(v) > 0) else None
 
 
-def _limits(args):
+def _limits(args: JobArgs) -> list[str]:
     out = []
     for key, flag, check in (('memory', '--memory', _memory), ('cpus', '--cpus', _cpus)):
         if args.get(key) not in (None, ''):
@@ -42,14 +63,14 @@ def _limits(args):
     return out
 
 
-def _agent_id(args):
+def _agent_id(args: JobArgs) -> str:
     aid = str(args.get('id', ''))
     if not ID.match(aid):
         raise ValueError('agent names are lowercase letters, digits and dashes')
     return aid
 
 
-def command(op, args):
+def command(op: str, args: JobArgs) -> tuple[list[str], str]:
     """(agentctl arguments, title) for a job; ValueError for anything not allowed."""
     if op == 'agent.add':
         aid, email = _agent_id(args), str(args.get('email', '')).strip().lower()
@@ -84,19 +105,19 @@ def command(op, args):
     raise ValueError(f'unknown job {op!r}')
 
 
-def _unit(job_id):
+def _unit(job_id: str) -> str:
     return f'agentlab-job-{job_id}'
 
 
-def _save(job):
+def _save(job: Job) -> None:
     store.dump(f'jobs/{job["id"]}.json', job)
 
 
-def start(job):
+def start(job: Job) -> None:
     try:
         argv, job['title'] = command(job.get('op'), job.get('args') or {})
     except ValueError as e:
-        job.update(state='failed', ok=False, message=str(e), started=time.time(), finished=time.time())
+        job.update({'state': 'failed', 'ok': False, 'message': str(e), 'started': time.time(), 'finished': time.time()})
         _save(job)
         return
     log, rc = store.path('jobs', f'{job["id"]}.log'), store.path('jobs', f'{job["id"]}.rc')
@@ -121,13 +142,13 @@ def start(job):
         *argv,
     ]
     code, out = host.run(cmd)
-    job.update(state='running' if code == 0 else 'failed', started=time.time())
+    job.update({'state': 'running' if code == 0 else 'failed', 'started': time.time()})
     if code:
-        job.update(ok=False, message=f'could not start: {out[-300:]}', finished=time.time())
+        job.update({'ok': False, 'message': f'could not start: {out[-300:]}', 'finished': time.time()})
     _save(job)
 
 
-def _summary(log_path, ok):
+def _summary(log_path: str, ok: bool) -> str:
     """The line worth showing: agentctl's error, else its last warning, else 'Done.'."""
     try:
         with open(log_path) as f:
@@ -143,7 +164,7 @@ def _summary(log_path, ok):
     return lines[-1] if lines else ''
 
 
-def follow(job):
+def follow(job: Job) -> None:
     rc_path, log = store.path('jobs', f'{job["id"]}.rc'), store.path('jobs', f'{job["id"]}.log')
     if os.path.exists(rc_path):
         with open(rc_path) as f:
@@ -154,30 +175,30 @@ def follow(job):
         return
     else:
         ok, message = False, 'stopped without an exit code (did the host restart?); check the log, then try again'
-    job.update(state='done' if ok else 'failed', ok=ok, finished=time.time(), message=message)
+    job.update({'state': 'done' if ok else 'failed', 'ok': ok, 'finished': time.time(), 'message': message})
     _save(job)
     store.event('agents', job['title'] + (' done' if ok else ' failed'), message[:300], ok=ok)
 
 
-def jobs():
+def jobs() -> list[Job]:
     folder = store.path('jobs')
-    out = []
+    out: list[Job] = []
     for name in os.listdir(folder) if os.path.isdir(folder) else []:
         if name.endswith('.json') and JOB.match(name[:-5]):
-            j = store.load(f'jobs/{name}', None)
+            j: Job | None = store.load(f'jobs/{name}', None)
             if isinstance(j, dict):
                 out.append(j)
     return sorted(out, key=lambda j: j['id'])
 
 
-def _prune(finished):
+def _prune(finished: list[Job]) -> None:
     for j in finished[:-KEEP_JOBS]:
         for ext in ('json', 'log'):
             with contextlib.suppress(OSError):
                 os.remove(store.path('jobs', f'{j["id"]}.{ext}'))
 
 
-def tick():
+def tick() -> None:
     """One job at a time, oldest first (agentctl also waits for any other change, such as the nightly update)."""
     queue = store.path('jobs', 'queue')
     os.makedirs(queue, exist_ok=True)

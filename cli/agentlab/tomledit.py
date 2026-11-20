@@ -7,9 +7,9 @@ HEADER = re.compile(r'^\s*\[(\[)?\s*([A-Za-z0-9_.-]+)\s*\]\]?\s*(#.*)?$')
 KEY = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=')
 
 
-def _headers(lines):
+def _headers(lines: list[str]) -> list[tuple[int, str, bool]]:
     """[(line index, name, is array)] of every table header."""
-    out = []
+    out: list[tuple[int, str, bool]] = []
     for i, line in enumerate(lines):
         m = HEADER.match(line)
         if m:
@@ -17,7 +17,7 @@ def _headers(lines):
     return out
 
 
-def _block_end(lines, start, heads, name=''):
+def _block_end(lines: list[str], start: int, heads: list[tuple[int, str, bool]], name: str = '') -> int:
     """End (exclusive) of the block at `start`, excluding the comments and blank lines just above the next header."""
     end = next((i for i, n, array in heads if i > start and (array or not n.startswith(name + '.'))), len(lines))
     while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith('#')):
@@ -25,12 +25,12 @@ def _block_end(lines, start, heads, name=''):
     return end
 
 
-def _blocks(lines, name):
+def _blocks(lines: list[str], name: str) -> list[tuple[int, int]]:
     heads = _headers(lines)
     return [(i, _block_end(lines, i, heads, name)) for i, n, array in heads if n == name and array]
 
 
-def _value(lines, start, end, key):
+def _value(lines: list[str], start: int, end: int, key: str) -> str | None:
     for line in lines[start + 1 : end]:
         m = KEY.match(line)
         if m and m.group(1) == key:
@@ -38,7 +38,13 @@ def _value(lines, start, end, key):
     return None
 
 
-def add_agent(text, agent_id, owner, extra=None, publish=None):
+def add_agent(
+    text: str,
+    agent_id: str,
+    owner: str,
+    extra: dict[str, str | float] | None = None,
+    publish: dict[str, int] | None = None,
+) -> str:
     lines = text.splitlines()
     block = ['[[agents]]', f'id = {json.dumps(agent_id)}', f'owner = {json.dumps(owner)}']
     block += [f'{k} = {json.dumps(v)}' for k, v in (extra or {}).items()]
@@ -53,7 +59,7 @@ def add_agent(text, agent_id, owner, extra=None, publish=None):
     return '\n'.join(lines) + '\n'
 
 
-def remove_agent(text, agent_id):
+def remove_agent(text: str, agent_id: str) -> str:
     """The text without that agent's [[agents]] block; ValueError when there is none."""
     lines = text.splitlines()
     for start, end in _blocks(lines, 'agents'):
@@ -64,7 +70,7 @@ def remove_agent(text, agent_id):
     raise ValueError(f'no [[agents]] block with id = "{agent_id}"')
 
 
-def set_agent_key(text, agent_id, key, value):
+def set_agent_key(text: str, agent_id: str, key: str, value: str | float | None) -> str:
     """Set `key = value` in that agent's [[agents]] block, or drop the key when value is None."""
     lines = text.splitlines()
     for start, end in _blocks(lines, 'agents'):
@@ -82,7 +88,7 @@ def set_agent_key(text, agent_id, key, value):
     raise ValueError(f'no [[agents]] block with id = "{agent_id}"')
 
 
-def _comment(rest):
+def _comment(rest: str) -> str:
     """The trailing `   # ...` of a value, with its spacing; a '#' inside a quoted string is not a comment."""
     value = rest.lstrip()
     tail = value
@@ -96,7 +102,7 @@ def _comment(rest):
     return ' ' * max(len(before) - len(before.rstrip()), 1) + tail[hash_at:]
 
 
-def set_key(text, section, key, value):
+def set_key(text: str, section: str, key: str, value: object) -> str:
     """Set `key = value` in [section], adding the key or section when missing; keeps a trailing comment."""
     lines = text.splitlines()
     encoded = json.dumps(value)

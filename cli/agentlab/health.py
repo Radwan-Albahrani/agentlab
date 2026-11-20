@@ -2,15 +2,23 @@
 
 import json
 import time
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal
 
 from . import deploy
+from .config import AgentCfg, Cluster
 from .util import Failed, run, say
+
+if TYPE_CHECKING:
+    from .doctor import Checks  # doctor imports this module
 
 READY_S = 20 * 60
 MISSING_GRACE_S = 120  # a Coolify rollout removes the old container before it creates the new one
 
+AgentState = Literal['healthy', 'starting', 'unhealthy', 'exited', 'missing']
 
-def state(cfg, agent):
+
+def state(cfg: Cluster, agent: AgentCfg) -> tuple[AgentState, str]:
     """(state, detail): healthy, starting, unhealthy, exited or missing; detail is the last health-check output."""
     ids = deploy.containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent', all_states=True)
     if not ids:
@@ -31,10 +39,16 @@ def state(cfg, agent):
     return health.get('Status') or 'healthy', detail
 
 
-def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
+def wait_ready(
+    cfg: Cluster,
+    timeout_s: float = READY_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+) -> None:
     """Until every agent is healthy; fails naming each agent that isn't, and why."""
     start = clock()
-    deadline, said = start + timeout_s, None
+    deadline = start + timeout_s
+    said: float | None = None
     while True:
         states = {a['id']: state(cfg, a) for a in cfg['agents']}
         waiting = {aid: s for aid, s in states.items() if s[0] != 'healthy'}
@@ -57,7 +71,7 @@ def wait_ready(cfg, timeout_s=READY_S, sleep=time.sleep, clock=time.time):
     raise Failed('not every agent is ready: ' + '; '.join(lines) + f'. {hint}')
 
 
-def core_state(cfg, service):
+def core_state(cfg: Cluster, service: str) -> tuple[str, str]:
     """(state, detail) of one agentlab-core service."""
     ids = deploy.containers(cfg, 'agentlab-core', service, all_states=True)
     if not ids:
@@ -74,7 +88,7 @@ def core_state(cfg, service):
     return health or 'running', ''
 
 
-def core_checks(cfg, c):
+def core_checks(cfg: Cluster, c: 'Checks') -> None:
     from . import render  # noqa: PLC0415 - render imports this module's neighbours
 
     for service in render.core(cfg)['services']:
@@ -89,7 +103,7 @@ def core_checks(cfg, c):
         )
 
 
-def checks(cfg, c):
+def checks(cfg: Cluster, c: 'Checks') -> None:
     for a in cfg['agents']:
         s, detail = state(cfg, a)
         if s == 'healthy':

@@ -1,19 +1,38 @@
 """`agentctl apply`: idempotent; every step reads current state and changes only what differs."""
 
 import datetime
+import functools
 import json
 import os
 import secrets
 import shutil
 import subprocess
+from collections.abc import Collection
+from typing import TypedDict
 
 from . import cloudflare, config, deploy, disks, health, hostsfile, images, install, render, template, wslhost
+from .config import AgentCfg, Cluster, CompanionCfg
 from .util import AGENT_UID, REPO, Plan, agent_folder, differs, need_root, run, say, warn, write_if_changed
 
 FIREWALL_UNIT = 'agentlab-firewall.service'
 
 
-def folders(cfg, plan):
+class Applied(TypedDict):
+    """What `agentctl apply` reports."""
+
+    changed_files: list[str]
+    companion_templates: dict[str, template.Result]
+
+
+class CompanionEntry(TypedDict):
+    """One line of an agent's ~/.agentlab/companions.json."""
+
+    name: str
+    display_name: str
+    kind: config.CompanionKind
+
+
+def folders(cfg: Cluster, plan: Plan) -> None:
     data = cfg['data']
     # hub/data holds phone-push keys: root only.
     private = [f'{data}/secrets', f'{data}/secrets/agents', f'{data}/secrets/companions', f'{data}/backups']
@@ -36,10 +55,10 @@ def folders(cfg, plan):
     for path in private + shared:
         if not os.path.isdir(path):
             mode = 0o700 if path in private else 0o755
-            plan.do(f'create {path}', fn=lambda p=path, m=mode: os.makedirs(p, mode=m, exist_ok=True))
+            plan.do(f'create {path}', fn=functools.partial(os.makedirs, path, mode=mode, exist_ok=True))
 
 
-def _owned(path, mode=0o755):
+def _owned(path: str, mode: int = 0o755) -> None:
     """Create path and missing parents owned by the agent user (else Docker creates them as root)."""
     missing = []
     while not os.path.exists(path):
@@ -50,7 +69,7 @@ def _owned(path, mode=0o755):
         os.chown(p, AGENT_UID, AGENT_UID)
 
 
-def _secret_file(path, text, owner=None):
+def _secret_file(path: str, text: str, owner: int | None = None) -> None:
     with open(path + '.tmp', 'w') as f:
         f.write(text)
     os.chmod(path + '.tmp', 0o600)
@@ -59,7 +78,7 @@ def _secret_file(path, text, owner=None):
     os.replace(path + '.tmp', path)
 
 
-def _read(path):
+def _read(path: str) -> str:
     try:
         with open(path) as f:
             return f.read().strip()
@@ -67,7 +86,7 @@ def _read(path):
         return ''
 
 
-def agent_files(cfg, a, plan):
+def agent_files(cfg: Cluster, a: AgentCfg, plan: Plan) -> None:
     env = f'{cfg["data"]}/secrets/agents/{a["id"]}.env'
     if not os.path.exists(env):
         plan.do(f"create {env} (the agent's extra environment, empty)", fn=lambda: _secret_file(env, ''))
@@ -79,12 +98,12 @@ def agent_files(cfg, a, plan):
         plan.do(f'write the file manager config for {a["id"]}', fn=lambda: _files_config(folder, text))
 
 
-def _files_config(folder, text):
+def _files_config(folder: str, text: str) -> None:
     _owned(folder)
     _secret_file(f'{folder}/config.yaml', text, AGENT_UID)
 
 
-def core_files(cfg, plan):
+def core_files(cfg: Cluster, plan: Plan) -> None:
     if cfg['auth']['mode'] == 'tinyauth':
         path = f'{cfg["data"]}/secrets/tinyauth-secret.txt'
         if not os.path.exists(path):
@@ -99,7 +118,7 @@ def core_files(cfg, plan):
         )
 
 
-def tunnel_token_copy(cfg, plan):
+def tunnel_token_copy(cfg: Cluster, plan: Plan) -> None:
     """Copy of the root-only tunnel token readable by cloudflared's uid."""
     src = f'{cfg["data"]}/secrets/cloudflare-tunnel.token'
     folder = f'{cfg["data"]}/{render.TUNNEL_TOKEN_DIR}'
@@ -116,7 +135,7 @@ def tunnel_token_copy(cfg, plan):
     except OSError:
         pass
 
-    def write():
+    def write() -> None:
         os.makedirs(folder, mode=0o700, exist_ok=True)
         write_if_changed(dst, token, mode=0o400)
         for path, mode in ((dst, 0o400), (folder, 0o500)):
@@ -126,17 +145,17 @@ def tunnel_token_copy(cfg, plan):
     plan.do('give the tunnel container its copy of the tunnel token', fn=write)
 
 
-def upstream_ref():
+def upstream_ref() -> str:
     rc, out = run(['git', '-C', REPO, 'remote', 'get-url', 'origin'], check=False)
     return out.strip() if rc == 0 and out.strip() else REPO
 
 
-def version():
+def version() -> str:
     rc, out = run(['git', '-C', REPO, 'describe', '--tags', '--always', '--dirty'], check=False)
     return out.strip() if rc == 0 and out.strip() else 'dev'
 
 
-def seed_companion(cfg, comp):
+def seed_companion(cfg: Cluster, comp: CompanionCfg) -> None:
     """Seed the agent's companion checkout from companion/ once; later template changes arrive via template.py."""
     dst = render.companion_checkout(cfg, comp)
     shutil.copytree(
@@ -156,7 +175,7 @@ def seed_companion(cfg, comp):
     subprocess.run(['chown', '-R', f'{AGENT_UID}:{AGENT_UID}', dst], check=True)
 
 
-def companion_files(cfg, comp, plan):
+def companion_files(cfg: Cluster, comp: CompanionCfg, plan: Plan) -> None:
     data, name = cfg['data'], comp['name']
     a = next(x for x in cfg['agents'] if x['id'] == comp['agent'])
     home = a['path']
@@ -170,7 +189,7 @@ def companion_files(cfg, comp, plan):
     ):
         if not os.path.isdir(path):
             mode = 0o700 if '/secrets/' in path else 0o755
-            plan.do(f'create {path}', fn=lambda p=path, m=mode: _owned(p, m))
+            plan.do(f'create {path}', fn=functools.partial(_owned, path, mode))
     checkout = render.companion_checkout(cfg, comp)
     if not os.path.exists(checkout):
         plan.do(
@@ -180,7 +199,7 @@ def companion_files(cfg, comp, plan):
     theirs = f'{home}/home/.config/agent/bridge-key'
     if not os.path.exists(mine) or not os.path.exists(theirs):
 
-        def make():
+        def make() -> None:
             key = _read(mine) or _read(theirs) or secrets.token_hex(32)
             _secret_file(mine, key, AGENT_UID)
             _secret_file(theirs, key, AGENT_UID)
@@ -188,11 +207,15 @@ def companion_files(cfg, comp, plan):
         plan.do(f'create the bridge key shared by {name} and agent {a["id"]}', fn=make)
 
 
-def companion_list(cfg, a):
-    return [{k: c[k] for k in ('name', 'display_name', 'kind')} for c in cfg['companions'] if c['agent'] == a['id']]
+def companion_list(cfg: Cluster, a: AgentCfg) -> list[CompanionEntry]:
+    return [
+        CompanionEntry(name=c['name'], display_name=c['display_name'], kind=c['kind'])
+        for c in cfg['companions']
+        if c['agent'] == a['id']
+    ]
 
 
-def companion_lists(cfg, plan):
+def companion_lists(cfg: Cluster, plan: Plan) -> None:
     """~/.agentlab/companions.json in each agent, read by the in-container `companion` command."""
     for a in cfg['agents']:
         home = f'{a["path"]}/home'
@@ -205,10 +228,10 @@ def companion_lists(cfg, plan):
                     continue
         except FileNotFoundError:
             pass
-        plan.do(f'update the companion list of {a["id"]}', fn=lambda h=home, t=text: _write_list(h, t))
+        plan.do(f'update the companion list of {a["id"]}', fn=functools.partial(_write_list, home, text))
 
 
-def _write_list(home, text):
+def _write_list(home: str, text: str) -> None:
     with agent_folder(home, '.agentlab') as f:
         f.write('companions.json', text)
 
@@ -216,7 +239,7 @@ def _write_list(home, text):
 SIGN_INS = (('.claude', '.credentials.json'), ('.codex', 'auth.json'))
 
 
-def signed_in(home):
+def signed_in(home: str) -> bool:
     """Whether this home has a Claude Code or Codex login (~/.claude.json counts only with oauthAccount)."""
     for folder, name in SIGN_INS:
         try:
@@ -233,7 +256,7 @@ def signed_in(home):
         return False
 
 
-def adopt(a, plan):
+def adopt(a: AgentCfg, plan: Plan) -> bool:
     """Mark an agent with existing AI sign-ins as onboarded; False when there is nothing to adopt."""
     home = f'{a["path"]}/home'
     if not os.path.isdir(home) or not signed_in(home):
@@ -245,7 +268,7 @@ def adopt(a, plan):
     except FileNotFoundError:
         pass
 
-    def write():
+    def write() -> None:
         with agent_folder(home, '.config/agent') as f:
             f.write(
                 'onboarded',
@@ -259,17 +282,17 @@ def adopt(a, plan):
     return True
 
 
-def write_rendered(cfg, plan):
-    changed = []
+def write_rendered(cfg: Cluster, plan: Plan) -> list[str]:
+    changed: list[str] = []
     for rel, text in render.all_files(cfg).items():
         path = os.path.join(cfg['data'], 'rendered', rel)
         if differs(path, text):
             changed.append(rel)
-            plan.do(f'write rendered/{rel}', fn=lambda p=path, t=text: write_if_changed(p, t))
+            plan.do(f'write rendered/{rel}', fn=functools.partial(write_if_changed, path, text))
     return changed
 
 
-def firewall(cfg, changed, plan):
+def firewall(cfg: Cluster, changed: Collection[str], plan: Plan) -> None:
     if 'firewall/agentlab.nft' not in changed:
         return
     if run(['systemctl', 'is-enabled', FIREWALL_UNIT], check=False)[0] == 0:
@@ -281,7 +304,7 @@ def firewall(cfg, changed, plan):
 HOST_SERVICES = ('agentlab-watch.service', 'agentlab-throttle.service')
 
 
-def code_changed_at(folder=None):
+def code_changed_at(folder: str | None = None) -> float:
     folder = folder or os.path.join(REPO, 'host')
     newest = 0.0
     for root, dirs, files in os.walk(folder):
@@ -290,7 +313,7 @@ def code_changed_at(folder=None):
     return newest
 
 
-def started_at(unit):
+def started_at(unit: str) -> float | None:
     """When the unit last started (epoch), or None when it isn't running."""
     if run(['systemctl', 'is-active', '-q', unit], check=False)[0] != 0:
         return None
@@ -298,7 +321,7 @@ def started_at(unit):
     return float(out.strip()[1:]) if rc == 0 and out.strip().startswith('@') else None
 
 
-def host_services(plan, changed=None):
+def host_services(plan: Plan, changed: float | None = None) -> None:
     """Restart the watcher/throttle if they started before their code last changed."""
     changed = code_changed_at() if changed is None else changed
     for unit in HOST_SERVICES:
@@ -307,7 +330,15 @@ def host_services(plan, changed=None):
             plan.do(f'restart {unit} onto its new code', ['systemctl', 'restart', unit])
 
 
-def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force=False):
+def apply(
+    cfg: Cluster,
+    config_path: str,
+    dry: bool = False,
+    stack: str | None = None,
+    build: bool = False,
+    only: Collection[str] | None = None,
+    force: bool = False,
+) -> Applied:
     """`only`: deploy just these stacks; `force`: redeploy all, even agents mid-turn."""
     plan = Plan(dry)
     if not dry:
@@ -357,7 +388,7 @@ def apply(cfg, config_path, dry=False, stack=None, build=False, only=None, force
     deploy.revive(cfg, plan, only)
     deploy.connect(cfg, plan)
     deploy.isolate(cfg, plan)
-    templates = {}
+    templates: dict[str, template.Result] = {}
     if only is None:
         cloudflare.sync_people(cfg, plan)
         cloudflare.finish_https(cfg, plan)

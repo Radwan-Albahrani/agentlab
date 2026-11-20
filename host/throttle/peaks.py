@@ -9,23 +9,23 @@ FILE = os.path.join(STATE_DIR, 'peaks.json')
 
 
 class Peaks:
-    def __init__(self):
+    def __init__(self) -> None:
         try:
             with open(FILE) as f:
-                self.history = json.load(f)
+                self.history: dict[str, list[int]] = json.load(f)
         except (OSError, ValueError):
             self.history = {}
 
-    def known(self, signature):
+    def known(self, signature: str) -> bool:
         return signature in self.history
 
-    def estimate_mb(self, signature, tool):
+    def estimate_mb(self, signature: str, tool: str) -> int:
         seen = self.history.get(signature)
         if seen:
             return round(max(seen) * PEAK_MARGIN)
         return DEFAULT_MB.get(tool, DEFAULT_OTHER_MB)
 
-    def record(self, signature, peak_mb):
+    def record(self, signature: str, peak_mb: int) -> None:
         self.history[signature] = [*self.history.get(signature, []), peak_mb][-PEAK_HISTORY:]
         os.makedirs(STATE_DIR, exist_ok=True)
         with open(FILE + '.tmp', 'w') as f:

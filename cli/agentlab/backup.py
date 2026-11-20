@@ -6,19 +6,41 @@ import os
 import shutil
 import sqlite3
 import time
+from typing import TypedDict
 
 from . import config, deploy
+from .config import Cluster
 from .util import AGENT_UID, Failed, Needs, Plan, need_root, say
 
 DB_SUFFIXES = ('.sqlite', '.sqlite3', '.db')
 
 
-def root(cfg):
+class Done(TypedDict):
+    """What `backup run` reports."""
+
+    date: str
+    databases: int
+    pruned: list[str]
+
+
+class Backup(TypedDict):
+    """One day's backup, as `backup list` reports it."""
+
+    date: str
+    bytes: int
+    agents: list[str]
+
+
+class Restored(TypedDict):
+    restored: list[str]
+
+
+def root(cfg: Cluster) -> str:
     return f'{cfg["data"]}/backups'
 
 
-def databases(base):
-    out = []
+def databases(base: str) -> list[str]:
+    out: list[str] = []
     for folder, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in ('node_modules', '.git', 'cache', 'Cache')]
         # an empty file holds no data; T3's server-owner.sqlite is one, write-locked while t3 serve runs
@@ -30,7 +52,7 @@ def databases(base):
     return sorted(out)
 
 
-def t3_root(cfg, agent_id):
+def t3_root(cfg: Cluster, agent_id: str) -> str:
     return f'{config.agent(cfg, agent_id)["path"]}/home/.t3'
 
 
@@ -63,12 +85,13 @@ def copy_db(src: str, dst: str) -> None:
     os.replace(tmp, dst)
 
 
-def run(cfg, config_path, today=None):
+def run(cfg: Cluster, config_path: str, today: datetime.date | None = None) -> Done:
     need_root('agentctl backup run')
     day = (today or datetime.date.today()).isoformat()
     dest = f'{root(cfg)}/{day}'
     os.makedirs(dest, mode=0o700, exist_ok=True)
-    copied, failed = 0, []
+    copied = 0
+    failed: list[str] = []
     sources = [(f'agents/{a["id"]}', t3_root(cfg, a['id'])) for a in cfg['agents']]
     sources += [(f'companions/{c["name"]}', f'{cfg["data"]}/companions/{c["name"]}') for c in cfg['companions']]
     for name, base in sources:
@@ -93,10 +116,10 @@ def run(cfg, config_path, today=None):
     return {'date': day, 'databases': copied, 'pruned': pruned}
 
 
-def prune(cfg, today=None):
+def prune(cfg: Cluster, today: datetime.date | None = None) -> list[str]:
     keep = cfg['backups']['keep_days']
     oldest = (today or datetime.date.today()) - datetime.timedelta(days=keep - 1)
-    gone = []
+    gone: list[str] = []
     for name in sorted(os.listdir(root(cfg))) if os.path.isdir(root(cfg)) else []:
         try:
             day = datetime.date.fromisoformat(name)
@@ -108,8 +131,8 @@ def prune(cfg, today=None):
     return gone
 
 
-def listing(cfg):
-    rows = []
+def listing(cfg: Cluster) -> list[Backup]:
+    rows: list[Backup] = []
     for name in sorted(os.listdir(root(cfg))) if os.path.isdir(root(cfg)) else []:
         folder = os.path.join(root(cfg), name)
         size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(folder) for f in fs)
@@ -119,7 +142,7 @@ def listing(cfg):
     return rows
 
 
-def restore(cfg, day, agent_id, yes=False):
+def restore(cfg: Cluster, day: str, agent_id: str, yes: bool = False) -> Restored:
     """Put one agent's T3 databases back as they were on `day`; the agent is stopped while they are swapped."""
     src = f'{root(cfg)}/{day}/agents/{agent_id}'
     if not os.path.isdir(src):

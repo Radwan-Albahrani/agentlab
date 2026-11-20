@@ -1,10 +1,13 @@
 """`agentctl storage set`: disk sizes for per-person storage; apply grows or shrinks the disks to match."""
 
 from . import apply, config, tomledit
+from .apply import Applied
 from .util import Needs, need_root, say, write_if_changed
 
 
-def set_sizes(config_path, person_size=None, host_reserve=None, dry=False):
+def set_sizes(
+    config_path: str, person_size: str | None = None, host_reserve: str | None = None, dry: bool = False
+) -> Applied:
     with open(config_path) as f:
         text = f.read()
     if person_size is None and host_reserve is None:

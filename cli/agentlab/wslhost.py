@@ -3,8 +3,10 @@
 import base64
 import os
 import re
+from typing import NamedTuple
 
-from .util import REPO, run, warn, write_if_changed
+from .config import Cluster
+from .util import REPO, Plan, run, warn, write_if_changed
 
 POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 TASK = r"-TaskPath '\agentlab\' -TaskName 'Autostart'"
@@ -12,7 +14,13 @@ SCRIPT = os.path.join(REPO, 'host', 'wsl', 'autostart.ps1')
 TRIGGERS = {'MSFT_TaskBootTrigger': 'boot', 'MSFT_TaskLogonTrigger': 'sign-in'}
 
 
-def is_wsl():
+class Task(NamedTuple):
+    state: str  # Windows' own: Ready, Running, Disabled...
+    trigger: str  # 'boot', 'sign-in', or Windows' trigger class name
+    arguments: str
+
+
+def is_wsl() -> bool:
     try:
         with open('/proc/version') as f:
             return 'microsoft' in f.read().lower()
@@ -20,7 +28,7 @@ def is_wsl():
         return False
 
 
-def distro(cfg, save=True):
+def distro(cfg: Cluster, save: bool = True) -> str:
     """This distro's name: WSL sets it for commands started from Windows; systemd services remember the last one."""
     saved = os.path.join(cfg['data'], 'state', 'wsl-distro')
     name = os.environ.get('WSL_DISTRO_NAME', '')
@@ -35,12 +43,12 @@ def distro(cfg, save=True):
         return ''
 
 
-def ps(command):
+def ps(command: str) -> tuple[int, str]:
     """(exit code, output) of a Windows PowerShell command."""
     return run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', command], check=False, timeout=120)
 
 
-def arguments(name):
+def arguments(name: str) -> str:
     """The task's powershell.exe arguments: the loop itself, encoded, so no file on the Windows side can go stale."""
     with open(SCRIPT) as f:
         body = ''.join(line for line in f if not line.lstrip().startswith('#'))
@@ -48,17 +56,17 @@ def arguments(name):
     return f'-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {code}'
 
 
-def task():
+def task() -> Task | None:
     """(state, 'boot' or 'sign-in', arguments) of the registered task, or None."""
     rc, out = ps(
         f'$t = Get-ScheduledTask {TASK} -ErrorAction SilentlyContinue; '
         'if ($t) { [string]$t.State; $t.Triggers[0].CimClass.CimClassName; $t.Actions[0].Arguments }'
     )
     lines = [x.strip() for x in out.splitlines() if x.strip()]
-    return (lines[0], TRIGGERS.get(lines[1], lines[1]), lines[2]) if rc == 0 and len(lines) >= 3 else None
+    return Task(lines[0], TRIGGERS.get(lines[1], lines[1]), lines[2]) if rc == 0 and len(lines) >= 3 else None
 
 
-def register(want):
+def register(want: str) -> str:
     """In one PowerShell call: leave a matching task alone, else (re)register it, at boot when Windows lets us
     (admin) or else at sign-in, and start it. -> 'same', 'boot', 'sign-in', or '' on failure"""
     rc, out = ps(
@@ -88,7 +96,7 @@ def register(want):
     return found[-1]
 
 
-def ensure(cfg, plan):
+def ensure(cfg: Cluster, plan: Plan) -> None:
     """Register (or, with wsl_autostart = false, remove) the task; problems only warn, they never stop an apply."""
     if not is_wsl() or not os.access(POWERSHELL, os.X_OK):
         return

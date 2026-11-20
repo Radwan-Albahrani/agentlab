@@ -5,23 +5,52 @@ import json
 import os
 import sys
 import time
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Literal, NamedTuple, TypedDict, Unpack
 
-from . import apply, deploy, images, render
+from . import apply, deploy, images, render, template
+from .config import AgentCfg, Cluster
+from .coolify import StackKind
 from .util import REPO, Failed, Plan, load_json, need_root, run, say
 
 CHECK_EVERY_S = 300
 
+Outcome = Literal['ok', 'deferred', 'failed']  # failed: an exception; deferred: an agent still waits for its update
+OnBusy = Literal['defer', 'resume']
 
-def state_path(cfg):
+
+class Record(TypedDict, total=False):
+    """state/update.json: the last update's outcome (a failed one carries only at, scheduled, result, error, commit)."""
+
+    at: str
+    scheduled: bool
+    result: Outcome
+    error: str
+    commit_from: str
+    commit: str
+    agents_updated: list[str]
+    agents_deferred: list[str]
+    chats_resumed: dict[str, list[str]]
+    companion_templates: dict[str, template.Result]
+
+
+class Waited(NamedTuple):
+    """Where each pending agent ended up: updated (idle, or restarted anyway), deferred, and the chats cut off."""
+
+    updated: list[str]
+    deferred: list[str]
+    resumed: dict[str, list[str]]
+
+
+def state_path(cfg: Cluster) -> str:
     return os.path.join(cfg['data'], 'state', 'update.json')
 
 
-def last(cfg):
-    return load_json(state_path(cfg), {}) or {}
+def last(cfg: Cluster) -> Record:
+    return load_json(state_path(cfg), Record()) or Record()
 
 
-def record(cfg, **result):
+def record(cfg: Cluster, **result: Unpack[Record]) -> Record:
     path = state_path(cfg)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     result['at'] = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
@@ -31,15 +60,15 @@ def record(cfg, **result):
     return result
 
 
-def git(*args, check=True):
+def git(*args: str, check: bool = True) -> tuple[int, str]:
     return run(['git', '-C', REPO, *args], check=check)
 
 
-def head():
+def head() -> str:
     return git('rev-parse', '--short', 'HEAD')[1].strip()
 
 
-def pull(branch):
+def pull(branch: str) -> tuple[str, str]:
     """Fast-forward the repo to origin/<branch>. -> (from, to)"""
     if git('rev-parse', '--is-inside-work-tree', check=False)[0]:
         raise Failed(f'{REPO} is not a git checkout: clone the repo there (git clone <url> {REPO}) to update it')
@@ -53,7 +82,7 @@ def pull(branch):
     return before, head()
 
 
-def inflight(cfg: dict[str, Any], agent: dict[str, Any]) -> list[tuple[str, str]]:
+def inflight(cfg: Cluster, agent: AgentCfg) -> list[tuple[str, str]]:
     """[(run id, thread id)] of T3 turns without a finished status, as the agent reports them; none when it is
     stopped or can't answer."""
     got = deploy.ask_t3(cfg, agent, 'inflight')
@@ -69,16 +98,16 @@ def inflight(cfg: dict[str, Any], agent: dict[str, Any]) -> list[tuple[str, str]
     return out
 
 
-def resume(cfg: dict[str, Any], agent: dict[str, Any], kind: str, key: str | None, plan: Plan) -> list[str]:
+def resume(cfg: Cluster, agent: AgentCfg, kind: StackKind, key: str | None, plan: Plan) -> list[str]:
     """Restart a busy agent anyway (T3 resumes the cut-off turns itself). -> the chats that were mid-turn"""
     running = sorted({thread for _, thread in inflight(cfg, agent)})
     deploy.deploy(cfg, f'agentlab-agent-{agent["id"]}', kind, key, plan, force=True)
     return running
 
 
-def pending_agents(cfg):
+def pending_agents(cfg: Cluster) -> list[AgentCfg]:
     """Agents apply left out because a T3 turn was running: a newer image, or a changed file, not live yet."""
-    out = []
+    out: list[AgentCfg] = []
     for a in cfg['agents']:
         stack = f'agentlab-agent-{a["id"]}'
         path = deploy.compose_file(cfg, stack)
@@ -91,11 +120,20 @@ def pending_agents(cfg):
     return out
 
 
-def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time.time):
+def wait_for_agents(
+    cfg: Cluster,
+    plan: Plan,
+    wait_hours: float,
+    on_busy: OnBusy,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+) -> Waited:
     """Update each pending agent as soon as it's idle, for up to wait_hours; then defer or resume the rest."""
     stacks = render.stacks(cfg)
     pending = pending_agents(cfg)
-    updated, deferred, resumed = [], [], {}
+    updated: list[str] = []
+    deferred: list[str] = []
+    resumed: dict[str, list[str]] = {}
     deadline = clock() + wait_hours * 3600
     while pending:
         for a in list(pending):
@@ -121,10 +159,17 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
             deferred.append(a['id'])
     if updated:
         deploy.isolate(cfg, plan)
-    return updated, deferred, resumed
+    return Waited(updated, deferred, resumed)
 
 
-def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=False):
+def update(
+    cfg: Cluster,
+    config_path: str,
+    scheduled: bool = False,
+    pulled: bool | None = None,
+    argv: Sequence[str] = (),
+    resume_now: bool = False,
+) -> Record:
     need_root('agentctl update')
     u = cfg['updates']
     try:
@@ -142,12 +187,14 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=F
         else:
             images.pull(cfg, plan)
         applied = apply.apply(cfg, config_path)
+        wait_hours: float
+        on_busy: OnBusy
         wait_hours, on_busy = (0, 'resume') if resume_now else (u['wait_hours'], u['on_busy'])
         updated, deferred, resumed = wait_for_agents(cfg, plan, wait_hours, on_busy)
     except Failed as e:
         record(cfg, scheduled=scheduled, result='failed', error=str(e), commit=_safe_head())
         raise
-    result = 'deferred' if deferred else 'ok'
+    result: Outcome = 'deferred' if deferred else 'ok'
     return record(
         cfg,
         scheduled=scheduled,
@@ -162,7 +209,7 @@ def update(cfg, config_path, scheduled=False, pulled=None, argv=(), resume_now=F
     )
 
 
-def _safe_head():
+def _safe_head() -> str:
     try:
         return head()
     except Failed:

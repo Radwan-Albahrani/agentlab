@@ -6,9 +6,82 @@ import re
 import socket
 import sys
 import tomllib
+from collections.abc import Callable
+from typing import Literal, TypedDict
 
 from . import apply, cloudflare, config, doctor, init, install, secret
+from .config import Cluster
 from .util import OUT, Failed, Needs, Plan, run, say, write_if_changed
+
+TextKey = Literal['admin', 'domain', 'hub_domain', 'tinyauth_domain', 'people', 'agents', 'allow_domains']
+ChoiceKey = Literal['reach', 'network', 'storage']
+
+
+class Flags(TypedDict, total=False):
+    """`agentctl setup`'s command-line answers; None = not given."""
+
+    reach: str | None
+    admin: str | None
+    domain: str | None
+    hub_domain: str | None
+    tinyauth_domain: str | None
+    people: str | None
+    agents: str | None
+    allow_domains: str | None
+    storage: str | None
+    android: bool | None
+    deploy: str | None
+    isolation: str | None
+    name: str | None
+    network: str | None
+    https: bool | None
+    yes: bool
+    config_only: bool
+
+
+class Facts(TypedDict):
+    name: str
+    tailnet: str
+    kvm: bool
+    wsl: bool
+
+
+class Answers(TypedDict, total=False):
+    """What toml_text writes; keys appear as answers() works through the questions."""
+
+    reach: str  # a REACH key
+    admin: str | None
+    domain: str | None
+    hub_domain: str | None
+    network: str  # a NETWORK key
+    https: bool
+    zone: str
+    tinyauth_domain: str | None
+    allow_domains: list[str]
+    agents: list[tuple[str, str]]  # (owner email, agent id)
+    storage: str
+    android: bool | None
+    deploy: str
+    isolation: str
+    name: str
+    tailscale: bool
+
+
+class Steps(TypedDict):
+    init: Callable[[], object]
+    install: Callable[[Cluster], object]
+    cloudflare: Callable[[Cluster], object]
+    apply: Callable[[Cluster], object]
+
+
+class Where(TypedDict):
+    hub: str
+
+
+class SetupResult(TypedDict, total=False):
+    config: str
+    open: Where
+
 
 REACH = {
     'me': 'just me, on my own network: plain ports over my tailnet or LAN, no sign-in page',
@@ -24,11 +97,11 @@ FIRST_PORT, PORT_STEP, HUB_PORT = 7101, 10, 7190
 TOOLS = ('t3', 'accounts', 'browser', 'terminal', 'files')
 
 
-def machine_name():
+def machine_name() -> str:
     return socket.gethostname().split('.')[0].lower()
 
 
-def tailnet_name():
+def tailnet_name() -> str:
     cli = doctor.tailscale_cli()
     if not cli:
         return ''
@@ -39,7 +112,7 @@ def tailnet_name():
         return ''
 
 
-def facts():
+def facts() -> Facts:
     return {
         'name': machine_name(),
         'tailnet': tailnet_name(),
@@ -48,7 +121,7 @@ def facts():
     }
 
 
-def parse_people(text):
+def parse_people(text: str) -> list[tuple[str, int]]:
     """'sara@example.com=2, omar@example.com' -> [('sara@example.com', 2), ('omar@example.com', 1)]."""
     out = []
     for part in re.split(r'[,\s]+', text.strip()):
@@ -63,10 +136,11 @@ def parse_people(text):
     return out
 
 
-def agent_ids(people, names=None):
+def agent_ids(people: list[tuple[str, int]], names: list[str] | None = None) -> list[tuple[str, str]]:
     if names:
         return [(people[0][0], n) for n in names]
-    out, used = [], set()
+    out: list[tuple[str, str]] = []
+    used: set[str] = set()
     for email, count in people:
         base = re.sub(r'[^a-z0-9-]+', '-', email.split('@')[0].lower()).strip('-')[:24] or 'agent'
         if not base[0].isalpha():
@@ -83,11 +157,18 @@ def agent_ids(people, names=None):
 class Asker:
     """Takes each answer from its flag, else asks at a terminal, else uses the default; collects what's missing."""
 
-    def __init__(self, flags, interactive, ask=input):
+    def __init__(self, flags: Flags, interactive: bool, ask: Callable[[str], str] = input) -> None:
         self.flags, self.interactive, self.ask = flags, interactive, ask
-        self.missing = []
+        self.missing: list[str] = []
 
-    def get(self, key, question, default=None, flag=None, check=None):
+    def get(
+        self,
+        key: TextKey,
+        question: str,
+        default: str | None = None,
+        flag: str | None = None,
+        check: Callable[[str], object] | None = None,
+    ) -> str | None:
         value = self.flags.get(key)
         if value in (None, '', []) and self.interactive:
             shown = f' [{default}]' if default not in (None, '') else ''
@@ -107,7 +188,7 @@ class Asker:
             check(value)
         return value
 
-    def choose(self, key, question, options, default):
+    def choose(self, key: ChoiceKey, question: str, options: dict[str, str], default: str) -> str:
         if self.interactive and not self.flags.get(key):
             say(question)
             keys = list(options)
@@ -126,15 +207,15 @@ class Asker:
             raise Failed(f'--{key.replace("_", "-")} must be one of: {", ".join(options)}')
         return value
 
-    def yes(self, question, default=True):
+    def yes(self, question: str, default: bool = True) -> bool:
         if not self.interactive:
             return default
         reply = self.ask(f'{question} [{"Y/n" if default else "y/N"}]: ').strip().lower()
         return default if not reply else reply.startswith('y')
 
 
-def answers(flags, asker, machine):
-    a = {'reach': asker.choose('reach', 'How will you reach your agents?', REACH, flags.get('reach') or 'me')}
+def answers(flags: Flags, asker: Asker, machine: Facts) -> Answers:
+    a: Answers = {'reach': asker.choose('reach', 'How will you reach your agents?', REACH, flags.get('reach') or 'me')}
     reach = a['reach']
     a['admin'] = asker.get('admin', 'Your email (you are the admin)', check=_email)
     if reach == 'me':
@@ -188,24 +269,24 @@ def answers(flags, asker, machine):
     return a
 
 
-def _email(v):
+def _email(v: str) -> None:
     if not config.EMAIL.match(str(v)):
         raise Failed(f'{v!r} is not an email address')
 
 
-def _names(v):
+def _names(v: str) -> None:
     for n in _split(v):
         if not config.ID.match(n) or n in config.RESERVED:
             raise Failed(f'{n!r}: use lowercase letters, digits and dashes')
 
 
-def _split(v):
+def _split(v: str | list[str] | None) -> list[str]:
     if isinstance(v, list):
         return v
     return [x for x in re.split(r'[,\s]+', str(v or '')) if x and x != '-']
 
 
-def toml_text(a):
+def toml_text(a: Answers) -> str:
     """cluster.toml for these answers: only what differs from the defaults."""
     q = json.dumps
     lines = ['# Written by `agentctl setup`. Change anything, then run `agentctl apply`.', '', '[cluster]']
@@ -256,7 +337,7 @@ def toml_text(a):
     return '\n'.join(lines) + '\n'
 
 
-def summary(a):
+def summary(a: Answers) -> list[str]:
     reach = REACH[a['reach']]
     people = sorted({e for e, _ in a['agents']})
     return [
@@ -268,7 +349,7 @@ def summary(a):
     ]
 
 
-def write_config(path, text, asker, force):
+def write_config(path: str, text: str, asker: Asker, force: bool | None) -> bool:
     """True when cluster.toml was written; a different existing one is replaced only after a yes, keeping a backup."""
     try:
         with open(path) as f:
@@ -287,7 +368,7 @@ def write_config(path, text, asker, force):
     return True
 
 
-def needed_secrets(cfg):
+def needed_secrets(cfg: Cluster) -> list[tuple[str, str]]:
     """Secrets this cluster can't run without that aren't saved yet: [(name, why)]."""
     out = []
     if cfg['auth']['mode'] == 'cloudflare-access' or cfg['auth']['ingress'] == 'cloudflared':
@@ -305,7 +386,7 @@ def needed_secrets(cfg):
     return [(n, why) for n, why in out if not os.path.isfile(files[n][1])]
 
 
-def gather_secrets(cfg, asker):
+def gather_secrets(cfg: Cluster, asker: Asker) -> None:
     for name, why in needed_secrets(cfg):
         if not asker.interactive:
             raise Needs(f'needed: {why}. Save it with `agentctl secret set {name}`, then run agentctl setup again')
@@ -313,7 +394,7 @@ def gather_secrets(cfg, asker):
         secret.set_secret(cfg, name)
 
 
-def until_done(step, asker, attempts=10):
+def until_done[T](step: Callable[[], T], asker: Asker, attempts: int = 10) -> T:
     """Run a step; when it needs a person, say what and, at a terminal, wait and retry."""
     for _ in range(attempts):
         try:
@@ -326,7 +407,13 @@ def until_done(step, asker, attempts=10):
     return step()
 
 
-def setup(config_path, flags, ask=input, interactive=None, steps=None):
+def setup(
+    config_path: str,
+    flags: Flags,
+    ask: Callable[[str], str] = input,
+    interactive: bool | None = None,
+    steps: Steps | None = None,
+) -> SetupResult:
     interactive = (not OUT.json and sys.stdin.isatty()) if interactive is None else interactive
     asker = Asker(flags, interactive, ask)
     steps = steps or {
@@ -365,11 +452,11 @@ def setup(config_path, flags, ask=input, interactive=None, steps=None):
     return {'config': config_path, 'open': where(cfg)}
 
 
-def _has_answers(flags):
+def _has_answers(flags: Flags) -> bool:
     return any(flags.get(k) not in (None, '', [], False) for k in ('reach', 'admin', 'domain', 'people', 'agents'))
 
 
-def where(cfg):
+def where(cfg: Cluster) -> Where:
     if cfg['hub']['publish']:
         hub = f'http://{cfg["domain"]}:{cfg["hub"]["publish"]}'
     elif cfg['auth']['mode'] == 'tailscale':

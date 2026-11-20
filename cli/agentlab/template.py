@@ -9,9 +9,26 @@ import stat
 import subprocess
 import tempfile
 import time
+from typing import Literal, NotRequired, TypedDict
 
 from . import deploy, render
-from .util import AGENT_UID, REPO, agent_folder, is_root, load_json, run, say, warn
+from .config import Cluster, CompanionCfg, Json
+from .util import AGENT_UID, REPO, Plan, agent_folder, is_root, load_json, run, say, warn
+
+Outcome = Literal['up-to-date', 'merged', 'conflict', 'skipped', 'reverted', 'would-update']
+
+
+class Result(TypedDict):
+    """One companion's template update, as kept in <data>/state/companions-template.json."""
+
+    template_from: str
+    template_to: str
+    result: Outcome
+    detail: str
+    files: NotRequired[str]  # conflict only, dropped before saving
+    asked_agent: NotRequired[str]
+    at: NotRequired[str]
+
 
 BRANCH = 'template'
 SOURCE = os.path.join(REPO, 'companion')
@@ -22,18 +39,18 @@ POLL_S = 3
 AUTHOR = ['-c', 'user.name=agentlab', '-c', 'user.email=agentlab@localhost', '-c', 'commit.gpgsign=false']
 
 
-def state_path(cfg):
+def state_path(cfg: Cluster) -> str:
     return os.path.join(cfg['data'], 'state', 'companions-template.json')
 
 
-def _now():
+def _now() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec='seconds')
 
 
 class Checkout:
     """git in one companion checkout as its owner; refuses a symlinked checkout or .git."""
 
-    def __init__(self, path):
+    def __init__(self, path: str) -> None:
         for p in (path, os.path.join(path, '.git')):
             st = os.lstat(p)
             if not stat.S_ISDIR(st.st_mode):
@@ -41,27 +58,27 @@ class Checkout:
         self.path = path
         self.uid = os.lstat(path).st_uid
 
-    def _as_owner(self):
+    def _as_owner(self) -> list[str]:
         if is_root() and self.uid != 0:
             return ['setpriv', f'--reuid={self.uid}', f'--regid={self.uid}', '--clear-groups', '--']
         return []
 
-    def git(self, *args, check=True, env=None):
+    def git(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> tuple[int, str]:
         full = dict(os.environ, HOME=self.path, GIT_CONFIG_NOSYSTEM='1', **(env or {}))
         return run([*self._as_owner(), 'git', '-C', self.path, *AUTHOR, *args], check=check, env=full)
 
-    def rev(self, ref):
+    def rev(self, ref: str) -> str:
         rc, out = self.git('rev-parse', '--verify', '-q', ref, check=False)
         return out.strip() if rc == 0 else ''
 
-    def ensure_branch(self):
+    def ensure_branch(self) -> bool:
         if self.rev(f'refs/heads/{BRANCH}'):
             return False
         root = self.git('rev-list', '--max-parents=0', 'HEAD')[1].split()[-1]
         self.git('branch', BRANCH, root)
         return True
 
-    def snapshot_tree(self, source, objects=None):
+    def snapshot_tree(self, source: str, objects: str | None = None) -> str:
         """Tree id of `source` as git would store it; with `objects`, new objects go only there (dry run)."""
         with tempfile.TemporaryDirectory(prefix='agentlab-template-') as tmp:
             work = os.path.join(tmp, 'tree')
@@ -74,40 +91,40 @@ class Checkout:
             self.git('add', '-A', env=env)
             return self.git('write-tree', env=env)[1].strip()
 
-    def _objects(self):
+    def _objects(self) -> str:
         return os.path.join(self.path, '.git', 'objects')
 
-    def commit_snapshot(self, tree, label):
+    def commit_snapshot(self, tree: str, label: str) -> tuple[str, str]:
         """A new commit on the template branch, without touching HEAD or the working tree."""
         tip = self.rev(f'refs/heads/{BRANCH}')
         new = self.git('commit-tree', tree, '-p', tip, '-m', f'agentlab template {label}')[1].strip()
         self.git('update-ref', f'refs/heads/{BRANCH}', new, tip)
         return tip, new
 
-    def clean(self):
+    def clean(self) -> bool:
         return not self.git('status', '--porcelain', '--untracked-files=no')[1].strip()
 
-    def merging(self):
+    def merging(self) -> bool:
         return self.rev('MERGE_HEAD') != ''
 
 
-def _chown_tree(path, uid):
+def _chown_tree(path: str, uid: int) -> None:
     """Hand a temp folder root made to the checkout's owner, who runs git on it."""
     for root, dirs, files in os.walk(path):
         for name in [root] + [os.path.join(root, n) for n in dirs + files]:
             os.lchown(name, uid, uid)
 
 
-def version():
+def version() -> str:
     rc, out = run(['git', '-C', REPO, 'describe', '--tags', '--always', '--dirty'], check=False)
     return out.strip() if rc == 0 and out.strip() else 'dev'
 
 
-def short(sha):
+def short(sha: str) -> str:
     return sha[:7]
 
 
-def status(cfg, comp):
+def status(cfg: Cluster, comp: CompanionCfg) -> Json | None:
     """The companion's status.json, read without following symlinks; None when unreadable."""
     agent = render.agent_of(cfg, comp)
     try:
@@ -117,7 +134,7 @@ def status(cfg, comp):
         return None
 
 
-def restart(cfg, comp):
+def restart(cfg: Cluster, comp: CompanionCfg) -> bool:
     """Restart through Docker like the watcher does; False when the companion has no container (never deployed)."""
     ids = deploy.containers(cfg, f'agentlab-companion-{comp["name"]}', all_states=True)
     if not ids:
@@ -126,10 +143,11 @@ def restart(cfg, comp):
     return True
 
 
-def came_up(cfg, comp, since):
+def came_up(cfg: Cluster, comp: CompanionCfg, since: float) -> str:
     """'' once the restarted companion is up (running and staying up, or cleanly 'not configured'), else why not."""
-    deadline, running_since = time.time() + START_TIMEOUT_S, None
-    last = None
+    deadline = time.time() + START_TIMEOUT_S
+    running_since: float | None = None
+    last: Json | None = None
     while time.time() < deadline:
         s = status(cfg, comp) or {}
         fresh = (s.get('updated') or 0) >= since
@@ -149,11 +167,11 @@ def came_up(cfg, comp, since):
     return f'not up after {START_TIMEOUT_S} s (last state: {(last or {}).get("state", "unknown")})'
 
 
-def update_one(cfg, comp, dry=False):
+def update_one(cfg: Cluster, comp: CompanionCfg, dry: bool = False) -> Result:
     """-> {template_from, template_to, result, detail}; result: up-to-date, merged, conflict, skipped, reverted or would-update."""
     name = comp['name']
     path = render.companion_checkout(cfg, comp)
-    out = {'template_from': '', 'template_to': '', 'result': 'skipped', 'detail': ''}
+    out: Result = {'template_from': '', 'template_to': '', 'result': 'skipped', 'detail': ''}
     try:
         co = Checkout(path)
     except FileNotFoundError:
@@ -198,7 +216,7 @@ def update_one(cfg, comp, dry=False):
         BRANCH,
         check=False,
     )
-    kept = []
+    kept: list[str] = []
     if rc:
         conflicts = co.git('diff', '--name-only', '--diff-filter=U', check=False)[1].split()
         kept = _already_in_template(co, frm, pre, conflicts)
@@ -235,9 +253,9 @@ def update_one(cfg, comp, dry=False):
     return out | {'result': 'merged', 'detail': f'merged as {short(merged)} but the companion failed to start: {why}'}
 
 
-def _already_in_template(co, base, ours, files):
+def _already_in_template(co: Checkout, base: str, ours: str, files: list[str]) -> list[str]:
     """Conflicted files whose template version already holds every change the checkout made since `base`."""
-    found = []
+    found: list[str] = []
     with tempfile.TemporaryDirectory(prefix='agentlab-merge-') as tmp:
         for f in files:
             patch = co.git('diff', '-U0', '--no-color', base, ours, '--', f, check=False)[1]
@@ -262,7 +280,7 @@ def _already_in_template(co, base, ours, files):
     return found
 
 
-def _contains(co, rev):
+def _contains(co: Checkout, rev: str) -> bool:
     return co.git('merge-base', '--is-ancestor', rev, 'HEAD', check=False)[0] == 0
 
 
@@ -273,7 +291,7 @@ merge cleanly. Then `companion test {name}`, commit, `companion restart {name}`,
 and `companion logs {name}`. If a conflict needs a decision only the person can make, stop and ask them."""
 
 
-def ask_agent(cfg, comp, files):
+def ask_agent(cfg: Cluster, comp: CompanionCfg, files: str) -> bool:
     """Start a chat in the companion's agent asking it to merge; True once started."""
     agent = render.agent_of(cfg, comp)
     ids = deploy.containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
@@ -297,10 +315,11 @@ def ask_agent(cfg, comp, files):
     return rc == 0
 
 
-def update_all(cfg, plan):
-    results = {}
-    before = {} if plan.dry else load_json(state_path(cfg), {}) or {}
+def update_all(cfg: Cluster, plan: Plan) -> dict[str, Result]:
+    results: dict[str, Result] = {}
+    before: Json = {} if plan.dry else load_json(state_path(cfg), {}) or {}
     for comp in cfg['companions']:
+        r: Result
         try:
             r = update_one(cfg, comp, dry=plan.dry)
         except Exception as e:
@@ -327,7 +346,7 @@ def update_all(cfg, plan):
     return results
 
 
-def _save(cfg, results):
+def _save(cfg: Cluster, results: dict[str, Result]) -> None:
     path = state_path(cfg)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + '.tmp', 'w') as f:
@@ -345,9 +364,9 @@ def _save(cfg, results):
                 os.chown(os.path.join(folder, 'template.json'), AGENT_UID, AGENT_UID)
 
 
-def summary(cfg):
+def summary(cfg: Cluster) -> list[str]:
     """Short status lines for companions whose template isn't simply up to date."""
-    lines = []
+    lines: list[str] = []
     for name, r in (load_json(state_path(cfg), {}) or {}).items():
         if r.get('result') in (None, 'up-to-date'):
             continue

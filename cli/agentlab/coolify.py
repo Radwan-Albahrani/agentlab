@@ -5,26 +5,41 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from typing import Any, Literal, Protocol
 
+from .config import Cluster
 from .util import Failed
+
+Json = Any  # Coolify's answers: parsed JSON, or the raw text when it isn't JSON
+StackKind = Literal['core', 'agent', 'companion']
+Status = Literal['finished', 'failed', 'cancelled', 'cancelled-by-user']
+
+
+class Response(Protocol):
+    def read(self) -> bytes: ...
+
+
+Opener = Callable[..., AbstractContextManager[Response]]  # urllib.request.urlopen, or a fake in tests
 
 
 class Api:
-    def __init__(self, cfg, opener=None):
+    def __init__(self, cfg: Cluster, opener: Opener | None = None) -> None:
         c = cfg['coolify']
         self.base = c['url'].rstrip('/') + '/api/v1'
         self.token_file = c['token_file']
         self.project_name = c['project']
-        self.opener = opener or urllib.request.urlopen
+        self.opener: Opener = opener or urllib.request.urlopen
 
-    def token(self):
+    def token(self) -> str:
         try:
             with open(self.token_file) as f:
                 return f.read().strip()
         except OSError:
             raise Failed(f'Coolify token missing: {self.token_file} (agentctl install creates it)') from None
 
-    def call(self, method, path, body=None):
+    def call(self, method: str, path: str, body: Json = None) -> Json:
         req = urllib.request.Request(
             self.base + path,
             method=method,
@@ -37,46 +52,46 @@ class Api:
         )
         try:
             with self.opener(req, timeout=60) as r:
-                body = r.read() or b'{}'
+                raw = r.read() or b'{}'
         except urllib.error.HTTPError as e:
             raise Failed(f'Coolify {method} {path}: HTTP {e.code} {e.read()[:300]!r}') from None
         except urllib.error.URLError as e:
             raise Failed(f'Coolify unreachable at {self.base}: {e.reason}') from None
         try:
-            return json.loads(body)
+            return json.loads(raw)
         except ValueError:
-            return body.decode(errors='replace').strip()
+            return raw.decode(errors='replace').strip()
 
-    def server(self):
+    def server(self) -> str:
         servers = self.call('GET', '/servers')
         if not servers:
             raise Failed('Coolify has no server yet: finish its first-run setup')
         local = [s for s in servers if s.get('ip') in ('host.docker.internal', 'localhost', '127.0.0.1')]
         return (local or servers)[0]['uuid']
 
-    def project(self):
+    def project(self) -> str:
         found = next((p for p in self.call('GET', '/projects') if p.get('name') == self.project_name), None)
         return found['uuid'] if found else self.call('POST', '/projects', {'name': self.project_name})['uuid']
 
-    def environment(self, project, name):
+    def environment(self, project: str, name: str) -> None:
         envs = self.call('GET', f'/projects/{project}/environments')
         if not any(e.get('name') == name for e in envs):
             self.call('POST', f'/projects/{project}/environments', {'name': name})
 
 
-def environment_of(kind, key, cfg):
+def environment_of(kind: StackKind, key: str | None, cfg: Cluster) -> str:
     if kind == 'core':
         return 'core'
-    if kind == 'agent':
+    if kind == 'agent' and key is not None:
         return key
     return next(c['agent'] for c in cfg['companions'] if c['name'] == key)
 
 
-def uuid_file(folder):
+def uuid_file(folder: str) -> str:
     return os.path.join(folder, '.coolify-service-uuid')
 
 
-def stack_uuid(folder):
+def stack_uuid(folder: str) -> str | None:
     try:
         with open(uuid_file(folder)) as f:
             return f.read().strip() or None
@@ -84,7 +99,7 @@ def stack_uuid(folder):
         return None
 
 
-def deploy(api, cfg, stack, kind, key, folder, text):
+def deploy(api: Api, cfg: Cluster, stack: str, kind: StackKind, key: str | None, folder: str, text: str) -> str:
     raw = base64.b64encode(text.encode()).decode()
     uuid = stack_uuid(folder)
     if not uuid:
@@ -111,10 +126,17 @@ def deploy(api, cfg, stack, kind, key, folder, text):
     return uuid
 
 
-DONE = {'finished', 'failed', 'cancelled', 'cancelled-by-user'}
+DONE: set[Status] = {'finished', 'failed', 'cancelled', 'cancelled-by-user'}
 
 
-def wait(api, stack, deployment, timeout_s=20 * 60, sleep=None, clock=None):
+def wait(
+    api: Api,
+    stack: str,
+    deployment: str,
+    timeout_s: int = 20 * 60,
+    sleep: Callable[[float], None] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> None:
     """Until Coolify finishes a queued deployment; its log tail when it fails."""
     import time  # noqa: PLC0415 - patched in tests through the arguments
 
@@ -131,7 +153,7 @@ def wait(api, stack, deployment, timeout_s=20 * 60, sleep=None, clock=None):
     raise Failed(f'Coolify was still deploying {stack} after {timeout_s // 60} min')
 
 
-def _log_tail(logs, lines=6):
+def _log_tail(logs: Json, lines: int = 6) -> str:
     try:
         entries = json.loads(logs) if isinstance(logs, str) else logs or []
     except ValueError:

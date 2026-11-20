@@ -1,11 +1,46 @@
 import json
 import os
+from typing import NotRequired, TypedDict
 
 from . import deploy, disks, privileges, template, update
-from .util import Needs, is_root, load_json, run, say
+from .config import Cluster
+from .util import Json, Needs, is_root, load_json, run, say
 
 
-def _state(cfg, stack, service):
+class ContainerState(TypedDict):
+    state: str  # Docker's State.Status (running, exited, …), or 'absent'
+    health: str  # Docker's State.Health.Status, or ''
+    container: str
+
+
+class OwnStatus(TypedDict, total=False):
+    status: str  # the companion's own status.json state
+    error: str
+
+
+class AgentStatus(ContainerState):
+    id: str
+    owner: str
+    memory_limit: str
+    disk_used_gib: float | None
+    disk_size_gib: float | None
+    memory: NotRequired[str]  # filled in once docker stats has run
+
+
+class CompanionStatus(ContainerState, OwnStatus):
+    name: str
+    agent: str
+
+
+class Status(TypedDict):
+    core: dict[str, str]  # service -> 'running healthy', 'absent', …
+    agents: list[AgentStatus]
+    companions: list[CompanionStatus]
+    update: NotRequired[update.Record]
+    companion_templates: NotRequired[Json]  # template's state file: companion name -> its template record
+
+
+def _state(cfg: Cluster, stack: str, service: str) -> ContainerState:
     ids = deploy.containers(cfg, stack, service, all_states=True)
     if not ids:
         return {'state': 'absent', 'health': '', 'container': ''}
@@ -17,16 +52,16 @@ def _state(cfg, stack, service):
     }
 
 
-def _memory(ids):
+def _memory(ids: list[str]) -> dict[str, str]:
     if not ids:
         return {}
     out = run(['docker', 'stats', '--no-stream', '--format', '{{.ID}}\t{{.MemUsage}}', *ids], check=False)[1]
     return {line.split('\t')[0]: line.split('\t')[1] for line in out.splitlines() if '\t' in line}
 
 
-def collect(cfg):
+def collect(cfg: Cluster) -> Status:
     core = {svc: _state_of(cfg, svc) for svc in ('edge', 'gate', 'hub')}
-    agents = []
+    agents: list[AgentStatus] = []
     for a in cfg['agents']:
         st = _state(cfg, f'agentlab-agent-{a["id"]}', 'agent')
         use = disks.usage(a['storage_unit'] or a['path'])
@@ -44,7 +79,7 @@ def collect(cfg):
     for x in agents:
         x['memory'] = mem.get(x['container'][:12], '')
     paths = {a['id']: a['path'] for a in cfg['agents']}
-    companions = [
+    companions: list[CompanionStatus] = [
         {
             'name': c['name'],
             'agent': c['agent'],
@@ -56,7 +91,7 @@ def collect(cfg):
     return {'core': core, 'agents': agents, 'companions': companions}
 
 
-def _own_status(path, name):
+def _own_status(path: str | None, name: str) -> OwnStatus:
     """The companion's status.json; an exited container that isn't configured yet is waiting, not broken."""
     try:  # an agent-owned file: never follow a symlink there as root
         fd = os.open(f'{path}/workspace/.companion/{name}/status.json', os.O_RDONLY | os.O_NOFOLLOW)
@@ -67,7 +102,7 @@ def _own_status(path, name):
     return {'status': own.get('state', ''), 'error': own.get('error') or ''}
 
 
-def _state_of(cfg, service):
+def _state_of(cfg: Cluster, service: str) -> str:
     ids = deploy.containers(cfg, 'agentlab-core', service, all_states=True)
     if not ids:
         return 'absent'
@@ -76,7 +111,7 @@ def _state_of(cfg, service):
     )[1].strip()
 
 
-def show(cfg):
+def show(cfg: Cluster) -> Status:
     if not is_root() and not privileges.docker_ok():
         e = Needs(
             'status reads Docker, which this user cannot reach: run `sudo agentctl status` (or join the docker group)'

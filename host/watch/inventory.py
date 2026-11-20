@@ -3,6 +3,8 @@
 import json
 import os
 import time
+from collections.abc import Iterable, Sequence
+from typing import TypedDict
 
 import cluster
 
@@ -13,9 +15,15 @@ PROJECT, SERVICE = 'com.docker.compose.project', 'com.docker.compose.service'
 COOLIFY_PROJECT = 'coolify.projectName'  # Coolify's Compose project is the uuid; this label holds the name
 
 
-def stacks(root=COMPOSE_DIR):
+class Stack(TypedDict):
+    id: str  # Compose project name
+    uuid: str
+    file: str
+
+
+def stacks(root: str = COMPOSE_DIR) -> list[Stack]:
     """[{id, uuid, file}] sorted by id; uuid is the Coolify service uuid, else ''."""
-    out = []
+    out: list[Stack] = []
     for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
         file = os.path.join(root, name, 'docker-compose.yml')
         if not os.path.isfile(file):
@@ -29,15 +37,15 @@ def stacks(root=COMPOSE_DIR):
     return out
 
 
-def labels(text):
+def labels(text: str | None) -> dict[str, str]:
     return dict(part.split('=', 1) for part in (text or '').split(',') if '=' in part)
 
 
-def tag(ps_lines, stack_list, extra=()):
+def tag(ps_lines: list[str], stack_list: list[Stack], extra: Sequence[str] = ()) -> list[store.Container]:
     """containers.json rows from `docker ps` JSON lines; `extra` is [hub] extra_stacks (Compose or Coolify project names)."""
     by_project = {s['id']: s['id'] for s in stack_list} | {s['uuid']: s['id'] for s in stack_list if s['uuid']}
     by_project |= {p: p for p in extra}
-    rows = []
+    rows: list[store.Container] = []
     for line in ps_lines:
         try:
             c = json.loads(line)
@@ -63,7 +71,7 @@ def tag(ps_lines, stack_list, extra=()):
     return rows
 
 
-def keep_connected(rows):
+def keep_connected(rows: list[store.Container]) -> None:
     nets = [f'agentlab-{a["id"]}' for a in cluster.load().get('agents') or []]
     for r in rows:
         if r['stack'] != 'agentlab-core' or r['service'] not in ('edge', 'gate', 'hub') or r['state'] != 'running':
@@ -88,12 +96,12 @@ def keep_connected(rows):
                 )
 
 
-def extra_networks(networks, agent_id):
+def extra_networks(networks: Iterable[str], agent_id: str) -> list[str]:
     """Networks besides agentlab-<id>; the firewall only knows the agent's address there."""
     return sorted(n for n in networks if n != f'agentlab-{agent_id}')
 
 
-def keep_isolated(rows):
+def keep_isolated(rows: list[store.Container]) -> None:
     for r in rows:
         if not r['stack'].startswith('agentlab-agent-') or r['service'] != 'agent' or r['state'] != 'running':
             continue
@@ -116,10 +124,10 @@ def keep_isolated(rows):
             )
 
 
-def check(_state):
+def check(_state: store.State) -> None:
     stack_list = stacks()
     _, out = host.run(['docker', 'ps', '-a', '--format', '{{json .}}'])
-    rows = tag(out.splitlines(), stack_list, (cluster.load().get('hub') or {}).get('extra_stacks') or [])
+    rows = tag(out.splitlines(), stack_list, (cluster.load().get('hub') or cluster.Hub()).get('extra_stacks') or [])
     store.dump(
         'containers.json',
         {'at': time.time(), 'items': rows, 'stacks': [{'id': s['id'], 'uuid': s['uuid']} for s in stack_list]},

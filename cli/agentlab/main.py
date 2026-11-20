@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable, Mapping, Sequence
+from typing import IO, Any
 
 from . import (
     agents,
@@ -25,11 +27,15 @@ from . import (
     status,
     update,
 )
+from .config import Cluster
+from .doctor import Check
 from .util import LOCK, NEEDS, OK, OUT, Failed, Plan, lock_holder, say, warn
 
+Result = Mapping[str, Any]  # a command's --json result
 
-def parser():
-    p = argparse.ArgumentParser(prog='agentctl', description=__doc__.split('\n')[0])
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog='agentctl', description=(__doc__ or '').split('\n')[0])
     p.add_argument('--config', default=config.DEFAULT_PATH, help=f'cluster.toml (default {config.DEFAULT_PATH})')
     p.add_argument('--json', action='store_true', help='machine-readable output on stdout')
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -147,7 +153,9 @@ CHANGES = {'apply', 'agent', 'storage', 'companion', 'update', 'install', 'backu
 LOCK_WAIT_S = 8 * 3600  # longer than any healthy change (an update waits up to [updates] wait_hours for idle agents)
 
 
-def one_at_a_time(args, wait_s=LOCK_WAIT_S, sleep=None):
+def one_at_a_time(
+    args: argparse.Namespace, wait_s: float = LOCK_WAIT_S, sleep: Callable[[float], object] | None = None
+) -> IO[str] | None:
     """Changes wait for each other (the hub, the nightly update and a person can all start one); reads never wait.
     A change that waits past wait_s fails, naming the holder, instead of queueing behind a stuck one forever."""
     if args.cmd not in CHANGES or getattr(args, 'dry_run', False) or getattr(args, 'action', '') in ('list', 'adopt'):
@@ -181,7 +189,7 @@ def one_at_a_time(args, wait_s=LOCK_WAIT_S, sleep=None):
     return f
 
 
-def dispatch(args):
+def dispatch(args: argparse.Namespace) -> Result | None:
     if args.cmd == 'agent' and args.action == 'add':
         return agents.add(args.config, args.id, args.email, args.dry_run, args.memory, args.cpus)
     if args.cmd == 'agent' and args.action == 'set':
@@ -201,12 +209,25 @@ def dispatch(args):
     if args.cmd == 'setup':
         if not (args.pulled or args.no_pull):
             fresh_code_then_rerun()
-        keys = ('reach', 'admin', 'domain', 'hub_domain', 'tinyauth_domain', 'people', 'agents', 'allow_domains')
-        flags = {
-            k: getattr(args, k)
-            for k in (*keys, 'storage', 'android', 'deploy', 'isolation', 'name', 'network', 'https')
-        }
-        flags.update(yes=args.yes, config_only=args.config_only)
+        flags = setup.Flags(
+            reach=args.reach,
+            admin=args.admin,
+            domain=args.domain,
+            hub_domain=args.hub_domain,
+            tinyauth_domain=args.tinyauth_domain,
+            people=args.people,
+            agents=args.agents,
+            allow_domains=args.allow_domains,
+            storage=args.storage,
+            android=args.android,
+            deploy=args.deploy,
+            isolation=args.isolation,
+            name=args.name,
+            network=args.network,
+            https=args.https,
+            yes=args.yes,
+            config_only=args.config_only,
+        )
         return setup.setup(args.config, flags)
     if args.cmd == 'config' and args.action == 'edit':
         return init.edit(args.config)
@@ -267,12 +288,12 @@ def dispatch(args):
 
 
 class DoctorFailed(Failed):
-    def __init__(self, checks):
+    def __init__(self, checks: list[Check]) -> None:
         super().__init__(f'{sum(ch["severity"] == "error" for ch in checks)} checks failed')
         self.result = {'checks': checks}
 
 
-def fresh_code_then_rerun():
+def fresh_code_then_rerun() -> None:
     """Fast-forward the checkout and re-run on the new code; a failed pull is only a note."""
     try:
         before, after = update.pull('main')
@@ -284,7 +305,7 @@ def fresh_code_then_rerun():
         os.execv(sys.executable, [sys.executable, *sys.argv, '--pulled'])
 
 
-def run_doctor(cfg):
+def run_doctor(cfg: Cluster) -> dict[str, list[Check]]:
     checks = doctor.run_all(cfg)
     if not OUT.json:
         for ch in checks:
@@ -296,9 +317,11 @@ def run_doctor(cfg):
     return {'checks': checks}
 
 
-def global_first(argv):
+def global_first(argv: list[str]) -> list[str]:
     """Move global options to the front, so `--json` works anywhere on the command line."""
-    front, rest, i = [], [], 0
+    front: list[str] = []
+    rest: list[str] = []
+    i = 0
     while i < len(argv):
         a = argv[i]
         if a == '--json' or a.startswith('--config='):
@@ -312,11 +335,12 @@ def global_first(argv):
     return front + rest
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     argv = global_first(sys.argv[1:] if argv is None else list(argv))
     args = parser().parse_args(argv)
     OUT.json = args.json
-    result, code, error = {}, OK, ''
+    result: Result = {}
+    code, error = OK, ''
     try:
         privileges.elevate(args, argv)
         _lock = one_at_a_time(args)

@@ -5,8 +5,203 @@ import json
 import os
 import re
 import tomllib
+from typing import Any, Literal, TypedDict
 
 from .util import Failed, gb, load_json, size_bytes, warn
+
+Json = dict[str, Any]  # parsed TOML/JSON before validation
+AuthMode = Literal['cloudflare-access', 'tailscale', 'tinyauth', 'none']
+Ingress = Literal['cloudflared', 'tailscale', 'public', 'loopback']
+Deploy = Literal['coolify', 'compose']
+Isolation = Literal['sysbox', 'unconfined']
+StorageMode = Literal['shared', 'per-person']
+CompanionKind = Literal['slack']
+
+
+class AgentCfg(TypedDict):
+    id: str
+    owner: str
+    memory: str
+    cpus: float
+    upstream: str
+    hostname: str
+    image: str
+    publish: dict[str, int]  # tool (PUBLISHABLE) -> host port
+    path: str
+    storage_unit: str
+    subnet: str
+    pair_host: str
+    color: str  # '' or one of COLORS
+
+
+class CompanionCfg(TypedDict):
+    name: str
+    display_name: str
+    agent: str
+    kind: CompanionKind
+
+
+class CompanionState(TypedDict):
+    """<data>/state/companions.json: entries are CompanionCfg plus created_at, unvalidated until from_state."""
+
+    companions: list[Json]
+    seeded: list[str]
+
+
+class AuthCloudflare(TypedDict):
+    team: str
+    audience: str
+    network: Literal['private', 'public', '']  # '' unless mode is cloudflare-access
+    require_warp: bool
+    https: bool
+
+
+class AuthTinyauth(TypedDict):
+    domain: str
+
+
+class AuthCfg(TypedDict):
+    mode: AuthMode
+    ingress: Ingress
+    admins: list[str]
+    allow_domains: list[str]
+    cloudflare: AuthCloudflare
+    tinyauth: AuthTinyauth
+    hub_port: int
+
+
+class ExtraSecrets(TypedDict):
+    folder: str
+    map: str
+    label: str
+
+
+class HubCfg(TypedDict):
+    publish: int
+    extra_stacks: list[str]
+    extra_secrets: ExtraSecrets
+
+
+class BarkCfg(TypedDict):
+    url: str
+    public: str
+
+
+class DefaultsCfg(TypedDict):
+    memory: str
+    cpus: float
+
+
+class StorageCfg(TypedDict):
+    mode: StorageMode
+    pool_size: str
+    pool_image: str
+    person_size: str
+    host_reserve: str
+
+
+class Throttle(TypedDict):
+    agent_gb: float
+    pool_gb: float
+    io_psi_max: float
+
+
+class LimitsCfg(TypedDict):
+    total_memory: str
+    host_reserve: str
+    throttle: Throttle
+
+
+class AndroidCfg(TypedDict):
+    enabled: bool
+    system_image: str
+
+
+class BackupsCfg(TypedDict):
+    enabled: bool
+    keep_days: int
+    time: str
+
+
+class CompanionPolicy(TypedDict):
+    self_service: bool
+    max_per_agent: int
+
+
+class UpdatesCfg(TypedDict):
+    agentlab: Literal['off', 'daily']
+    time: str
+    branch: str
+    agent_tools_hours: float
+    wait_hours: float
+    on_busy: Literal['defer', 'resume']
+
+
+class CloudflareCfg(TypedDict):
+    account_id: str
+    zone: str
+    api_token_file: str
+    acme_token_file: str
+    login_method: str
+    client_session: str
+
+
+class CoolifyCfg(TypedDict):
+    url: str
+    token_file: str
+    project: str
+
+
+class ImagesCfg(TypedDict):
+    registry: str
+    tag: str
+
+
+class TinyauthCfg(TypedDict):
+    domain: str
+    google_client_id_file: str
+    google_client_secret_file: str
+    image: str
+
+
+class ClusterJson(TypedDict):
+    """cluster.json: what the gate, hub, edge and host read."""
+
+    name: str
+    domain: str
+    timezone: str
+    data: str
+    deploy: Deploy
+    isolation: Isolation
+    wsl_autostart: bool
+    auth: AuthCfg
+    hub_domain: str
+    publish_address: str
+    hub: HubCfg
+    coolify_domain: str
+    pair_domain: str
+    agents: list[AgentCfg]
+    defaults: DefaultsCfg
+    storage: StorageCfg
+    limits: LimitsCfg
+    android: AndroidCfg
+    backups: BackupsCfg
+    companions: list[CompanionCfg]
+    companion_policy: CompanionPolicy
+    updates: UpdatesCfg
+
+
+class Cluster(ClusterJson):
+    """The resolved cluster.toml: cluster.json plus agentctl's own keys (PRIVATE)."""
+
+    bark: BarkCfg
+    seed: list[str]
+    cloudflare: CloudflareCfg
+    coolify: CoolifyCfg
+    images: ImagesCfg
+    tinyauth: TinyauthCfg
+    person_sizes: dict[str, str]  # owner email -> size
+
 
 DEFAULT_PATH = os.environ.get('AGENTLAB_CONFIG', '/etc/agentlab/cluster.toml')
 ID = re.compile(r'^[a-z][a-z0-9-]{0,30}[a-z0-9]$|^[a-z]$')
@@ -17,14 +212,14 @@ RESERVED = {'edge', 'gate', 'hub', 'coolify', 'core', 'tinyauth'}
 SUBNET = '10.207.{n}.0/24'  # agent n's network; 10.207.0.0/24 is the edge's
 TINYAUTH_IMAGE = 'ghcr.io/tinyauthapp/tinyauth:v5.1.3'  # >= 5.1.3 for CVE-2026-77560 and GHSA-r27r-rr9v-vv37
 
-MODES = {
+MODES: dict[AuthMode, tuple[Ingress, set[Ingress]]] = {
     'cloudflare-access': ('cloudflared', {'cloudflared'}),
     'tailscale': ('tailscale', {'tailscale'}),
     'tinyauth': ('public', {'public', 'cloudflared'}),
     'none': ('loopback', {'loopback'}),
 }
 
-SCHEMA = {  # section -> {key: default}; None = required
+SCHEMA: dict[str, dict[str, Any]] = {  # section -> {key: default}; None = required
     'cluster': {
         'name': None,
         'domain': None,
@@ -107,7 +302,7 @@ PROJECT = re.compile(r'^[a-z0-9][a-z0-9_-]*$')  # what Docker Compose accepts as
 PRIVATE = ('cloudflare', 'coolify', 'images', 'tinyauth', 'person_sizes', 'seed', 'bark')
 
 
-def load(path=DEFAULT_PATH):
+def load(path: str = DEFAULT_PATH) -> Cluster:
     try:
         with open(path, encoding='utf-8') as f:
             text = f.read()
@@ -116,7 +311,7 @@ def load(path=DEFAULT_PATH):
     return loads(text, path)
 
 
-def loads(text, where='cluster.toml'):
+def loads(text: str, where: str = 'cluster.toml') -> Cluster:
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -129,7 +324,7 @@ def loads(text, where='cluster.toml'):
     )
 
 
-def load_state(data):
+def load_state(data: str) -> CompanionState:
     """{companions: [...], seeded: [names]}; seeded remembers which cluster.toml entries were already taken over."""
     state = load_json(state_file(data), {})
     if isinstance(state, list):
@@ -137,13 +332,13 @@ def load_state(data):
     return {'companions': list(state.get('companions') or []), 'seeded': list(state.get('seeded') or [])}
 
 
-def state_file(data):
+def state_file(data: str) -> str:
     return os.path.join(data, 'state', 'companions.json')
 
 
-def previous_subnets(cluster_json):
+def previous_subnets(cluster_json: Json) -> dict[str, int]:
     """{agent id: n} from the last cluster.json, so an agent keeps its subnet."""
-    out = {}
+    out: dict[str, int] = {}
     for a in cluster_json.get('agents') or []:
         m = re.match(r'^10\.207\.(\d+)\.0/24$', str(a.get('subnet', '')))
         if m and a.get('id'):
@@ -151,12 +346,12 @@ def previous_subnets(cluster_json):
     return out
 
 
-def _section(given, name, problems):
+def _section(given: object, name: str, problems: list[str]) -> Json:
     label = f'[{name}]'
     if not isinstance(given, dict):
         problems.append(f'{label} must be a table')
         given = {}
-    out = {}
+    out: Json = {}
     for key, default in SCHEMA[name].items():
         if key in given:
             out[key] = given[key]
@@ -168,7 +363,7 @@ def _section(given, name, problems):
     return out
 
 
-def _size(value, where, problems):
+def _size(value: object, where: str, problems: list[str]) -> str:
     try:
         size_bytes(value)
     except ValueError as e:
@@ -177,7 +372,7 @@ def _size(value, where, problems):
     return str(value).lower().removesuffix('b')
 
 
-def _reserve(value, where, problems):
+def _reserve(value: object, where: str, problems: list[str]) -> str:
     """A share ("15%") or a size ("4g") kept back for the host."""
     reserve = str(value).strip()
     if reserve.endswith('%'):
@@ -187,11 +382,11 @@ def _reserve(value, where, problems):
     return _size(reserve, where, problems)
 
 
-def reserved(reserve, total):
+def reserved(reserve: str, total: int) -> int:
     return total * int(reserve[:-1]) // 100 if reserve.endswith('%') else size_bytes(reserve)
 
 
-def ram_bytes():
+def ram_bytes() -> int:
     try:
         with open('/proc/meminfo') as f:
             return int(next(line for line in f if line.startswith('MemTotal')).split()[1]) * 1024
@@ -199,7 +394,7 @@ def ram_bytes():
         return 0
 
 
-def _total_memory(limits, problems):
+def _total_memory(limits: Json, problems: list[str]) -> str:
     """[limits] total_memory; "auto" is this host's RAM minus host_reserve."""
     limits['host_reserve'] = _reserve(limits['host_reserve'], '[limits] host_reserve', problems)
     if str(limits['total_memory']).strip().lower() != 'auto':
@@ -215,12 +410,12 @@ def _total_memory(limits, problems):
     return f'{left // 2**20}m'
 
 
-def _memory(value, total, where, problems):
+def _memory(value: object, total: str, where: str, problems: list[str]) -> str:
     """An agent's memory; "auto" lets it use all of total_memory."""
     return total if str(value).strip().lower() == 'auto' else _size(value, where, problems)
 
 
-def _cpus(value, where, problems):
+def _cpus(value: object, where: str, problems: list[str]) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
         problems.append(f'{where}: cpus must be a positive number')
         return 1
@@ -230,7 +425,7 @@ def _cpus(value, where, problems):
 LABEL = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 
 
-def _hostname(value, where, problems, required=True, local=False):
+def _hostname(value: object, where: str, problems: list[str], required: bool = True, local: bool = False) -> str:
     """A DNS name; `local` also allows a single-label name or an IP (tailscale/none setups)."""
     value = str(value or '').lower()
     if not value and not required:
@@ -241,7 +436,7 @@ def _hostname(value, where, problems, required=True, local=False):
     return value
 
 
-def _is_ip(value):
+def _is_ip(value: str) -> bool:
     try:
         ipaddress.ip_address(value)
     except ValueError:
@@ -249,12 +444,12 @@ def _is_ip(value):
     return True
 
 
-def person(email):
+def person(email: str) -> str:
     """An owner's storage name: their email as a slug (sara@example.com -> sara-example-com)."""
     return re.sub(r'[^a-z0-9]+', '-', email.lower()).strip('-')
 
 
-def _storage(raw, problems):
+def _storage(raw: Json, problems: list[str]) -> Json:
     s = _section(raw.get('storage', {}), 'storage', problems)
     if s['mode'] not in ('shared', 'per-person'):
         problems.append('[storage] mode must be "shared" or "per-person"')
@@ -277,14 +472,14 @@ def _storage(raw, problems):
     return s
 
 
-def _port(value, where, problems):
+def _port(value: object, where: str, problems: list[str]) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
         problems.append(f'{where}: {value!r} is not a port number')
         return 0
     return value
 
 
-def _publish(value, where, problems):
+def _publish(value: object, where: str, problems: list[str]) -> dict[str, int]:
     """{tool: host port} an agent's tools are also published on."""
     if not isinstance(value, dict):
         problems.append(f'{where} must be a table like {{ t3 = 7101 }}')
@@ -293,9 +488,10 @@ def _publish(value, where, problems):
     return {k: _port(v, f'{where}.{k}', problems) for k, v in value.items() if k in PUBLISHABLE}
 
 
-def from_state(entries, agent_ids):
+def from_state(entries: list[Json], agent_ids: list[str]) -> list[CompanionCfg]:
     """Valid companions from the state file; broken ones are skipped with a warning, never an error."""
-    out, taken = [], set()
+    out: list[CompanionCfg] = []
+    taken: set[str] = set()
     for e in entries:
         name = str(e.get('name', '')) if isinstance(e, dict) else ''
         ok = (
@@ -320,16 +516,17 @@ def from_state(entries, agent_ids):
     return out
 
 
-def _subnets(ids, previous):
+def _subnets(ids: list[str], previous: dict[str, int]) -> dict[str, int]:
     """A stable /24 per agent: kept from the last apply, new agents take the lowest free number."""
     taken = {previous[i] for i in ids if i in previous}
-    out, free = {}, (n for n in range(1, 255) if n not in taken)
+    out: dict[str, int] = {}
+    free = (n for n in range(1, 255) if n not in taken)
     for i in ids:
         out[i] = previous[i] if i in previous else next(free)
     return out
 
 
-def _auth(raw, problems):
+def _auth(raw: Json, problems: list[str]) -> tuple[Json, Json, Json]:
     a = _section(raw.get('auth', {}), 'auth', problems)
     cf = _section(a.pop('cloudflare') or {}, 'auth.cloudflare', problems)
     ta = _section(a.pop('tinyauth') or {}, 'auth.tinyauth', problems)
@@ -380,9 +577,9 @@ def _auth(raw, problems):
     return a, cf, ta
 
 
-def resolve(raw, previous=None, state=None):
+def resolve(raw: Json, previous: dict[str, int] | None = None, state: CompanionState | None = None) -> Cluster:
     """The validated, defaulted config (cluster.json shape plus agentctl's own keys); raises Failed listing every problem."""
-    problems = []
+    problems: list[str] = []
     unknown = set(raw) - {
         'cluster',
         'hub',
@@ -487,7 +684,8 @@ def resolve(raw, previous=None, state=None):
     default_memory = _memory(defaults['memory'], total, '[defaults] memory', problems)
     default_cpus = _cpus(defaults['cpus'], '[defaults] cpus', problems)
 
-    agents, seen = [], []
+    agents: list[AgentCfg] = []
+    seen: list[str] = []
     raw_agents = raw.get('agents', [])
     if not isinstance(raw_agents, list) or not raw_agents:
         problems.append('at least one [[agents]] entry is required')
@@ -546,7 +744,7 @@ def resolve(raw, previous=None, state=None):
             )
         if len(published) != len(set(published)):
             problems.append('a published port is used twice')
-    slugs = {}
+    slugs: dict[str, list[str]] = {}
     for o in {a['owner'] for a in agents if EMAIL.match(a['owner'])}:
         slugs.setdefault(person(o), []).append(o)
     problems += [
@@ -567,7 +765,7 @@ def resolve(raw, previous=None, state=None):
     if set(pair_hosts) & set(hosts):
         problems.append('a pair host collides with domain, hub_domain or coolify_domain')
 
-    companions = []
+    companions: list[CompanionCfg] = []
     for n, comp in enumerate(raw.get('companions', []) or [], 1):
         where = f'[[companions]] #{n}'
         if not isinstance(comp, dict):
@@ -585,7 +783,7 @@ def resolve(raw, previous=None, state=None):
             {
                 'name': name,
                 'display_name': str(comp.get('display_name') or name),
-                'agent': comp.get('agent'),
+                'agent': comp.get('agent', ''),  # a missing agent is a problem above, so never returned
                 'kind': comp.get('kind', 'slack'),
             }
         )
@@ -672,54 +870,69 @@ def resolve(raw, previous=None, state=None):
         'backups': {'enabled': backups['enabled'], 'keep_days': backups['keep_days'], 'time': backups['time']},
         'companions': companions,
         'seed': [c['name'] for c in seeds],
-        'companion_policy': policy,
-        'updates': updates,
+        'companion_policy': {'self_service': policy['self_service'], 'max_per_agent': policy['max_per_agent']},
+        'updates': {
+            'agentlab': updates['agentlab'],
+            'time': updates['time'],
+            'branch': updates['branch'],
+            'agent_tools_hours': updates['agent_tools_hours'],
+            'wait_hours': updates['wait_hours'],
+            'on_busy': updates['on_busy'],
+        },
         # Below: agentctl-only keys (file paths, never secrets), left out of cluster.json.
         'cloudflare': {
-            **cloudflare,
+            'account_id': cloudflare['account_id'],
+            'zone': cloudflare['zone'],
+            'api_token_file': cloudflare['api_token_file'],
+            'acme_token_file': cloudflare['acme_token_file'],
             'login_method': str(auth_cf['login_method']),
             'client_session': str(auth_cf['client_session']),
         },
-        'coolify': coolify,
-        'images': images,
-        'tinyauth': auth_ta,
+        'coolify': {'url': coolify['url'], 'token_file': coolify['token_file'], 'project': coolify['project']},
+        'images': {'registry': images['registry'], 'tag': images['tag']},
+        'tinyauth': {
+            'domain': auth_ta['domain'],
+            'google_client_id_file': auth_ta['google_client_id_file'],
+            'google_client_secret_file': auth_ta['google_client_secret_file'],
+            'image': auth_ta['image'],
+        },
         'person_sizes': storage['person_sizes'],
     }
 
 
-def public(cfg):
+def public(cfg: Cluster) -> dict[str, object]:
     """cluster.json: the resolved config minus agentctl's own settings, read by the gate, hub, edge and host."""
     return {k: v for k, v in cfg.items() if k not in PRIVATE}
 
 
-def to_json(cfg):
+def to_json(cfg: Cluster) -> str:
     return json.dumps(public(cfg), indent=2) + '\n'
 
 
-def private_network(cfg):
+def private_network(cfg: Cluster) -> bool:
     return cfg['auth']['mode'] == 'cloudflare-access' and cfg['auth']['cloudflare']['network'] == 'private'
 
 
-def private_https(cfg):
+def private_https(cfg: Cluster) -> bool:
     return private_network(cfg) and cfg['auth']['cloudflare']['https']
 
 
-def ports_only(cfg):
+def ports_only(cfg: Cluster) -> bool:
     """One-person setup reached on published ports, not through tailscale serve or the edge's ingress."""
     agents = cfg['agents']
     return bool(cfg['hub']['publish']) and bool(agents) and all('t3' in a['publish'] for a in agents)
 
 
-def agent(cfg, agent_id):
+def agent(cfg: Cluster, agent_id: str) -> AgentCfg:
     found = next((a for a in cfg['agents'] if a['id'] == agent_id), None)
     if not found:
         raise Failed(f'no agent {agent_id!r} in the config (agentctl agent list)')
     return found
 
 
-def agent_ip(a):
+def agent_ip(a: AgentCfg) -> str:
     return a['subnet'].replace('.0/24', '.2')
 
 
-def gateway(subnet):
+def gateway(subnet: str) -> str:
     return subnet.replace('.0/24', '.1')

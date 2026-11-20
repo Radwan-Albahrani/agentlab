@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any
 
 import cluster
 
@@ -224,7 +223,7 @@ def used(path: str) -> tuple[int, int]:
     return (s.f_blocks - s.f_bfree) * s.f_frsize, s.f_blocks * s.f_frsize
 
 
-def tidy(data: str, agent: dict[str, Any]) -> tuple[list[str], int]:
+def tidy(data: str, agent: cluster.Agent) -> tuple[list[str], int]:
     agent_id, root = agent['id'], agent['path']
     unit = agent.get('storage_unit') or root
     cid = container(data, agent_id)
@@ -278,7 +277,7 @@ def tidy(data: str, agent: dict[str, Any]) -> tuple[list[str], int]:
     return lines, max(0, before - used(unit)[0])
 
 
-def trim(cfg: dict[str, Any]) -> list[str]:
+def trim(cfg: cluster.Cluster) -> list[str]:
     """Hand the blocks freed inside each disk image back to the host disk (the images are sparse files)."""
     units = sorted({a['storage_unit'] for a in cfg.get('agents') or [] if a.get('storage_unit')})
     out = []

@@ -6,6 +6,7 @@ set -uo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 PY=python:3.12.8-slim
 RUFF=ruff==0.15.22
+MYPY=mypy==2.4.1
 SHELLCHECK=koalaman/shellcheck-alpine:v0.10.0
 failed=()
 
@@ -36,12 +37,14 @@ copies() {  # a schema each image needs, kept as exact copies of one source (eac
 }
 part_cli() {  # git for the companion template tests, which work on real repos; SQLAlchemy only builds test databases
   py cli 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git >/dev/null
-    pip install -q SQLAlchemy==2.1.9
+    pip install -q SQLAlchemy==2.1.9 '"$MYPY"'
+    (cd cli && mypy --cache-dir /tmp/mypy)  # every function typed (cli/mypy.ini); the repo is read-only here
     cd cli && python -m unittest discover -s tests 2>&1 | tail -3'
 }
 part_host() {  # git for the janitor's worktree tests
-  py host 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git >/dev/null
-    cd host && python -m unittest discover -s tests 2>&1 | tail -3'
+  py host "apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git >/dev/null
+    pip install -q $MYPY && cd host && mypy --cache-dir /tmp/mypy && mypy --cache-dir /tmp/mypy --scripts-are-modules bin/agentlab-mount-storage
+    python -m unittest discover -s tests 2>&1 | tail -3"
 }
 part_gate() { py gate 'cd gate && pip install -q -r requirements.txt && python -m unittest discover -s tests -t . 2>&1 | tail -3'; }
 part_companion() {  # mypy first: every function in the bot is typed (companion/mypy.ini)
@@ -50,7 +53,7 @@ part_companion() {  # mypy first: every function in the bot is typed (companion/
 }
 part_image() {  # gcc for the emulator's non-dumpable preload; mypy for the T3 database readers (image/mypy.ini)
   py image 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null
-    pip install -q pytest==8.3.4 SQLAlchemy==2.1.9 mypy==2.4.1
+    pip install -q pytest==8.3.4 SQLAlchemy==2.1.9 '"$MYPY"'
     (cd image && mypy --cache-dir /tmp/mypy && mypy --cache-dir /tmp/mypy agent-t3)
     python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'
 }

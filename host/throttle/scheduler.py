@@ -1,17 +1,28 @@
 """Which queued heavy jobs may start now; with nothing running, the next job always starts."""
 
+from collections.abc import Iterable
+
+from .facts import MemoryUse
 from .settings import ADMIT_GAP_S, AGENT_HEADROOM_MB, IO_PRESSURE_MAX, MEMORY_PRESSURE_MAX, POOL_HEADROOM_MB
+from .spool import Job
 
 
-def to_admit(jobs, pool, agents, memory_pressure, io_pressure, since_last_start_s):
+def to_admit(
+    jobs: list[Job],
+    pool: MemoryUse,
+    agents: dict[str, MemoryUse | None],
+    memory_pressure: float,
+    io_pressure: float,
+    since_last_start_s: float,
+) -> list[Job]:
     """pool: (used, limit) MB; agents: {agent: (used, limit) or None}; returns the jobs to start now."""
     running = [j for j in jobs if j.admitted]
     if running and (io_pressure > IO_PRESSURE_MAX or since_last_start_s < ADMIT_GAP_S):
         return []
     free = _free_room(running, pool, agents)
     measuring = {j.signature for j in running if not j.known}
-    held_agents = set()
-    admitted = []
+    held_agents: set[str] = set()
+    admitted: list[Job] = []
     for job in _fair_order([j for j in jobs if not j.admitted], running):
         if job.agent in held_agents or (not job.known and job.signature in measuring):
             continue
@@ -33,11 +44,11 @@ def to_admit(jobs, pool, agents, memory_pressure, io_pressure, since_last_start_
     return admitted
 
 
-def _still_to_use(jobs):
+def _still_to_use(jobs: Iterable[Job]) -> int:
     return sum(max(0, j.estimate_mb - j.rss_mb) for j in jobs)
 
 
-def _free_room(running, pool, agents):
+def _free_room(running: list[Job], pool: MemoryUse, agents: dict[str, MemoryUse | None]) -> dict[str, int]:
     free = {'pool': pool[1] - POOL_HEADROOM_MB - pool[0] - _still_to_use(running)}
     for agent, usage in agents.items():
         if usage:
@@ -47,11 +58,12 @@ def _free_room(running, pool, agents):
     return free
 
 
-def _fair_order(queued, running):
-    load = {}
+def _fair_order(queued: list[Job], running: list[Job]) -> list[Job]:
+    load: dict[str, int] = {}
     for j in running:
         load[j.agent] = load.get(j.agent, 0) + 1
-    order, waiting = [], sorted(queued, key=lambda j: j.created)
+    order: list[Job] = []
+    waiting = sorted(queued, key=lambda j: j.created)
     while waiting:
         nxt = min(waiting, key=lambda j: (load.get(j.agent, 0), j.created))
         order.append(nxt)

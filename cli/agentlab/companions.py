@@ -6,20 +6,21 @@ import os
 import shutil
 
 from . import apply, config, deploy, render
+from .config import Cluster, CompanionState
 from .util import Failed, Needs, Plan, need_root, say, write_if_changed
 
 
-def save_state(data, state):
+def save_state(data: str, state: CompanionState) -> None:
     path = config.state_file(data)
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     write_if_changed(path, json.dumps(state, indent=1) + '\n', mode=0o600)
 
 
-def _now():
+def _now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat(timespec='seconds')
 
 
-def persist_seeds(cfg):
+def persist_seeds(cfg: Cluster) -> None:
     """Record the cluster.toml companions this apply takes over (call only when really applying)."""
     if not cfg.get('seed'):
         return
@@ -31,7 +32,7 @@ def persist_seeds(cfg):
     save_state(cfg['data'], state)
 
 
-def create(config_path, agent_id, name, display_name='', kind='slack'):
+def create(config_path: str, agent_id: str, name: str, display_name: str = '', kind: str = 'slack') -> dict[str, str]:
     need_root('agentctl companion create')
     cfg = config.load(config_path)
     config.agent(cfg, agent_id)
@@ -66,7 +67,7 @@ def create(config_path, agent_id, name, display_name='', kind='slack'):
     return {'companion': name, 'agent': agent_id}
 
 
-def remove(config_path, agent_id, name):
+def remove(config_path: str, agent_id: str, name: str) -> dict[str, str]:
     """Stops and deletes one of the agent's companions; its data is archived, its code (the agent's checkout) stays."""
     need_root('agentctl companion remove')
     cfg = config.load(config_path)
@@ -93,7 +94,7 @@ def remove(config_path, agent_id, name):
     return {'companion': name, 'agent': agent_id}
 
 
-def owner_of(cfg, name):
+def owner_of(cfg: Cluster, name: str) -> str:
     comp = next((c for c in cfg['companions'] if c['name'] == name), None)
     if not comp:
         raise Failed(f'no companion {name}')

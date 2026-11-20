@@ -1,13 +1,16 @@
 """Agent storage ([storage] mode): a shared folder or pool image, or one sparse ext4 image per person, grown live or
 shrunk offline (its agents stop for the minute it takes) to the size the config asks for."""
 
+import functools
 import os
 import re
 import shutil
 import time
+from collections.abc import Callable, Collection, Iterable
+from typing import TypedDict
 
 from . import deploy
-from .config import person
+from .config import AgentCfg, Cluster, person
 from .util import AGENT_UID, Failed, Plan, run, size_bytes, warn
 
 SUBDIRS = ('home', 'workspace', 'linuxbrew')
@@ -15,12 +18,28 @@ HEADROOM = 1.1  # a disk shrinks only to where its data leaves this much room
 STOP_WAIT_S = 180  # Coolify stops a service asynchronously
 
 
-def undo_file(img):
+class Unit(TypedDict):
+    """One disk image to keep mounted, and the stacks whose containers use it."""
+
+    name: str
+    image: str
+    mount: str
+    size: str
+    stacks: list[str]
+
+
+class Usage(TypedDict):
+    size: int
+    used: int
+    avail: int
+
+
+def undo_file(img: str) -> str:
     """resize2fs's record of every block a shrink overwrote: while it exists, the shrink may not have finished."""
     return f'{img}.shrink-undo'
 
 
-def host_bytes(cfg):
+def host_bytes(cfg: Cluster) -> int:
     """Size of the filesystem the disk images live on."""
     path = f'{cfg["data"]}/disks'
     while not os.path.exists(path):
@@ -29,12 +48,12 @@ def host_bytes(cfg):
     return s.f_blocks * s.f_frsize
 
 
-def reserve_bytes(cfg, total):
+def reserve_bytes(cfg: Cluster, total: int) -> int:
     r = cfg['storage'].get('host_reserve') or '15%'
     return total * int(r[:-1]) // 100 if r.endswith('%') else size_bytes(r)
 
 
-def auto_size(cfg, owners):
+def auto_size(cfg: Cluster, owners: Collection[str]) -> str:
     """person_size "auto": the host disk minus its reserve and the fixed person_sizes, split evenly (whole GiB)."""
     fixed = cfg.get('person_sizes') or {}
     total = host_bytes(cfg)
@@ -45,18 +64,25 @@ def auto_size(cfg, owners):
     return f'{share}g'
 
 
-def units(cfg):
+def units(cfg: Cluster) -> list[Unit]:
     """[{name, image, mount, size, stacks}] of the images to keep mounted; [] for a plain shared folder."""
     st, data = cfg['storage'], cfg['data']
     if st['mode'] == 'shared':
         if not st['pool_size']:
             return []
-        unit = {'name': 'pool', 'image': st['pool_image'], 'mount': f'{data}/agents', 'size': st['pool_size']}
-        return [{**unit, 'stacks': _stacks(cfg, cfg['agents'])}]
+        return [
+            Unit(
+                name='pool',
+                image=st['pool_image'],
+                mount=f'{data}/agents',
+                size=st['pool_size'],
+                stacks=_stacks(cfg, cfg['agents']),
+            )
+        ]
     sizes = cfg.get('person_sizes') or {}
     owners = {person(a['owner']): a['owner'] for a in cfg['agents']}
     default = auto_size(cfg, set(owners.values())) if st['person_size'] == 'auto' else st['person_size']
-    out = {}
+    out: dict[str, Unit] = {}
     for a in cfg['agents']:
         slug = person(a['owner'])
         out[slug] = {
@@ -69,7 +95,7 @@ def units(cfg):
     return list(out.values())
 
 
-def _stacks(cfg, agents):
+def _stacks(cfg: Cluster, agents: Iterable[AgentCfg]) -> list[str]:
     """The stacks whose containers mount these agents' folders: the agents and their companions."""
     ids = {a['id'] for a in agents}
     return [f'agentlab-agent-{i}' for i in sorted(ids)] + [
@@ -77,26 +103,26 @@ def _stacks(cfg, agents):
     ]
 
 
-def label(name):
+def label(name: str) -> str:
     return f'al-{name}'[:16]  # ext4 labels hold 16 bytes
 
 
-def loop_device(img):
+def loop_device(img: str) -> str | None:
     _, out = run(['losetup', '-j', img], check=False)
     return out.split(':', 1)[0] if out else None
 
 
-def has_filesystem(img):
+def has_filesystem(img: str) -> bool:
     rc, out = run(['blkid', '-o', 'value', '-s', 'TYPE', img], check=False)
     return rc == 0 and bool(out.strip())
 
 
-def mounted_from(mnt):
+def mounted_from(mnt: str) -> str:
     _, out = run(['findmnt', '-n', '-o', 'SOURCE', mnt], check=False)
     return out.strip()
 
 
-def ensure_unit(cfg, u, plan):
+def ensure_unit(cfg: Cluster, u: Unit, plan: Plan) -> None:
     img, mnt, want = u['image'], u['mount'], size_bytes(u['size'])
     if not os.path.exists(img):
         if os.path.ismount(mnt):
@@ -124,17 +150,17 @@ def ensure_unit(cfg, u, plan):
     plan.do(f'mount the {u["name"]} disk at {mnt}', fn=lambda: _mount(img, mnt))
 
 
-def ensure(cfg, plan):
+def ensure(cfg: Cluster, plan: Plan) -> None:
     for u in units(cfg):
         ensure_unit(cfg, u, plan)
     for a in cfg['agents']:
         for sub in ('', *SUBDIRS):
             path = os.path.join(a['path'], sub) if sub else a['path']
             if not os.path.isdir(path):
-                plan.do(f'create {path}', fn=lambda p=path: _owned_dir(p))
+                plan.do(f'create {path}', fn=functools.partial(_owned_dir, path))
 
 
-def _create(img, size, name):
+def _create(img: str, size: int, name: str) -> None:
     os.makedirs(os.path.dirname(img), exist_ok=True)
     if os.path.exists(img) and has_filesystem(img):
         raise Failed(f'{img} already holds a filesystem; refusing to format it')
@@ -143,7 +169,7 @@ def _create(img, size, name):
     run(['mkfs.ext4', '-q', '-m', '0', '-L', label(name), img])
 
 
-def _grow(img, mnt, size):
+def _grow(img: str, mnt: str, size: int) -> None:
     with open(img, 'r+b') as f:
         f.truncate(size)
     dev = loop_device(img) if os.path.ismount(mnt) else None
@@ -155,7 +181,7 @@ def _grow(img, mnt, size):
         run(['resize2fs', img])
 
 
-def shrink(cfg, u, have, want, plan):
+def shrink(cfg: Cluster, u: Unit, have: int, want: int, plan: Plan) -> None:
     """Shrink toward `want`, never below the data plus HEADROOM; skips while one of its agents is mid-turn or the host
     lacks room for the blocks the shrink moves (once inside the image, once in the undo file)."""
     use = usage(u['mount']) if os.path.ismount(u['mount']) else None
@@ -175,7 +201,8 @@ def shrink(cfg, u, have, want, plan):
         warn(f'{u["name"]} disk: {", ".join(busy)} mid-turn, so it shrinks on the next apply')
         return
     room = 2 * min(use['used'], have - target) + 2**30
-    free = usage(os.path.dirname(u['image']))['avail']
+    host = usage(os.path.dirname(u['image']))
+    free = host['avail'] if host else 0
     if free < room:
         warn(
             f'{u["name"]} disk: shrinking it safely needs {room / 2**30:.0f} GiB free on the host, which has {free / 2**30:.0f}'
@@ -192,7 +219,7 @@ def shrink(cfg, u, have, want, plan):
     )
 
 
-def _wait_stopped(cfg, stacks, sleep=time.sleep):
+def _wait_stopped(cfg: Cluster, stacks: list[str], sleep: Callable[[float], None] = time.sleep) -> None:
     for _ in range(STOP_WAIT_S // 3):
         if not any(c['state'] == 'running' for s in stacks for c in deploy.stack_containers(cfg, s)):
             return
@@ -200,7 +227,7 @@ def _wait_stopped(cfg, stacks, sleep=time.sleep):
     raise Failed(f'{", ".join(stacks)} did not stop within {STOP_WAIT_S} s')
 
 
-def _holders(mnt):
+def _holders(mnt: str) -> list[str]:
     """Running containers that mount the disk (or a folder on it) besides the stacks a shrink stops: the hub mounts
     every person's disk, so while it runs the disk can't be unmounted."""
     rc, ids = run(['docker', 'ps', '-q'], check=False)
@@ -217,13 +244,13 @@ def _holders(mnt):
     return held
 
 
-def _unmount(mnt):
+def _unmount(mnt: str) -> None:
     rc, out = run(['umount', mnt], check=False)
     if rc:
         raise Failed(f'umount {mnt} failed ({rc}): {out[-200:]}; {_who_holds(mnt)}')
 
 
-def _who_holds(mnt):
+def _who_holds(mnt: str) -> str:
     """What keeps a disk busy: mounts inside it, and the processes with files on it (fuser, from psmisc, which
     hosts installed before it was a base package get here)."""
     _, mounts = run(['findmnt', '-rn', '-o', 'TARGET'], check=False)
@@ -238,7 +265,7 @@ def _who_holds(mnt):
     return f'mounts inside it: {", ".join(inside) or "none"}; processes using it: {procs[-600:]}'
 
 
-def _process(pid):
+def _process(pid: int) -> str:
     """`pid` as someone can recognise it: its command line and container, or this very agentctl."""
     if pid == os.getpid():
         return f'{pid} (this agentctl)'
@@ -256,13 +283,14 @@ def _process(pid):
     return f'{pid} {cmd}{where}'
 
 
-def _shrink(cfg, u, want, sleep=time.sleep):
+def _shrink(cfg: Cluster, u: Unit, want: int, sleep: Callable[[float], None] = time.sleep) -> None:
     """Stop whatever uses the disk, then shrink its filesystem offline with an undo file, check it, and only then cut
     the image. Any failure rolls the filesystem back; the disk is always remounted (unless a roll back failed, when
     nothing touches it again until a person looks) and its stacks restarted."""
     img, mnt, undo, quiet = u['image'], u['mount'], undo_file(u['image']), Plan(False)
     running = [s for s in u['stacks'] if any(c['state'] == 'running' for c in deploy.stack_containers(cfg, s))]
-    was_mounted, intact, held = os.path.ismount(mnt), True, []
+    was_mounted, intact = os.path.ismount(mnt), True
+    held: list[str] = []
     try:
         for s in running:
             deploy.stop(cfg, s, quiet)
@@ -307,7 +335,9 @@ def _shrink(cfg, u, want, sleep=time.sleep):
         _bring_back(cfg, u, running, held, intact, was_mounted, quiet)
 
 
-def _bring_back(cfg, u, running, held, intact, was_mounted, quiet):
+def _bring_back(
+    cfg: Cluster, u: Unit, running: list[str], held: list[str], intact: bool, was_mounted: bool, quiet: Plan
+) -> None:
     """Undo the stops, each step on its own so one failure skips none of the others: the containers that only held
     the disk (the hub) always restart; the person's stacks only on their mounted disk, never on the bare folder, and
     not at all after a failed roll back (that disk waits for a person)."""
@@ -333,7 +363,7 @@ def _bring_back(cfg, u, running, held, intact, was_mounted, quiet):
             warn(f'{s} could not be started again: {e}')
 
 
-def _roll_back(img):
+def _roll_back(img: str) -> None:
     """After a shrink stopped partway: a filesystem that still checks clean is kept as it is (resize2fs refused before
     moving anything, or finished); otherwise its undo file puts it back as it was before the shrink."""
     undo = undo_file(img)
@@ -347,29 +377,29 @@ def _roll_back(img):
     os.remove(undo)
 
 
-def fs_bytes(img):
+def fs_bytes(img: str) -> int:
     """Size of the ext4 filesystem in the image, from its superblock."""
     _, out = run(['dumpe2fs', '-h', img], check=False)  # prints the superblock even when it fails further on
-    field = dict(line.split(':', 1) for line in out.splitlines() if ':' in line)
+    field = {k: v for k, _, v in (line.partition(':') for line in out.splitlines() if ':' in line)}
     try:
         return int(field['Block count'].strip()) * int(field['Block size'].strip())
     except (KeyError, ValueError):
         raise Failed(f'no ext4 superblock readable in {img}: {out[-300:]}') from None
 
 
-def _mount(img, mnt):
+def _mount(img: str, mnt: str) -> None:
     os.makedirs(mnt, exist_ok=True)
     if os.listdir(mnt):
         raise Failed(f'{mnt} is not empty but its disk is not mounted there; move its contents aside first')
     run(['mount', '-o', 'loop,noatime', img, mnt])
 
 
-def _owned_dir(path):
+def _owned_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
     os.chown(path, AGENT_UID, AGENT_UID)
 
 
-def usage(path):
+def usage(path: str) -> Usage | None:
     """{size, used, avail} bytes of the filesystem holding path (None when the path is missing)."""
     if not os.path.exists(path):
         return None
@@ -378,12 +408,12 @@ def usage(path):
     return {'size': size, 'used': size - s.f_bfree * s.f_frsize, 'avail': s.f_bavail * s.f_frsize}
 
 
-def du(path):
+def du(path: str) -> int:
     _, out = run(['du', '-sxb', path], check=False)
     return int(out.split()[0]) if out and out.split()[0].isdigit() else 0
 
 
-def remove_agent_files(a, plan):
+def remove_agent_files(a: AgentCfg, plan: Plan) -> None:
     """Deletes one agent's folder; a per-person disk stays (the owner's other agents, or a later agent, use it)."""
     if os.path.isdir(a['path']):
         plan.do(f'delete {a["path"]}', fn=lambda: shutil.rmtree(a['path']))
