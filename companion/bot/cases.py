@@ -218,6 +218,7 @@ def ask(task, text, files, ts):
     COMP.event('private', f'You asked {NAME}', task=key_of(task), detail=slack.ask(text).strip())
     with lock:
         now = now_iso()
+        machine.set_asking(task, False)
         machine.begin_turn(task, 'owner', 'case')
         task.update(
             burst_start=now,
@@ -227,7 +228,6 @@ def ask(task, text, files, ts):
             seen_ts=ts,
             quiet_since=0,
             options={},
-            question=False,
             last_status='',
             last_status_at=0,
         )

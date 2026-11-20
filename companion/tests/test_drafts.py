@@ -64,7 +64,7 @@ def test_a_reply_after_posting_edits_the_post(draft, fresh_bot):
     assert st['posted'] == {'channel': st['posted']['channel'], 'ts': POSTED_TS, 'files': True}
 
     routing.route({'channel': st['dm'], 'ts': '20.0', 'thread_ts': st['thread'], 'user': OWNER, 'text': 'fix'}, False)
-    assert st['revising']
+    assert st['status'] == 'revising'
     write(draft, 'Second version', 2)
     drafts.tick()
     assert st['status'] == 'editing'
@@ -83,7 +83,7 @@ def test_keeping_the_post_changes_nothing(draft, fresh_bot):
     drafts.tick()
     press('draft_post')
     st = state.state['drafts'][KEY]
-    st['revising'] = True
+    st['status'] = 'revising'  # the owner asked for a change
     write(draft, 'Second', 2)
     drafts.tick()
     press('draft_discard')
@@ -95,7 +95,7 @@ def test_a_post_from_before_is_found_in_the_channel(draft, fresh_bot):
     write(draft, 'First', 1)
     drafts.tick()
     st = state.state['drafts'][KEY]
-    st.update(status='posted', revising=True)  # no 'posted' location stored
+    st['status'] = 'revising'  # posted before locations were stored: none here
     write(draft, 'Fixed', 2)
     drafts.tick()
     press('draft_post')
@@ -110,7 +110,7 @@ def test_a_discarded_draft_says_so(draft, fresh_bot):
     st = state.state['drafts'][KEY]
     routing.route({'channel': st['dm'], 'ts': '21.0', 'thread_ts': st['thread'], 'user': OWNER, 'text': 'x'}, False)
     assert 'discarded' in slack.app.client.text()
-    assert not st.get('revising')
+    assert st['status'] == 'discarded'
 
 
 def write_files(d, names, meta=None):

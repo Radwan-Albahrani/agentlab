@@ -6,6 +6,7 @@ import time
 
 from . import ledger, machine, polls, reviews, slack
 from .config import COMP, MODES, OWNER, mode
+from .fsm import POLL
 from .state import lock, review_of, state
 
 _last = 0.0
@@ -42,7 +43,7 @@ def card(k, t):
     phase = t.get('phase') or machine.phase_of(t)
     poll = state['polls'].get(t.get('poll') or '')
     status = STATUS[phase]
-    if status in ('done',) and poll and poll['open']:
+    if status in ('done',) and poll and POLL.is_(poll, 'open'):
         status = 'working'
     closed = re.sub(r':[a-z_]+:\s*', '', t.get('closed') or '')
     outcome = 'Paused for the usage limit' if phase == 'paused' else closed or machine.outcome(t).replace('_', ' ')
@@ -62,13 +63,13 @@ def card(k, t):
         'requester': requester,
         'status': status,
         'waiting': _waiting(t) if status == 'waiting' else '',
-        'outcome': polls.summary(poll) if poll and poll['open'] else outcome,
+        'outcome': polls.summary(poll) if poll and POLL.is_(poll, 'open') else outcome,
         'started': t.get('start') or '',
         'ended': t.get('ended') or '',
         'thread': t.get('thread') or '',
         'slack': slack.link(t.get('channel'), t.get('thread_ts')),
         'source': t.get('source') or '',
-        'resumes_at': (t.get('paused') or {}).get('resumes_at') or '' if phase == 'paused' else '',
+        'resumes_at': (machine.paused(t) or {}).get('resumes_at') or '' if phase == 'paused' else '',
         'started_by': slack.name(by) if by and by != OWNER else '',
         'via': a.get('via') or '',
         'approved_by': slack.name(a['approved_by']) if a.get('approved_by') else '',

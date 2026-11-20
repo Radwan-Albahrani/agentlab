@@ -82,7 +82,7 @@ def test_a_busy_model_gets_an_automatic_continue(monkeypatch, t3_quiet):
     monkeypatch.setattr(t3, 'run_error', lambda tid: '{"message": "Selected model is at capacity"}')
     t = task()
     tasks.tick(t)
-    assert machine.running(t) and t['retry_at'] and t['retries'] == 1
+    assert machine.running(t) and t['retry']['state'] == 'waiting' and t['retry']['count'] == 1
 
 
 def test_with_auto_retry_off_the_failure_is_reported(monkeypatch, t3_quiet):

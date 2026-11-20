@@ -6,6 +6,7 @@ colleague; once taken on they are the owner talking to the companion, privately.
 
 from . import jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, log, mode
+from .fsm import ASK
 from .state import key, lock, save, state
 from .text import first_sentence, quote
 
@@ -32,7 +33,7 @@ def route(ev, mentioned):
         jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, 'thread', user)
         return True
     a = _asks().get(key(ch, thr))
-    if a and a['user'] == user and a['status'] == 'pending':
+    if a and a['user'] == user and ASK.is_(a, 'pending'):
         jobs.run_later(_added, a, ev.get('text', ''))
         return True
     return False
@@ -52,7 +53,8 @@ def ask(ev):
     if not card:
         slack.post(ch, ts, 'Not sent', md=f":warning: I couldn't pass this on to {owner}. Try again later.")
         return
-    a = {'ch': ch, 'ts': ts, 'user': user, 'name': who, 'text': text, 'card': card, 'status': 'pending'}
+    a = {'ch': ch, 'ts': ts, 'user': user, 'name': who, 'text': text, 'card': card}
+    ASK.start(a, 'pending')
     with lock:
         _asks()[key(ch, ts)] = a
         _show(a)
@@ -67,7 +69,7 @@ def _show(a):
     """The owner's card: the ask with Approve / Decline while pending, its outcome after."""
     head = f':inbox_tray: **{a["name"]}** asked in <#{a["ch"]}>\n' + quote(a['text'])
     k = key(a['ch'], a['ts'])
-    if a['status'] == 'pending':
+    if ASK.is_(a, 'pending'):
         note = 'Reply in this thread to message them.'
         buttons = slack.buttons(('inbox_approve', 'Approve', k, 'primary'), ('inbox_decline', 'Decline', k, 'danger'))
         blocks = [*slack.blocks(head, note), buttons]
@@ -75,8 +77,8 @@ def _show(a):
         note = {
             'approved': ':white_check_mark: Approved: working on it in their thread',
             'declined': ':no_entry_sign: Declined',
-        }[a['status']]
-        tail = ' · reply here to talk to me about it; they see nothing of it' if a['status'] == 'approved' else ''
+        }[ASK.of(a)]
+        tail = ' · reply here to talk to me about it; they see nothing of it' if ASK.is_(a, 'approved') else ''
         blocks = slack.blocks(head, note + tail)
     slack.app.client.chat_update(channel=slack.dm_owner(), ts=a['card'], text=f'{a["name"]} asked', blocks=blocks)
 
@@ -98,9 +100,9 @@ def _added(a, text):
 def decide(k, approve):
     with lock:
         a = _asks().get(k)
-        if not a or a['status'] != 'pending':
+        if not a or not ASK.is_(a, 'pending'):
             return
-        a['status'] = 'approved' if approve else 'declined'
+        ASK.move(a, 'approved' if approve else 'declined')
         _show(a)
         save()
     slack.react(a['ch'], a['ts'], 'hourglass_flowing_sand', remove=True)

@@ -104,7 +104,7 @@ def test_a_usage_limit_pauses_until_t3_resumes_then_finishes_without_a_failure(m
     t = task()
     tasks.tick(t)
     assert machine.running(t) and t['paused']['resumes_at'] == pytest.approx(IN_AN_HOUR, abs=0.01)
-    assert not limited and not t.get('retry_at')
+    assert not limited and (t.get('retry') or {}).get('state', 'idle') == 'idle'
     assert 'Paused for the usage limit' in fresh_bot.text() and 'failed' not in fresh_bot.text()
     card = publish.card('k', t)
     assert (card['status'], card['phase'], card['resumes_at']) == ('paused', 'paused', t['paused']['resumes_at'])

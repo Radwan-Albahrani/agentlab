@@ -880,14 +880,14 @@ def test_reviews_stopped_by_the_usage_limit_pause_on_a_short_calm_card(gh, told,
 def test_finished_lines_say_their_counts_and_wait_for_the_running_ones():
     e = {'id': f'{REPO}#6129', 'url': 'https://x/6129', 'title': 'A title that goes on for well over forty characters'}
     assert (
-        reviews._line(dict(e, task='k'))
+        reviews._line(dict(e, task='k', state='reviewing'))
         == ':arrows_counterclockwise: <https://x/6129|#6129> A title that goes on for well over… · reviewing'
     )
-    approved = dict(e, verdict='approved', counts={'findings': 2, 'blocking': 0})
+    approved = dict(e, state='approved', counts={'findings': 2, 'blocking': 0})
     assert reviews._line(approved).endswith('· approved · 2 findings')
-    changes = dict(e, verdict='changes', counts={'findings': 3, 'blocking': 1}, detail='QA found problems')
+    changes = dict(e, state='changes', counts={'findings': 3, 'blocking': 1}, detail='QA found problems')
     assert reviews._line(changes).endswith('· changes requested · 1 blocking')
-    assert reviews._card({'prs': [approved, dict(e, task='k', paused=0)]})[0] == (
+    assert reviews._card({'prs': [approved, dict(e, task='k', state='paused', paused=0)]})[0] == (
         'Reviewing 2 pull requests · 1 done · 1 paused for the usage limit'
     )
 

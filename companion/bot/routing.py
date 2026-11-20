@@ -114,7 +114,7 @@ def route(ev, mentioned):
     if case and not ev.get('files') and tasks.is_side_question(slack.ask(ev.get('text', '')).strip()):
         jobs.run_later(tasks.side_reply, case, slack.ask(ev.get('text', '')).strip(), ts, 'case')
         return
-    if case and machine.running(case) and case.get('question'):  # the agent asked the owner there: the answer
+    if case and machine.running(case) and machine.asking(case):  # the agent asked the owner there: the answer
         cases.heard(case, OWNER, ev.get('text', ''), ev.get('files'), private=True)
         jobs.run_later(tasks.follow_up, case, ev.get('text', ''), ev.get('files'), ts, 'case')
         return
