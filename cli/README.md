@@ -42,5 +42,6 @@ with `result: {needs: "sudo", command}` instead of waiting on a prompt.
 | `secret.py` | `secret set`: known secrets and where each lives |
 | `companions.py` | companions agents create and remove (`<data>/state/companions.json`) |
 | `tomledit.py` | comment-preserving edits to cluster.toml |
+| `fsm.py` | the explicit state machines an agent's update step (`update.py`) and the HTTPS rollout (`cloudflare.py`) move through |
 
 Tests: `cd cli && python3 -m unittest discover -s tests`.

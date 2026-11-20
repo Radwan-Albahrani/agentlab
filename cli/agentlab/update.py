@@ -11,12 +11,22 @@ from typing import Literal, NamedTuple, TypedDict, Unpack
 from . import apply, deploy, images, render, template
 from .config import AgentCfg, Cluster
 from .coolify import StackKind
+from .fsm import Machine
 from .util import REPO, Failed, Plan, load_json, need_root, run, say
 
 CHECK_EVERY_S = 300
 
 Outcome = Literal['ok', 'deferred', 'failed']  # failed: an exception; deferred: an agent still waits for its update
 OnBusy = Literal['defer', 'resume']
+AgentStep = Literal['pending', 'updated', 'resumed', 'deferred']
+
+# An agent's step while an update waits for it (wait_for_agents):
+#   pending   apply left it out because a T3 turn was running     updated   it went idle, so it was deployed
+#   resumed   still busy at the deadline, restarted anyway (on_busy = 'resume'; T3 resumes its cut-off turns)
+#   deferred  still busy at the deadline: its update waits for the next run
+STEP: Machine[AgentStep] = Machine(
+    'agent update', {'pending': ('updated', 'resumed', 'deferred'), 'updated': (), 'resumed': (), 'deferred': ()}
+)
 
 
 class Record(TypedDict, total=False):
@@ -130,36 +140,41 @@ def wait_for_agents(
 ) -> Waited:
     """Update each pending agent as soon as it's idle, for up to wait_hours; then defer or resume the rest."""
     stacks = render.stacks(cfg)
-    pending = pending_agents(cfg)
-    updated: list[str] = []
-    deferred: list[str] = []
+    agents = pending_agents(cfg)
+    step: dict[str, AgentStep] = {a['id']: STEP.first('pending') for a in agents}
+    went: list[str] = []  # updated or resumed, in the order they went
     resumed: dict[str, list[str]] = {}
     deadline = clock() + wait_hours * 3600
-    while pending:
-        for a in list(pending):
+
+    def pending() -> list[AgentCfg]:
+        return [a for a in agents if step[a['id']] == 'pending']
+
+    while pending():
+        for a in pending():
             if not deploy.agent_busy(cfg, a):
                 say(f'  {a["id"]} is idle: updating it')
                 kind, key = stacks[f'agentlab-agent-{a["id"]}']
                 deploy.deploy(cfg, f'agentlab-agent-{a["id"]}', kind, key, plan, force=True)
-                updated.append(a['id'])
-                pending.remove(a)
-        if not pending or clock() >= deadline:
+                step[a['id']] = STEP.to(step[a['id']], 'updated')
+                went.append(a['id'])
+        if not pending() or clock() >= deadline:
             break
-        say(f'  waiting for {", ".join(a["id"] for a in pending)} (a T3 turn is running); next check in 5 min')
+        say(f'  waiting for {", ".join(a["id"] for a in pending())} (a T3 turn is running); next check in 5 min')
         sleep(CHECK_EVERY_S)
-    for a in pending:
+    for a in pending():
         if on_busy == 'resume':
             waited = f'still busy after {wait_hours:g} h' if wait_hours else 'busy'
             say(f'  {a["id"]} {waited}: restarting it (T3 resumes its turns)')
             kind, key = stacks[f'agentlab-agent-{a["id"]}']
             resumed[a['id']] = resume(cfg, a, kind, key, plan)
-            updated.append(a['id'])
+            step[a['id']] = STEP.to(step[a['id']], 'resumed')
+            went.append(a['id'])
         else:
             say(f'  {a["id"]} still busy after {wait_hours:g} h: its update waits for the next run')
-            deferred.append(a['id'])
-    if updated:
+            step[a['id']] = STEP.to(step[a['id']], 'deferred')
+    if went:
         deploy.isolate(cfg, plan)
-    return Waited(updated, deferred, resumed)
+    return Waited(went, [aid for aid, s in step.items() if s == 'deferred'], resumed)
 
 
 def update(

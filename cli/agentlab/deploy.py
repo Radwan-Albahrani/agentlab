@@ -9,7 +9,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable, Collection, Iterable
-from typing import TypedDict
+from typing import Literal, NamedTuple, TypedDict
 
 from . import coolify, render
 from .config import AgentCfg, Cluster
@@ -184,22 +184,50 @@ def agent_of(cfg: Cluster, stack: str) -> AgentCfg | None:
     return next((a for a in cfg['agents'] if stack == f'agentlab-agent-{a["id"]}'), None)
 
 
-def why_deploy(cfg: Cluster, stack: str, text: str, force: bool = False) -> tuple[str, str]:
-    """(reason to deploy or '', skip message or ''); a changed image restarts an agent only while idle, unless --force."""
+# Whether a stack deploys, and why:
+#   asked    forced (--force, or the stack named)      changed  its rendered file differs from the deployed one
+#   stopped  it has no containers at all               newer    a newer image than its containers run (detail: the tags)
+#   current  nothing to do                             busy     a newer image, but its agent is mid-turn (detail: its id)
+DeployKind = Literal['asked', 'changed', 'stopped', 'newer', 'current', 'busy']
+DEPLOYS: tuple[DeployKind, ...] = ('asked', 'changed', 'stopped', 'newer')
+
+
+class Reason(NamedTuple):
+    """why_deploy's answer: its kind, plus the newer image tags or the busy agent's id."""
+
+    kind: DeployKind
+    detail: str = ''
+
+    def deploys(self) -> bool:
+        return self.kind in DEPLOYS
+
+    def note(self) -> str:
+        """What a deploy line adds: only a newer image says why."""
+        return f' (newer image: {self.detail})' if self.kind == 'newer' else ''
+
+    def skip(self) -> str:
+        """Why a stack with a newer image waits, or ''."""
+        if self.kind != 'busy':
+            return ''
+        return f'{self.detail} busy (a T3 turn is running); its new image goes live on the next apply'
+
+
+def why_deploy(cfg: Cluster, stack: str, text: str, force: bool = False) -> Reason:
+    """Whether and why the stack deploys; a changed image restarts an agent only while idle, unless --force."""
     if force:
-        return 'asked for', ''
+        return Reason('asked')
     if changed_since_deploy(cfg, stack, text):
-        return 'its file changed', ''
+        return Reason('changed')
     # Stopped containers count as deployed, so apply never restarts a companion stopped on purpose.
     if not containers(cfg, stack, all_states=True):
-        return 'not running', ''
+        return Reason('stopped')
     stale = stale_images(cfg, stack)
     if not stale:
-        return '', ''
+        return Reason('current')
     agent = agent_of(cfg, stack)
     if agent and agent_busy(cfg, agent):
-        return '', f'{agent["id"]} busy (a T3 turn is running); its new image goes live on the next apply'
-    return f'newer image: {", ".join(stale)}', ''
+        return Reason('busy', agent['id'])
+    return Reason('newer', ', '.join(stale))
 
 
 def deploy(cfg: Cluster, stack: str, kind: StackKind, key: str | None, plan: Plan, force: bool = False) -> bool:
@@ -207,12 +235,12 @@ def deploy(cfg: Cluster, stack: str, kind: StackKind, key: str | None, plan: Pla
     path = compose_file(cfg, stack)
     with open(path) as f:
         text = f.read()
-    reason, skip = why_deploy(cfg, stack, text, force)
-    if skip:
-        say(f'  {skip}')
-    if not reason:
+    why = why_deploy(cfg, stack, text, force)
+    if why.kind == 'busy':
+        say(f'  {why.skip()}')
+    if not why.deploys():
         return False
-    note = f' ({reason})' if reason.startswith('newer image') else ''
+    note = why.note()
     if cfg['deploy'] == 'compose':
         plan.do(f'deploy {stack}{note}', ['docker', 'compose', '-p', stack, '-f', path, 'up', '-d', '--remove-orphans'])
     else:

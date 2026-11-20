@@ -45,6 +45,7 @@ def write_cluster(**extra):
 
 write_cluster()
 
+import fsm  # noqa: E402
 import janitor.__main__ as janitor  # noqa: E402
 import safe  # noqa: E402
 from janitor.dedupe import dedupe  # noqa: E402
@@ -628,6 +629,34 @@ class Jobs(unittest.TestCase):
             self.assertEqual((first['state'], first['message']), ('done', 'Cloudflare was not updated'))
             second = _read_json(f'{tmp}/jobs/1700000001-00000001.json')
             self.assertEqual((second['state'], second['message']), ('failed', 'nothing to change'))
+
+
+class JobMachine(unittest.TestCase):
+    def test_a_job_goes_queued_running_then_done_or_failed(self):
+        state = jobs.JOBS.first('queued')
+        state = jobs.JOBS.to(state, 'running')
+        self.assertEqual(jobs.JOBS.to(state, 'done'), 'done')
+        self.assertEqual(jobs.JOBS.to(state, 'failed'), 'failed')
+        self.assertEqual(jobs.JOBS.to('queued', 'failed'), 'failed')  # refused, or systemd-run failed
+
+    def test_finished_jobs_never_move_and_running_needs_a_start(self):
+        for old, new in (('done', 'running'), ('failed', 'running'), ('done', 'failed'), ('queued', 'done')):
+            with self.subTest(old=old, new=new), self.assertRaises(fsm.IllegalStateError):
+                jobs.JOBS.to(old, new)
+        for bad in (None, 'lost', ''):
+            with self.subTest(state=bad), self.assertRaises(fsm.IllegalStateError):
+                jobs.JOBS.of(bad)
+        self.assertEqual({s for s, to in jobs.JOBS.moves.items() if not to}, set(jobs.ENDED))
+
+    def test_starting_a_job_twice_is_refused(self):
+        job = {'id': '1700000000-00000000', 'op': 'shell', 'args': {}, 'by': '', 'queued': 0.0, 'title': ''}
+        with mock.patch.object(jobs, '_save') as save, self.assertRaises(fsm.IllegalStateError):
+            jobs.start({**job, 'state': 'done'})
+        save.assert_not_called()
+
+    def test_a_machine_names_every_state_it_moves_to(self):
+        with self.assertRaises(fsm.IllegalStateError):
+            fsm.Machine('x', {'a': ('b',)})
 
 
 class Trim(unittest.TestCase):

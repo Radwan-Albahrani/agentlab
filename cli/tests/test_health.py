@@ -174,7 +174,7 @@ class PromptIsolation(unittest.TestCase):
             f.write('services:\n  agent:\n    image: x\n')
         calls = []
         with (
-            mock.patch.object(deploy, 'why_deploy', return_value=('its file changed', '')),
+            mock.patch.object(deploy, 'why_deploy', return_value=deploy.Reason('changed')),
             mock.patch.object(deploy, 'settle', side_effect=lambda *a, **k: calls.append('settle')),
             mock.patch.object(
                 deploy,

@@ -2,6 +2,7 @@ import base64
 import contextlib
 import copy
 import io
+import itertools
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from agentlab import (
     deploy,
     disks,
     doctor,
+    fsm,
     hostsfile,
     init,
     install,
@@ -2634,6 +2636,76 @@ class PrivateHttps(unittest.TestCase):
         self.assertEqual({p for _, p in self.ports()}, {'80'})
         self.assertEqual(sorted(a['name'] for a in self.fake.apps), ['agentlab-test', 'payroll'])
         self.assertFalse(self.live())
+
+    def state(self):
+        cfg = config.load(self.config_path)
+        return cloudflare.Setup(cfg, self.fake, util.Plan(False)).https_facts(self.fake.apps).state()
+
+    def test_the_rollout_moves_one_step_at_a_time_and_back(self):
+        moves, real = [], cloudflare.HTTPS.to
+        self.enterContext(
+            mock.patch.object(cloudflare.HTTPS, 'to', side_effect=lambda s, new: moves.append((s, new)) or real(s, new))
+        )
+        self.run_setup()
+        self.finish()
+        self.assertEqual((self.state(), moves), ('sign_in', [('off', 'sign_in')]))
+        self.cert = 89
+        self.finish()
+        self.assertEqual(self.state(), 'live')
+        self.assertEqual(moves[1:], [('sign_in', 'port_443'), ('port_443', 'live')])
+        self.write(
+            self.text.replace('https = true', 'https = false').replace('pair_domain = "{id}-t3.example.com"', '')
+        )
+        self.run_setup()  # the marker goes first (unchecked: always legal), then 443, then the sign-in app
+        self.assertEqual(self.state(), 'off')
+        self.assertEqual(moves[3:], [('port_443', 'sign_in'), ('sign_in', 'off')])
+
+    def test_a_step_out_of_order_is_refused_before_it_is_made(self):
+        self.cert = 89
+        self.run_setup()
+        self.finish()
+        cfg = config.load(self.config_path)
+        s = cloudflare.Setup(cfg, self.fake, util.Plan(False))
+        writes = len(self.fake.writes)
+        with self.assertRaises(fsm.IllegalStateError):
+            s.drop_sign_in()  # while Access covers 443 and the gate redirects to it
+        cfg['auth']['cloudflare']['https'] = False
+        with self.assertRaises(fsm.IllegalStateError):
+            s.access()  # 443 would go while the gate still redirects plain HTTP to it
+        self.assertEqual(self.fake.writes[writes:], [])
+        self.assertTrue(self.live())
+
+    def test_a_sign_in_app_deleted_by_hand_is_a_warning_and_https_stays_put(self):
+        self.run_setup()
+        self.fake.apps = [a for a in self.fake.apps if a['name'] != 'agentlab-test sign-in']
+        self.cert = 89
+        cfg = config.load(self.config_path)
+        cloudflare.save_gate_secret(cfg, 'key', 'k' * 64)
+        writes = len(self.fake.writes)
+        with mock.patch.object(apply, 'warn') as warned:
+            apply.finish_https(cfg, util.Plan(False))
+        warned.assert_called_once_with(
+            'HTTPS is not ready: the sign-in app is missing; run `agentctl cloudflare setup`'
+        )
+        self.assertEqual(self.fake.writes[writes:], [])
+        self.assertEqual({p for _, p in self.ports()}, {'80'})
+        self.assertFalse(self.live())
+        with (  # any other refusal still fails loudly
+            mock.patch.object(cloudflare, 'finish_https', side_effect=fsm.IllegalStateError('a bug')),
+            self.assertRaises(fsm.IllegalStateError),
+        ):
+            apply.finish_https(cfg, util.Plan(False))
+
+    def test_https_states_and_moves(self):
+        facts = cloudflare.HttpsFacts
+        self.assertEqual(
+            [facts(*f).state() for f in itertools.product((False, True), repeat=3)],
+            ['off', 'broken', 'broken', 'broken', 'sign_in', 'broken', 'port_443', 'live'],
+        )
+        for old, new in (('off', 'port_443'), ('sign_in', 'live'), ('live', 'sign_in'), ('port_443', 'off')):
+            with self.subTest(old=old, new=new), self.assertRaises(fsm.IllegalStateError):
+                cloudflare.HTTPS.to(old, new)
+        self.assertEqual(cloudflare.HTTPS.to('broken', 'live'), 'live')  # setup repairs a hand-made mix
 
     def test_doctor_reports_the_https_pieces(self):
         cfg = self.run_setup()

@@ -16,6 +16,7 @@ from typing import Any, Literal, NamedTuple, NotRequired, Protocol, TypedDict
 
 from . import config, gateway, render, tomledit
 from .config import Cluster
+from .fsm import Machine
 from .util import Failed, Json, Needs, Plan, say, warn, write_if_changed
 
 API = 'https://api.cloudflare.com/client/v4'
@@ -180,6 +181,55 @@ CALLBACK = '/_agentlab/oidc/callback'  # must match gate/gate/oidc.py
 GATE_FILES = {'client_id': 'oidc-client-id', 'client_secret': 'oidc-client-secret', 'key': 'session.key'}
 LIVE = 'https-live'
 CERT_WAIT, CERT_WARN_DAYS = 180, 14
+
+HttpsState = Literal['off', 'sign_in', 'port_443', 'live', 'broken']
+
+# Private HTTPS, rolled out step by step (setup, then apply's finish_https) and turned off the same way back. It lives
+# in Cloudflare and a file, so its state is read from what exists (HttpsFacts); every write that changes one of those
+# must be a move HTTPS allows (Setup.https_move).
+#   off       no sign-in app                         sign_in  the gate's OIDC app exists; Access covers port 80 only
+#   port_443  Access covers 443 too                  live     the gate redirects plain HTTP (the https-live marker)
+#   broken    a mix no move leads to (443 without the sign-in app, the marker without 443): setup repairs it
+HTTPS: Machine[HttpsState] = Machine(
+    'https',
+    {
+        'off': ('sign_in',),
+        'sign_in': ('port_443', 'off'),
+        'port_443': ('live', 'sign_in'),
+        'live': ('port_443',),
+        'broken': ('off', 'sign_in', 'port_443', 'live'),
+    },
+)
+
+
+class HttpsFacts(NamedTuple):
+    """What the HTTPS rollout is made of."""
+
+    sign_in: bool  # agentlab's OIDC application for the gate
+    port_443: bool  # a port 443 destination in the people's app
+    live: bool  # the https-live marker
+
+    def state(self) -> HttpsState:
+        if self.live:
+            return 'live' if self.port_443 and self.sign_in else 'broken'
+        if self.port_443:
+            return 'port_443' if self.sign_in else 'broken'
+        return 'sign_in' if self.sign_in else 'off'
+
+
+class HttpsNotReady(Failed):
+    """finish_https can't take the next step yet; HTTPS stays as it is and apply carries on."""
+
+
+class People(NamedTuple):
+    """Setup.access(): the people's app's audience, and whether it covers port 443."""
+
+    aud: str
+    port_443: bool
+
+
+def _port_443(app: Mapping[str, Any] | None) -> bool:
+    return any(d.get('port_range') == '443' for d in (app or {}).get('destinations') or [])
 
 
 def gate_dir(cfg: Cluster) -> str:
@@ -484,8 +534,11 @@ class Setup:
             body['allow_authenticate_via_warp'] = True
         if not private:  # private apps have no public destination to name as `domain`
             body['domain'] = hosts[0]
-        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        apps = self.apps()
         found = next((a for a in apps if a.get('name') == body['name']), None)
+        if not name:  # the people's app: whether it covers 443 is a step of the HTTPS rollout
+            facts = self.https_facts(apps)
+            self.https_move(facts, facts._replace(port_443=_port_443(body)))
         if not found:
             made = self.write(
                 f'create Access application {name}: ' + ', '.join(hosts),
@@ -523,8 +576,9 @@ class Setup:
         """agentlab only touches resources named agentlab-<cluster>[-suffix]."""
         return f'{self.name} {name}' if name else self.name
 
-    def access(self, sign_in: bool = False) -> str:
-        """The people's Access application (public: plus the pair hosts' Bypass app); 443 joins once https_ready()."""
+    def access(self, sign_in: bool = False, ready: bool | None = None) -> People:
+        """The people's Access application (public: plus the pair hosts' Bypass app); 443 joins once https_ready(),
+        or `ready` when the caller already asked."""
         providers = self.api.call('GET', f'/accounts/{self.account}/access/identity_providers') or []
         idps = login_methods(self.cfg, providers)
         private = config.private_network(self.cfg)
@@ -532,8 +586,10 @@ class Setup:
         if sign_in:
             self.sign_in_app(policy, idps)
         destinations: list[Destination] | None = None
+        ports = ['80']
         if private:
-            ports = ['80', '443'] if config.private_https(self.cfg) and self.https_ready() else ['80']
+            if config.private_https(self.cfg) and (self.https_ready() if ready is None else ready):
+                ports = ['80', '443']
             destinations = [
                 {'type': 'private', 'hostname': h, 'port_range': p} for h in signed_in_hosts(self.cfg) for p in ports
             ]
@@ -544,19 +600,32 @@ class Setup:
         if pair_hosts(self.cfg) and not private:
             bypass = self.policy('apps', 'bypass', [{'everyone': {}}], 'for the T3 apps (bypass)')
             self.app('apps', pair_hosts(self.cfg), bypass, [])
-        return aud
+        return People(aud, '443' in ports)
+
+    def apps(self) -> list[Json]:
+        """The account's Access applications."""
+        return self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
 
     def people_app(self) -> Json | None:
-        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
-        return next((a for a in apps if a.get('name') == self.name), None)
+        return next((a for a in self.apps() if a.get('name') == self.name), None)
+
+    def https_facts(self, apps: list[Json]) -> HttpsFacts:
+        """The HTTPS rollout as `apps` (one read of the account's Access applications) and the marker show it."""
+        return HttpsFacts(
+            sign_in=any(a.get('name') == self.named('sign-in') for a in apps),
+            port_443=_port_443(next((a for a in apps if a.get('name') == self.name), None)),
+            live=os.path.exists(f'{gate_dir(self.cfg)}/{LIVE}'),
+        )
+
+    def https_move(self, before: HttpsFacts, after: HttpsFacts) -> None:
+        """Refuse a write that would take the rollout somewhere HTTPS doesn't allow (a dry run moves nothing)."""
+        if not self.plan.dry and after.state() != before.state():
+            HTTPS.to(before.state(), after.state())
 
     def https_ready(self) -> bool:
         """Whether 443 may join the people's app: already joined (never taken back), or every signed-in name has a trusted cert."""
-        if not hasattr(self, '_ready'):
-            app = self.people_app() or {}
-            has = any(d.get('port_range') == '443' for d in app.get('destinations') or [])
-            self._ready = has or all(edge_certificate(h)[0] is not None for h in signed_in_hosts(self.cfg))
-        return self._ready
+        has = _port_443(self.people_app())
+        return has or all(edge_certificate(h)[0] is not None for h in signed_in_hosts(self.cfg))
 
     def sign_in_app(self, policy: str, idps: list[str]) -> None:
         """The Access for SaaS OIDC app the gate signs in with; its secret is shown only at creation, so a lost one means a new app."""
@@ -580,7 +649,7 @@ class Setup:
         }
         if warp:  # left out otherwise: a PUT replaces the rest
             body['allow_authenticate_via_warp'] = True
-        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        apps = self.apps()
         named = [a for a in apps if a.get('name') == body['name']]
         mine = gate_secret(self.cfg, 'client_id')
         found = next((a for a in named if mine and (a.get('saas_app') or {}).get('client_id') == mine), None)
@@ -604,6 +673,8 @@ class Setup:
                     body,
                 )
         else:
+            facts = self.https_facts(apps)
+            self.https_move(facts, facts._replace(sign_in=True))
             made = self.write(
                 f'create Access application {body["name"]} (OIDC sign-in for the gate): ' + ', '.join(hosts),
                 'POST',
@@ -626,23 +697,28 @@ class Setup:
 
     def drop_sign_in(self) -> None:
         """https turned off: agentlab's own OIDC application goes (after the people's app is back to port 80)."""
-        apps = self.api.call('GET', f'/accounts/{self.account}/access/apps') or []
+        apps = self.apps()
+        facts = self.https_facts(apps)
         for app in (a for a in apps if a.get('name') == self.named('sign-in')):
+            self.https_move(facts, facts._replace(sign_in=False))
             path = f'/accounts/{self.account}/access/apps/{app["id"]}'
             self.write(f'remove Access application {app["name"]} (https is off)', 'DELETE', path)
 
     def mark_live(self, on: bool) -> None:
         """The gate redirects HTTP to HTTPS only while this marker file exists."""
         path = f'{gate_dir(self.cfg)}/{LIVE}'
-        if not on:
+        if not on:  # always a legal move: only live and broken have the marker, and both may drop it
             if os.path.exists(path):
                 self.plan.do('stop redirecting plain HTTP to HTTPS', fn=lambda: os.remove(path))
             return
         if os.path.exists(path):
             return
-        app = self.people_app() or {}
+        apps = self.apps()
+        app = next((a for a in apps if a.get('name') == self.name), None) or {}
         covered = {d.get('hostname') for d in app.get('destinations') or [] if d.get('port_range') == '443'}
         if set(private_hosts(self.cfg)) <= covered and all(gate_secret(self.cfg, k) for k in GATE_FILES):
+            facts = self.https_facts(apps)
+            self.https_move(facts, facts._replace(live=True))
             self.plan.do(
                 'redirect plain HTTP to HTTPS (Access covers port 443)',
                 fn=lambda: save_gate_secret(self.cfg, LIVE, time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
@@ -980,10 +1056,14 @@ def setup(cfg: Cluster, plan: Plan, config_path: str, opener: Opener | None = No
         ('cloudflare', 'zone'): cf['zone'],
     }
     https = config.private_https(cfg)
+    port_443 = False
     if access:
+        if not https and not plan.dry:
+            s.mark_live(False)  # the redirect stops before Access stops covering 443
         auth = cfg['auth']['cloudflare']
         # the sign-in app and the gate's client must exist before 443 joins the people's app
-        auth['audience'] = s.access(sign_in=https) or auth['audience']
+        people_app = s.access(sign_in=https)
+        auth['audience'], port_443 = people_app.aud or auth['audience'], people_app.port_443
         if private:
             s.enrollment(s.people_policy())
             seen = gateway.ensure(s)
@@ -1000,13 +1080,13 @@ def setup(cfg: Cluster, plan: Plan, config_path: str, opener: Opener | None = No
         s.drop_apps_bypass()  # a Bypass app left from a public setup would be a way around the client
     if tunneled:
         (s.drop_public_dns if private else lambda _t: s.drop_hostname_routes())(tunnel)
-    if access and private and not plan.dry:
-        s.mark_live(https)
+    if access and https and not plan.dry:
+        s.mark_live(True)
     if access and not https:
         s.drop_sign_in()
     where = 'private: Cloudflare One client only' if private else 'public sign-in page'
     if https:
-        where += ', HTTPS' if s.https_ready() else ', HTTPS once the edge has its certificate (agentctl apply)'
+        where += ', HTTPS' if port_443 else ', HTTPS once the edge has its certificate (agentctl apply)'
     names = private_hosts(cfg) if private else hostnames(cfg)
     say(f'  Cloudflare: {", ".join(names)} -> tunnel {s.name} ({where}); {len(people(cfg))} people may sign in')
 
@@ -1054,20 +1134,24 @@ def finish_https(
         say('  HTTPS: the sign-in application is not set up yet: run agentctl cloudflare setup')
         return
     s = Setup(cfg, api_for(cfg, opener), plan)
-    if s.people_app() is None:
+    apps = s.apps()
+    if not any(a.get('name') == s.name for a in apps):
         return
+    if not s.https_facts(apps).sign_in:  # deleted by hand: 443 may not join (HTTPS refuses it), setup makes it again
+        raise HttpsNotReady('the sign-in app is missing; run `agentctl cloudflare setup`')
     deadline = time.monotonic() + wait
-    while not s.https_ready() and time.monotonic() < deadline:
+    ready = s.https_ready()
+    while not ready and time.monotonic() < deadline:
         sleep(10)
-        del s._ready
-    if not s.https_ready():
+        ready = s.https_ready()
+    if not ready:
         why = edge_certificate(cfg['domain'])[1]
         say(
             f'  HTTPS: the edge has no trusted certificate for {cfg["domain"]} yet ({why}); plain HTTP keeps '
             'working. The edge log says why (docker logs of the edge); agentctl apply tries again.'
         )
         return
-    s.access()
+    s.access(ready=True)
     s.mark_live(True)
 
 

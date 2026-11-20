@@ -330,6 +330,15 @@ def host_services(plan: Plan, changed: float | None = None) -> None:
             plan.do(f'restart {unit} onto its new code', ['systemctl', 'restart', unit])
 
 
+def finish_https(cfg: Cluster, plan: Plan) -> None:
+    """The next HTTPS step; a known gap (the sign-in app deleted by hand) is a warning, HTTPS stays as it is and apply
+    carries on."""
+    try:
+        cloudflare.finish_https(cfg, plan)
+    except cloudflare.HttpsNotReady as e:
+        warn(f'HTTPS is not ready: {e}')
+
+
 def apply(
     cfg: Cluster,
     config_path: str,
@@ -373,13 +382,11 @@ def apply(
         if only is not None and name not in only:
             continue
         if dry:
-            reason, skip = deploy.why_deploy(
-                cfg, name, files[f'compose/{name}/docker-compose.yml'], force or name == stack
-            )
-            if skip:
-                say(f'  {skip}')
-            if reason:
-                plan.do(f'deploy {name}' + (f' ({reason})' if reason.startswith('newer image') else ''))
+            why = deploy.why_deploy(cfg, name, files[f'compose/{name}/docker-compose.yml'], force or name == stack)
+            if why.kind == 'busy':
+                say(f'  {why.skip()}')
+            if why.deploys():
+                plan.do(f'deploy {name}{why.note()}')
             continue
         deploy.deploy(cfg, name, kind, key, plan, force=force or name == stack)
     companion_lists(cfg, plan)
@@ -391,7 +398,7 @@ def apply(
     templates: dict[str, template.Result] = {}
     if only is None:
         cloudflare.sync_people(cfg, plan)
-        cloudflare.finish_https(cfg, plan)
+        finish_https(cfg, plan)
         deploy.orphans(cfg)
         templates = template.update_all(cfg, plan)
     if not dry and not changed:

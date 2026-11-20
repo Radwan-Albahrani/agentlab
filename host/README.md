@@ -12,6 +12,7 @@ What runs on the server itself, outside containers. `agentctl install` puts it i
 | `install/` | | the numbered install steps (exit 2 = a manual step is needed) |
 | `systemd/` | | unit templates, plus `agentlab.slice`, `agentlab-backup.*`, `agentlab-firewall.service`, `cloudflared.service` |
 | `safe.py` | | file access inside agent-owned folders without following their symlinks |
+| `fsm.py` | | the explicit state machine a job's state moves through (`watch/jobs.py`) |
 
 Agents talk to the host only through files on their own disk: the throttle spool
 (`~/.local/state/agent-throttle`) and `~/.agentlab/requests/<action>~companion~<name>` (results in

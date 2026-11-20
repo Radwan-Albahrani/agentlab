@@ -8,11 +8,21 @@ import re
 import time
 from typing import Literal, NotRequired, TypedDict
 
+from fsm import Machine
+
 from . import host, store
 from .settings import AGENTCTL
 
 JobArgs = dict[str, object]  # the admin's form, checked by command()
-JobState = Literal['running', 'done', 'failed']  # 'queued' is the hub's name for a file still in jobs/queue
+JobState = Literal['queued', 'running', 'done', 'failed']
+
+# A job, from the admin's form to agentctl's exit; every change goes through JOBS.to().
+#   queued   a file in jobs/queue (the hub shows those as queued; jobs/<id>.json never holds it)
+#   running  agentctl runs in its own unit      done | failed  it exited (failed: also refused, or never started)
+JOBS: Machine[JobState] = Machine(
+    'job', {'queued': ('running', 'failed'), 'running': ('done', 'failed'), 'done': (), 'failed': ()}
+)
+ENDED: tuple[JobState, ...] = ('done', 'failed')
 
 
 class Job(TypedDict):
@@ -24,7 +34,7 @@ class Job(TypedDict):
     by: str
     queued: float
     title: str
-    state: NotRequired[JobState]
+    state: JobState
     ok: NotRequired[bool]
     message: NotRequired[str]
     started: NotRequired[float]
@@ -117,7 +127,15 @@ def start(job: Job) -> None:
     try:
         argv, job['title'] = command(job.get('op'), job.get('args') or {})
     except ValueError as e:
-        job.update({'state': 'failed', 'ok': False, 'message': str(e), 'started': time.time(), 'finished': time.time()})
+        job.update(
+            {
+                'state': JOBS.to(job['state'], 'failed'),
+                'ok': False,
+                'message': str(e),
+                'started': time.time(),
+                'finished': time.time(),
+            }
+        )
         _save(job)
         return
     log, rc = store.path('jobs', f'{job["id"]}.log'), store.path('jobs', f'{job["id"]}.rc')
@@ -142,7 +160,7 @@ def start(job: Job) -> None:
         *argv,
     ]
     code, out = host.run(cmd)
-    job.update({'state': 'running' if code == 0 else 'failed', 'started': time.time()})
+    job.update({'state': JOBS.to(job['state'], 'running' if code == 0 else 'failed'), 'started': time.time()})
     if code:
         job.update({'ok': False, 'message': f'could not start: {out[-300:]}', 'finished': time.time()})
     _save(job)
@@ -175,7 +193,14 @@ def follow(job: Job) -> None:
         return
     else:
         ok, message = False, 'stopped without an exit code (did the host restart?); check the log, then try again'
-    job.update({'state': 'done' if ok else 'failed', 'ok': ok, 'finished': time.time(), 'message': message})
+    job.update(
+        {
+            'state': JOBS.to(job['state'], 'done' if ok else 'failed'),
+            'ok': ok,
+            'finished': time.time(),
+            'message': message,
+        }
+    )
     _save(job)
     store.event('agents', job['title'] + (' done' if ok else ' failed'), message[:300], ok=ok)
 
@@ -224,7 +249,8 @@ def tick() -> None:
                     'by': job.get('by', ''),
                     'queued': job.get('queued', time.time()),
                     'title': str(job.get('op', '')),
+                    'state': JOBS.first('queued'),
                 }
             )
             break
-    _prune([j for j in jobs() if j.get('state') in ('done', 'failed')])
+    _prune([j for j in jobs() if j.get('state') in ENDED])

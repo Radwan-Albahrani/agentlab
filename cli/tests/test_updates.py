@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agentlab import apply, config, coolify, deploy, render, update, util
+from agentlab import apply, config, coolify, deploy, fsm, render, update, util
 
 BASE = """
 [cluster]
@@ -102,23 +102,33 @@ class Stack(unittest.TestCase):
 class ImageRedeploy(Stack):
     def test_a_newer_image_redeploys_an_idle_agent(self):
         self.runs(self.sara, [('r1', 't1', 'completed')])
-        reason, skip = deploy.why_deploy(self.cfg, self.stack, self.text)
-        self.assertEqual((reason, skip), ('newer image: agentlab/agent:latest', ''))
+        why = deploy.why_deploy(self.cfg, self.stack, self.text)
+        self.assertEqual(why, ('newer', 'agentlab/agent:latest'))
+        self.assertEqual((why.deploys(), why.note(), why.skip()), (True, ' (newer image: agentlab/agent:latest)', ''))
 
     def test_same_image_changes_nothing(self):
         self.image_now = '2026-11-02T18:59:00+03:00'
-        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
+        why = deploy.why_deploy(self.cfg, self.stack, self.text)
+        self.assertEqual((why, why.deploys(), why.note(), why.skip()), (('current', ''), False, '', ''))
 
     def test_unreadable_times_never_count_as_newer(self):
         self.image_now = 'not a time'
-        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
+        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('current', ''))
 
     def test_never_mid_turn_unless_forced(self):
         self.runs(self.sara, [('r1', 't1', 'running')])
-        reason, skip = deploy.why_deploy(self.cfg, self.stack, self.text)
-        self.assertEqual(reason, '')
-        self.assertIn('sara busy', skip)
-        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text, force=True)[0], 'asked for')
+        why = deploy.why_deploy(self.cfg, self.stack, self.text)
+        self.assertEqual((why, why.deploys()), (('busy', 'sara'), False))
+        self.assertEqual(why.skip(), 'sara busy (a T3 turn is running); its new image goes live on the next apply')
+        forced = deploy.why_deploy(self.cfg, self.stack, self.text, force=True)
+        self.assertEqual((forced, forced.deploys(), forced.note()), (('asked', ''), True, ''))
+
+    def test_a_changed_file_or_no_containers_deploys_without_a_note(self):
+        self.runs(self.sara, [])
+        self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text + '\n'), ('changed', ''))
+        with mock.patch.object(deploy, 'containers', return_value=[]):
+            why = deploy.why_deploy(self.cfg, self.stack, self.text)
+        self.assertEqual((why, why.deploys(), why.note()), (('stopped', ''), True, ''))
 
     def test_dry_run_plans_it_with_the_reason(self):
         plan = util.Plan(dry=True)
@@ -288,6 +298,28 @@ class Waiting(Stack):
             self.cfg, util.Plan(False), 0, 'resume', sleep=slept.append, clock=self.clock
         )
         self.assertEqual((updated, deferred, slept), (['sara', 'omar'], [], []))
+
+    def test_each_agent_leaves_pending_once(self):
+        self.runs(self.sara, [])
+        self.runs(self.omar, [('r2', 't2', 'running')])
+        moves, real = [], update.STEP.to
+        with mock.patch.object(update.STEP, 'to', side_effect=lambda s, new: moves.append((s, new)) or real(s, new)):
+            self.wait('defer', lambda n: None)
+        self.assertEqual(moves, [('pending', 'updated'), ('pending', 'deferred')])
+
+    def test_a_step_once_taken_is_final(self):
+        for old, new in (
+            ('updated', 'deferred'),
+            ('deferred', 'resumed'),
+            ('resumed', 'updated'),
+            ('pending', 'pending'),
+        ):
+            with self.subTest(old=old, new=new), self.assertRaises(fsm.IllegalStateError):
+                update.STEP.to(old, new)
+        with self.assertRaises(fsm.IllegalStateError):
+            update.STEP.of('waiting')
+        with self.assertRaises(fsm.IllegalStateError):  # every state a move leads to is named
+            fsm.Machine('x', {'a': ('b',)})
 
 
 class HostServices(unittest.TestCase):
