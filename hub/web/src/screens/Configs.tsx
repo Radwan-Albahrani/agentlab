@@ -227,7 +227,7 @@ function ConfigsView({ d }: { d: Data }) {
   const all = [...d.domains.flatMap((x) => x.stacks), ...d.other];
   const latest = all.reduce<ConfigRow | null>((a, s) => (!a || s.modified > a.modified ? s : a), null);
   const companions = all.filter((s) => s.role && s.role !== 'agent').length;
-  let row = 0; // one stagger down the whole list
+  const order = new Map(all.map((s, i) => [s.id, i])); // one stagger down the whole list, in render order
   return (
     <>
       <PageHead
@@ -254,7 +254,7 @@ function ConfigsView({ d }: { d: Data }) {
                 <span {...stylex.props(styles.groupSub)}>{domainSub(x.stacks.length)}</span>
               </div>
               {x.stacks.map((s) => (
-                <FileRow key={s.id} s={s} i={row++} />
+                <FileRow key={s.id} s={s} i={order.get(s.id) ?? 0} />
               ))}
             </div>
           ))}
@@ -268,7 +268,7 @@ function ConfigsView({ d }: { d: Data }) {
                 <span {...stylex.props(styles.groupSub)}>{plural(d.other.length, 'stack')}</span>
               </div>
               {d.other.map((s) => (
-                <FileRow key={s.id} s={s} i={row++} />
+                <FileRow key={s.id} s={s} i={order.get(s.id) ?? 0} />
               ))}
             </div>
           )}
