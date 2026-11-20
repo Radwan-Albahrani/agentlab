@@ -20,6 +20,8 @@ turn   {n, by, place, state, outcome, at, ended}
          state    running -> ended
          outcome  answered | asked | silent | nothing_to_do | failed | stopped (set when it ends)
          A task is running exactly while its turn is; nothing else says so.
+question  bool: the agent waits on an answer to its question (asking / set_asking)
+paused  {at, resumes_at, run, nudged} while a running turn waits out a usage limit (pause / unpause)
 phase  derived from the three above plus the ledger and a usage-limit pause, stored for the hub:
          working | waiting_owner | waiting_answer | paused | answered | nothing_to_do | stopped | failed"""
 
@@ -27,6 +29,7 @@ import time
 
 from . import ledger
 from .config import OWNER, log
+from .fsm import IllegalStateError
 from .state import save
 
 PARTIES = ('owner', 'colleague', 'errand')
@@ -36,10 +39,6 @@ PLACES = ('thread', 'case')
 TURN_BY = ('owner', 'colleague', 'decision', 't3', 'system')
 OUTCOMES = ('answered', 'asked', 'silent', 'nothing_to_do', 'failed', 'stopped')
 PHASES = ('working', 'waiting_owner', 'waiting_answer', 'paused', 'answered', 'nothing_to_do', 'stopped', 'failed')
-
-
-class IllegalStateError(ValueError):
-    pass
 
 
 def party_of(guest=None, requester=None):
@@ -154,13 +153,46 @@ def owners_turn(task):
     return running(task) and turn(task).get('by') in ('owner', 't3') and bool(task.get('case'))
 
 
+def asking(task):
+    """The agent waits on an answer to a question it asked (in T3's record)."""
+    return bool(task.get('question'))
+
+
+def set_asking(task, asked):
+    """The only way the question flag changes: the phase follows at once."""
+    if asking(task) != asked:
+        task['question'] = asked
+        settle(task)
+
+
+def paused(task):
+    """The usage-limit pause of the running turn, {at, resumes_at, run, nudged}, or None."""
+    return task.get('paused')
+
+
+def pause(task, at, resumes_at, run):
+    """The turn waits for T3 to resume the chat at the usage limit's reset (resumes_at: epoch, or None if unknown)."""
+    if not running(task):
+        raise IllegalStateError('only a running turn can pause')
+    task['paused'] = {'at': at, 'resumes_at': resumes_at, 'run': run, 'nudged': 0}
+    settle(task)
+
+
+def unpause(task):
+    """The pause ends (T3 resumed, or the wait is given up); False if there was none."""
+    if not task.pop('paused', None):
+        return False
+    settle(task)
+    return True
+
+
 def phase_of(task):
     if ledger.pending(task):
         return 'waiting_owner'
     if running(task):
-        if task.get('paused'):
+        if paused(task):
             return 'paused'
-        return 'waiting_answer' if task.get('question') else 'working'
+        return 'waiting_answer' if asking(task) else 'working'
     out = outcome(task) or 'answered'
     return {'asked': 'waiting_answer', 'silent': 'answered'}.get(out, out)
 

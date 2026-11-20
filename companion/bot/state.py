@@ -118,3 +118,16 @@ def prepare_for_start():
                 'why': 'started before routes',
             }
         t.pop('project', None)
+        if {'retries', 'retry_at', 'retry_sent'} & t.keys():  # saved before retries had a state machine (fsm.RETRY)
+            due, sent = t.pop('retry_at', None), t.pop('retry_sent', 0)
+            t['retry'] = {
+                'state': 'waiting' if due else 'idle',
+                'count': t.pop('retries', 0) or 0,
+                'at': due or sent or 0,
+            }
+    for p in state['polls'].values():  # saved before polls had a state machine (fsm.POLL)
+        if 'state' not in p:
+            p['state'] = 'open' if p.pop('open', False) else 'closed'
+    for d in state['drafts'].values():  # saved before drafts had a revising state (fsm.DRAFT)
+        if d.pop('revising', False) and d.get('status') == 'posted':
+            d['status'] = 'revising'

@@ -18,6 +18,7 @@ from .config import (
     log,
     slack_for_github,
 )
+from .fsm import RETRY
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save, state
 from .text import first_sentence, mins, no_emoji
 from .when import say
@@ -295,14 +296,13 @@ def follow_up(task, text, files, ts, place, by=None, decision=False):
     turn_place = 'thread' if decision else place  # a decision is answered where the work is (or privately: machine)
     now = now_iso()
     with lock:
+        machine.set_asking(task, False)  # this message answers any question it asked
         if machine.running(task):
             machine.retake_turn(task, turn_by, turn_place)
         else:
             machine.begin_turn(task, turn_by, turn_place)
             task.update(burst_start=now, step_from=now, line=None, ended='')
-        task.update(
-            trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, question=False, last_status='', last_status_at=0
-        )
+        task.update(trigger_ts=ts, seen_ts=ts, quiet_since=0, options={}, last_status='', last_status_at=0)
         line = task.get('line')
         if line and line['ch'] != where(task)[0]:  # the turn moved: its progress follows it
             set_line(
@@ -452,35 +452,57 @@ TRANSIENT = re.compile(
 RETRY_WAITS = (30, 90, 180)  # seconds before each automatic "continue"
 
 
+RETRY_GRACE = 45  # seconds a sent "continue" gets to start a run
+
+
+def retry_of(task):
+    """The task's retry record (fsm.RETRY)."""
+    if 'retry' not in task:
+        reset_retry(task)
+    return task['retry']
+
+
+def reset_retry(task):
+    """No retry pending and none used: a new turn, or a usage-limit pause (which is not retried)."""
+    task['retry'] = {'count': 0, 'at': 0}
+    RETRY.start(task['retry'], 'idle')
+
+
 def retry_transient(task, s, now):
     """Send "continue" after a transient failure, up to 3 times; True while a retry is pending."""
-    if now - task.get('retry_sent', 0) < 45:
+    r = retry_of(task)
+    if RETRY.is_(r, 'sent'):
+        if now - r['at'] < RETRY_GRACE:
+            return True
+        RETRY.move(r, 'idle')
+    if RETRY.is_(r, 'waiting'):
+        if now < r['at']:
+            return True
+        if not t3.send(task['thread'], 'continue').get('ok'):
+            RETRY.move(r, 'idle')
+            return False
+        RETRY.move(r, 'sent')
+        r['at'] = now
+        log('retry sent', task['thread'], r['count'])
+        COMP.event(
+            'retry',
+            f'Model busy, said "continue" ({r["count"]}/{len(RETRY_WAITS)})',
+            task=key_of(task),
+            detail=task.get('title', ''),
+        )
         return True
-    if task.get('retry_at'):
-        if now < task['retry_at']:
-            return True
-        task['retry_at'] = None
-        if t3.send(task['thread'], 'continue').get('ok'):
-            task['retry_sent'] = now
-            log('retry sent', task['thread'], task.get('retries'))
-            COMP.event(
-                'retry',
-                f'Model busy, said "continue" ({task.get("retries")}/{len(RETRY_WAITS)})',
-                task=key_of(task),
-                detail=task.get('title', ''),
-            )
-            return True
-        return False
     if (
         not auto_retry()
         or s['last_status'] != 'failed'
-        or task.get('retries', 0) >= len(RETRY_WAITS)
+        or r['count'] >= len(RETRY_WAITS)
         or not TRANSIENT.search(t3.run_error(task['thread']))
     ):
         return False
-    n = task['retries'] = task.get('retries', 0) + 1
+    r['count'] += 1
+    n = r['count']
     wait = RETRY_WAITS[n - 1]
-    task['retry_at'] = now + wait
+    RETRY.move(r, 'waiting')
+    r['at'] = now + wait
     line = f':hourglass_flowing_sand: The model is busy, so I\'ll say "continue" in {wait} s ({n}/{len(RETRY_WAITS)})'
     if task.get('line'):
         set_line(task, 'Retrying soon', line)
@@ -515,10 +537,9 @@ def paused_line(resumes_at):
 
 def pause(task, resumes_at, run, now):
     """Wait for T3 to resume the chat at the reset: no retries, no failure."""
-    first = not task.get('paused')
-    task['paused'] = {'at': now, 'resumes_at': resumes_at, 'run': run, 'nudged': 0}
-    task.update(retry_at=None, retries=0)
-    machine.settle(task)
+    first = not machine.paused(task)
+    reset_retry(task)
+    machine.pause(task, now, resumes_at, run)
     line = paused_line(resumes_at)
     if task.get('line') and not quiet(task):
         set_line(task, 'Paused for the usage limit', line)
@@ -535,15 +556,15 @@ def pause(task, resumes_at, run, now):
 
 
 def unpause(task):
-    if task.pop('paused', None):
+    if machine.paused(task):
         task.update(last_status='', last_status_at=0)
-        machine.settle(task)
+        machine.unpause(task)
         log('resumed after the usage limit', task['thread'])
 
 
 def hold_for_limit(task, s, now):
     """True while a usage-limited chat waits for T3 to resume it (or once that wait has been closed)."""
-    p = task.get('paused')
+    p = machine.paused(task)
     if p and p['run'] == s['last_done']:  # nothing ran since the pause
         due = (p['resumes_at'] or p['at'] + LIMIT_UNKNOWN) + LIMIT_GRACE
         if now < due:
@@ -554,7 +575,7 @@ def hold_for_limit(task, s, now):
             return True
         if p['nudged'] and now - p['nudged'] < LIMIT_GRACE:
             return True
-        task.pop('paused')
+        machine.unpause(task)  # T3 never resumed it: the turn ends as it stands
         _finish_turn(task, s)
         return True
     hit, resumes_at = limit_hit(task, s)
@@ -590,10 +611,7 @@ def tick(task):
     ch, tts = where(task)
     s = t3.snapshot(task['thread'], task['seen'])
     now = time.time()
-    question = bool(s['requests'] or s.get('asked'))
-    if question != task.get('question'):
-        task['question'] = question
-        machine.settle(task)
+    machine.set_asking(task, bool(s['requests'] or s.get('asked')))
     if s['messages']:
         task['seen'] = s['messages'][-1][1]
         task['latest'] = s['messages'][-1][2] or task.get('latest', '')
@@ -719,7 +737,7 @@ def _finish_turn(task, s):
             task['quiet_since'] = 0
             log('review nudged to finish', r['id'])
             return
-    task['retries'] = 0
+    reset_retry(task)
     final = task.get('latest', '')
     took = parse_iso(s['last_done']) - parse_iso(task['burst_start']) if s['last_done'] else 0
     foot = ' · '.join(x for x in (AGENT, task['route']['project'].rsplit('/', 1)[-1], took >= 60 and mins(took)) if x)

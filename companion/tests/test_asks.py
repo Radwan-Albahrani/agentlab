@@ -169,10 +169,10 @@ def test_the_poll_closes_on_time_and_announces_the_winner(poll, fresh_bot):
     vote(p, 'U_B', 'Shawarma')
     vote(p, 'U_C', 'Pizza')
     polls.tick()
-    assert p['open']
+    assert p['state'] == 'open'
     p['closes'] = time.time() - 1
     polls.tick()
-    assert not p['open']
+    assert p['state'] == 'closed'
     announce = channel_posts(fresh_bot, 'C_RANDOM')[-1]
     assert announce['thread_ts'] == p['ts'] and announce['reply_broadcast']
     assert '**Shawarma** wins with 2 of 3 votes' in json.dumps(announce['blocks'])
@@ -194,9 +194,9 @@ def test_only_the_owner_can_close_a_poll_early(poll):
     _, p = poll
     body = {'actions': [{'value': p['id']}], 'channel': {'id': 'D_OWNER'}, 'container': {'message_ts': '1.0'}}
     polls.on_close(lambda: None, {**body, 'user': {'id': 'U_SALAH'}})
-    assert p['open']
+    assert p['state'] == 'open'
     polls.on_close(lambda: None, {**body, 'user': {'id': OWNER}})
-    assert not p['open']
+    assert p['state'] == 'closed'
 
 
 @pytest.fixture
@@ -356,7 +356,7 @@ def test_the_page_can_change_the_closing_time_and_close_a_poll(poll, fresh_bot):
     assert p['closes'] == later
     drop_ask(type='poll', poll=p['id'], close=True)
     asks.tick()
-    assert not p['open']
+    assert p['state'] == 'closed'
 
 
 def test_polls_are_published_for_the_page_with_their_voters(poll):

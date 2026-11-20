@@ -7,6 +7,7 @@ from datetime import datetime
 
 from . import slack
 from .config import COMP, OWNER, log
+from .fsm import POLL
 from .state import lock, save, state
 from .when import say
 
@@ -64,7 +65,7 @@ def _voters_line(poll, people):
 def _blocks(poll):
     n = counts(poll)
     top = max(n) or 1
-    state_ = f'closes {say(poll["closes"], "day")}' if poll['open'] else 'closed'
+    state_ = f'closes {say(poll["closes"], "day")}' if POLL.is_(poll, 'open') else 'closed'
     intro = (poll['text'] + '\n\n' if poll['text'] else '') + f':bar_chart: **{poll["question"]}** · {state_}'
     b = slack.blocks(intro)
     for i, (o, c) in enumerate(zip(poll['options'], n, strict=True)):
@@ -76,8 +77,8 @@ def _blocks(poll):
         if poll.get('multiple')
         else 'press your choice again to take your vote back'
     )
-    b += slack.blocks(None, f'{_people(voters(poll))} voted' + (f' · {how}' if poll['open'] else ''))
-    if poll['open']:
+    b += slack.blocks(None, f'{_people(voters(poll))} voted' + (f' · {how}' if POLL.is_(poll, 'open') else ''))
+    if POLL.is_(poll, 'open'):
         b.append(
             slack.buttons(*((f'poll_vote_{i}', o, f'{poll["id"]}:{i}', None) for i, o in enumerate(poll['options'])))
         )
@@ -92,7 +93,7 @@ def start(post, task_key):
         'text': post['text'],
         **post['poll'],
         'votes': {},
-        'open': True,
+        'state': 'open',
         'task': task_key,
     }
     poll['ts'] = slack.app.client.chat_postMessage(
@@ -116,14 +117,14 @@ def migrate():
             continue
         poll['votes'] = {u: v if isinstance(v, list) else [v] for u, v in poll['votes'].items()}
         poll['multiple'] = True
-        if poll['open']:
+        if POLL.is_(poll, 'open'):
             _refresh(poll)
         log('poll made multiple choice', poll['id'])
     save()
 
 
 def vote(poll, user, i):
-    if not poll['open'] or not 0 <= i < len(poll['options']):
+    if not POLL.is_(poll, 'open') or not 0 <= i < len(poll['options']):
         return
     mine = poll['votes'].get(user, [])
     if i in mine:
@@ -142,7 +143,7 @@ def vote(poll, user, i):
 
 def for_prompt(channel='', thread_ts=''):
     """The open polls as prompt text for the agent."""
-    open_polls = [p for p in state['polls'].values() if p['open']]
+    open_polls = [p for p in state['polls'].values() if POLL.is_(p, 'open')]
     if not open_polls:
         return ''
     lines = [
@@ -169,10 +170,10 @@ def change(c, task=None):
     if not poll:
         return f'there is no poll {c.get("poll")!r}'
     ch, tts = (task['channel'], task['thread_ts']) if task else _thread_for(poll)
-    if c.get('close') and poll['open']:
+    if c.get('close') and POLL.is_(poll, 'open'):
         close(poll, by=OWNER)
         return ''
-    if not poll['open']:
+    if not POLL.is_(poll, 'open'):
         slack.post(ch, tts, 'Poll not changed', md=':warning: That poll is already closed.')
         return 'that poll is already closed'
     closes = None
@@ -274,9 +275,9 @@ def result(poll):
 
 def close(poll, by=''):
     """Remove the buttons and announce the result."""
-    if not poll['open']:
+    if not POLL.is_(poll, 'open'):
         return
-    poll['open'] = False
+    POLL.move(poll, 'closed')
     poll['closed'] = time.time()
     save()
     _refresh(poll)
@@ -305,7 +306,7 @@ def card(poll):
     return {
         'id': poll['id'],
         'task': poll['task'],
-        'open': poll['open'],
+        'open': POLL.is_(poll, 'open'),
         'closes': poll['closes'],
         'closed': poll.get('closed'),
         'question': poll['question'],
@@ -331,7 +332,7 @@ def summary(poll):
 def tick():
     now = time.time()
     for poll in list(state['polls'].values()):
-        if poll['open'] and now >= poll['closes']:
+        if POLL.is_(poll, 'open') and now >= poll['closes']:
             close(poll)
 
 
@@ -352,6 +353,6 @@ def on_close(ack, body):
         return
     with lock:
         poll = state['polls'].get(body['actions'][0]['value'])
-        if poll and poll['open']:
+        if poll and POLL.is_(poll, 'open'):
             close(poll, by=OWNER)
             slack.update(body['channel']['id'], body['container']['message_ts'], 'Poll closed', note='Poll closed.')
