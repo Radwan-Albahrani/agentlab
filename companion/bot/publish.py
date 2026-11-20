@@ -3,16 +3,21 @@
 import re
 import threading
 import time
+from collections.abc import Mapping
+from typing import Any
+
+from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from . import ledger, machine, polls, reviews, slack
 from .config import COMP, MODES, OWNER, mode
 from .fsm import POLL
+from .shapes import Task
 from .state import lock, review_of, state
 
 _last = 0.0
 _writing = threading.Lock()
-_mode = None
-handler = None  # Socket Mode handler, set by main
+_mode: str | None = None
+handler: SocketModeHandler | None = None  # Socket Mode handler, set by main
 
 
 STATUS = {  # the hub's coarse status of each phase (machine.PHASES)
@@ -27,7 +32,7 @@ STATUS = {  # the hub's coarse status of each phase (machine.PHASES)
 }
 
 
-def _waiting(t):
+def _waiting(t: Task) -> str:
     """What the owner is asked for: the first item waiting on them, else an answer to the agent's question."""
     first = next(iter(ledger.pending(t)), None)
     if first:
@@ -39,7 +44,7 @@ def _waiting(t):
     return 'answer' if t.get('phase') == 'waiting_answer' else ''
 
 
-def card(k, t):
+def card(k: str, t: Task) -> dict[str, Any]:
     phase = t.get('phase') or machine.phase_of(t)
     poll = state['polls'].get(t.get('poll') or '')
     status = STATUS[phase]
@@ -48,14 +53,15 @@ def card(k, t):
     closed = re.sub(r':[a-z_]+:\s*', '', t.get('closed') or '')
     outcome = 'Paused for the usage limit' if phase == 'paused' else closed or machine.outcome(t).replace('_', ' ')
     p = machine.party(t)
-    a = t.get('audit') or {}
+    a: Mapping[str, Any] = t.get('audit') or {}
     by = a.get('by') or ''
     asked_by = review_of(t).get('asked_by') or []
     if asked_by:
         requester = ', '.join(slack.name(u) for u in asked_by)
     else:
         requester = slack.name(p['user']) if p['kind'] != 'owner' else ''
-    c = t.get('case') or {}
+    c = t.get('case')
+    pause = machine.paused(t)
     return {
         'id': k,
         'title': t.get('title') or '',
@@ -67,9 +73,9 @@ def card(k, t):
         'started': t.get('start') or '',
         'ended': t.get('ended') or '',
         'thread': t.get('thread') or '',
-        'slack': slack.link(t.get('channel'), t.get('thread_ts')),
+        'slack': slack.link(t.get('channel') or '', t.get('thread_ts') or ''),
         'source': t.get('source') or '',
-        'resumes_at': (machine.paused(t) or {}).get('resumes_at') or '' if phase == 'paused' else '',
+        'resumes_at': (pause.get('resumes_at') if pause else None) or '' if phase == 'paused' else '',
         'started_by': slack.name(by) if by and by != OWNER else '',
         'via': a.get('via') or '',
         'approved_by': slack.name(a['approved_by']) if a.get('approved_by') else '',
@@ -82,7 +88,7 @@ def card(k, t):
     }
 
 
-def tick():
+def tick() -> None:
     global _last
     if time.time() - _last < 5:
         return
@@ -91,7 +97,7 @@ def tick():
         _publish()
 
 
-def now():
+def now() -> None:
     """Publish now instead of on the next beat."""
     global _last
     _last = time.time()
@@ -99,7 +105,7 @@ def now():
         _publish()
 
 
-def _publish():
+def _publish() -> None:
     try:
         connected = bool(handler and handler.client.is_connected())
     except Exception:

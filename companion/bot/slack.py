@@ -5,30 +5,55 @@ import os
 import re
 import time
 import urllib.request
+from collections.abc import Callable, Iterable
+from typing import Any, TypedDict
 
 from slack_bolt import App
+from slack_sdk import WebClient
+from slack_sdk.web import SlackResponse
 
 from .config import AGENT_FILES, DM_LINES, FILES, OWNER, RECENT, RECENT_DM, log, secret
 from .text import to_slack, without_mention
 from .when import say
 
-app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
-try:
-    from slack_sdk import WebClient
+Json = dict[str, Any]  # a Slack API record (message, user, channel, block)
 
+
+class _People(TypedDict):
+    at: float
+    list: list[Json]
+    by_id: dict[str, Json]
+
+
+class _Channels(TypedDict):
+    at: float
+    list: list[Json]
+
+
+app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
+USER: WebClient | None
+try:
     USER = WebClient(token=secret('user-token.txt'))  # read-only, as the owner
 except Exception:
     USER = None
 WORKSPACE = ''  # https://<workspace>.slack.com/, set at start
-_people = {'at': 0.0, 'list': [], 'by_id': {}}  # cached workspace directory
-_others = {}  # id -> users_info record for people missing from _people
-_bot = []
+_people: _People = {'at': 0.0, 'list': [], 'by_id': {}}  # cached workspace directory
+_others: dict[str, Json] = {}  # id -> users_info record for people missing from _people
+_bot: list[str] = []
 MANIFEST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'slack-manifest.yml')
 
 
-def wanted_scopes(kind, path=MANIFEST):
+def owner_client() -> WebClient:
+    """USER, or an error when there is no user token (callers catch it)."""
+    if USER is None:
+        raise RuntimeError('no user token')
+    return USER
+
+
+def wanted_scopes(kind: str, path: str = MANIFEST) -> list[str]:
     """The manifest's `bot` or `user` scopes."""
-    out, inside = [], False
+    out: list[str] = []
+    inside = False
     with open(path) as f:
         for line in f:
             if re.match(rf'^ {{4}}{kind}:\s*$', line):
@@ -40,7 +65,7 @@ def wanted_scopes(kind, path=MANIFEST):
     return out
 
 
-def missing_scopes(response, kind):
+def missing_scopes(response: object, kind: str) -> list[str]:
     """Scopes the manifest asks for that this token (auth.test response) wasn't granted; [] when unknown."""
     granted = (getattr(response, 'headers', None) or {}).get('x-oauth-scopes')
     if granted is None:
@@ -53,8 +78,9 @@ def missing_scopes(response, kind):
     return [s for s in wanted if s not in have]
 
 
-def _refresh_people():
-    found, cursor = [], None
+def _refresh_people() -> None:
+    found: list[Json] | None = []
+    cursor: str | None = None
     try:
         while True:
             res = app.client.users_list(limit=500, cursor=cursor)
@@ -71,14 +97,14 @@ def _refresh_people():
         _people['list'] = [u for u in found if not u.get('deleted') and not u.get('is_bot')]
 
 
-def people():
+def people() -> list[Json]:
     """The workspace's active people (no bots), cached ten minutes."""
     if time.time() - _people['at'] > 600:
         _refresh_people()
     return _people['list']
 
 
-def colleagues():
+def colleagues() -> list[dict[str, str]]:
     """[{id, name, avatar}] of full members, sorted by name."""
     out = [
         {'id': u['id'], 'name': member_name(u), 'avatar': u.get('profile', {}).get('image_48') or ''}
@@ -88,7 +114,7 @@ def colleagues():
     return sorted(out, key=lambda p: p['name'].casefold())
 
 
-def _member(uid):
+def _member(uid: str) -> Json:
     people()
     m = _people['by_id'].get(uid)
     if m is None:
@@ -101,20 +127,20 @@ def _member(uid):
     return m
 
 
-def member_name(u):
+def member_name(u: Json) -> str:
     return u.get('profile', {}).get('display_name') or u.get('real_name') or u.get('name') or u['id']
 
 
-def name(uid):
+def name(uid: str) -> str:
     return member_name(_member(uid))
 
 
-def avatar(uid):
+def avatar(uid: str) -> str:
     """48 px profile picture URL, or ''."""
     return _member(uid).get('profile', {}).get('image_48') or ''
 
 
-def find_user(text):
+def find_user(text: str) -> tuple[str | None, str]:
     """(user id, '') for a name, @mention or id; (None, why) when no one or several match."""
     text = text.strip()
     m = re.fullmatch(r'<?@?([UW][A-Z0-9]{6,})>?', text)
@@ -124,7 +150,7 @@ def find_user(text):
         return text, ''
     want = text.strip().lstrip('@').casefold()
 
-    def names(u):
+    def names(u: Json) -> set[str]:
         p = u.get('profile', {})
         return {
             x.casefold() for x in (u.get('name'), u.get('real_name'), p.get('display_name'), p.get('real_name')) if x
@@ -144,22 +170,22 @@ def find_user(text):
     )
 
 
-def ask(text):
+def ask(text: str | None) -> str:
     """The person's words, readable: without the @-mention that addressed the companion (its bot, or its owner's tag)."""
     return readable(without_mention(text, {bot_user(), OWNER}))
 
 
-def bot_user():
+def bot_user() -> str:
     if not _bot:
         _bot.append(app.client.auth_test()['user_id'])
     return _bot[0]
 
 
-def dm_owner():
+def dm_owner() -> str:
     return app.client.conversations_open(users=OWNER)['channel']['id']
 
 
-def channel_name(channel):
+def channel_name(channel: str) -> str:
     """A channel id's name; '' for DMs or without the read scopes."""
     if channel[:1] not in ('C', 'G'):
         return ''
@@ -170,13 +196,14 @@ def channel_name(channel):
         return ''
 
 
-_channels = {'at': 0.0, 'list': []}
+_channels: _Channels = {'at': 0.0, 'list': []}
 
 
-def channels():
+def channels() -> list[Json]:
     """[{id, name, member}] of public channels and private ones the bot is in (member: bot can post), cached."""
     if time.time() - _channels['at'] > 300:
-        found, cursor = [], None
+        found: list[Json] = []
+        cursor: str | None = None
         try:
             while True:
                 res = app.client.conversations_list(
@@ -195,30 +222,30 @@ def channels():
     return _channels['list']
 
 
-def forget_channels():
+def forget_channels() -> None:
     _channels['at'] = 0.0
 
 
-def bot_in(channel):
+def bot_in(channel: str) -> bool:
     try:
         return bool(app.client.conversations_info(channel=channel)['channel'].get('is_member'))
     except Exception:
         return False
 
 
-def permalink(channel, ts, client=None):
+def permalink(channel: str, ts: str, client: WebClient | None = None) -> str:
     try:
         return (client or app.client).chat_getPermalink(channel=channel, message_ts=ts)['permalink']
     except Exception:
         return ''
 
 
-def link(channel, ts):
+def link(channel: str, ts: str) -> str:
     """A message link built without an API call."""
     return f'{WORKSPACE}archives/{channel}/p{ts.replace(".", "")}' if WORKSPACE and channel and ts else ''
 
 
-def readable(text):
+def readable(text: str | None) -> str:
     """Slack markup -> plain text: <@U1> -> @name, <url|label> -> label (url)."""
     text = re.sub(r'<@([A-Z0-9]+)>', lambda m: '@' + name(m.group(1)), text or '')
     text = re.sub(r'<#[A-Z0-9]+\|([^>]+)>', r'#\1', text)
@@ -227,9 +254,9 @@ def readable(text):
     return text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
 
 
-def blocks(md=None, note=None, legacy=False):
+def blocks(md: str | None = None, note: str | None = None, legacy: bool = False) -> list[Json] | None:
     """Block Kit: `md` as a markdown block (mrkdwn sections if `legacy`), `note` as a grey context line."""
-    b = []
+    b: list[Json] = []
     if md:
         if legacy:
             t = to_slack(md, 11000)
@@ -243,7 +270,7 @@ def blocks(md=None, note=None, legacy=False):
     return b or None
 
 
-def buttons(*items):
+def buttons(*items: tuple[str, str, str, str | None]) -> Json:
     """An actions block: items are (action_id, label, value, style or None)."""
     return {
         'type': 'actions',
@@ -260,7 +287,7 @@ def buttons(*items):
     }
 
 
-def _send(call, md, note, **kw):
+def _send(call: Callable[..., SlackResponse], md: str | None, note: str | None, **kw: Any) -> SlackResponse | None:
     for legacy in (False, True):
         try:
             return call(blocks=blocks(md, note, legacy), **kw)
@@ -271,7 +298,14 @@ def _send(call, md, note, **kw):
     return None
 
 
-def post(channel, thread_ts, text, md=None, note=None, broadcast=False):
+def post(
+    channel: str,
+    thread_ts: str | None,
+    text: str,
+    md: str | None = None,
+    note: str | None = None,
+    broadcast: bool = False,
+) -> str | None:
     """text: notification/fallback text; md and note: what the message shows; broadcast: a thread reply also shown in
     the conversation (and notifying there)."""
     r = _send(
@@ -288,21 +322,21 @@ def post(channel, thread_ts, text, md=None, note=None, broadcast=False):
     return r['ts'] if r else None
 
 
-def update(channel, ts, text, md=None, note=None):
+def update(channel: str, ts: str, text: str, md: str | None = None, note: str | None = None) -> None:
     _send(app.client.chat_update, md, note, channel=channel, ts=ts, text=text[:3000])
 
 
-def note_only(channel, thread_ts, line):
+def note_only(channel: str, thread_ts: str | None, line: str) -> str | None:
     """Post one small grey line."""
     return post(channel, thread_ts, re.sub(r':[a-z_]+:\s*', '', line), note=line)
 
 
-def react(channel, ts, emoji, remove=False):
+def react(channel: str, ts: str, emoji: str, remove: bool = False) -> None:
     with contextlib.suppress(Exception):
         (app.client.reactions_remove if remove else app.client.reactions_add)(channel=channel, timestamp=ts, name=emoji)
 
 
-def upload(channel, thread_ts, paths, comment=None):
+def upload(channel: str, thread_ts: str | None, paths: Iterable[str], comment: str | None = None) -> SlackResponse:
     return app.client.files_upload_v2(
         channel=channel,
         thread_ts=thread_ts,
@@ -311,9 +345,9 @@ def upload(channel, thread_ts, paths, comment=None):
     )
 
 
-def download(files, folder):
+def download(files: Iterable[Json] | None, folder: str) -> list[str]:
     """Download Slack files into <folder>; returns the paths as the agent sees them."""
-    out = []
+    out: list[str] = []
     os.makedirs(os.path.join(FILES, folder), exist_ok=True)
     for f in files or []:
         url = f.get('url_private_download') or f.get('url_private')
@@ -321,7 +355,7 @@ def download(files, folder):
             continue
         fname = re.sub(r'[^\w.\-]+', '_', f.get('name') or f.get('id', 'file'))[:80]
         try:
-            req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + app.client.token})
+            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {app.client.token}'})
             with urllib.request.urlopen(req, timeout=60) as r, open(os.path.join(FILES, folder, fname), 'wb') as w:
                 w.write(r.read())
             os.chmod(os.path.join(FILES, folder, fname), 0o644)
@@ -331,9 +365,11 @@ def download(files, folder):
     return out
 
 
-def transcript(msgs, folder=None):
+def transcript(msgs: Iterable[Json], folder: str | None = None) -> tuple[list[str], list[str]]:
     """Messages -> ('[Oct 28 12:30] Name: text' lines, downloaded file paths), skipping the bot's own posts."""
-    me, lines, files = bot_user(), [], []
+    me = bot_user()
+    lines: list[str] = []
+    files: list[str] = []
     for m in msgs:
         if m.get('user') == me:
             continue
@@ -352,10 +388,11 @@ def transcript(msgs, folder=None):
     return lines, files
 
 
-def lead_up(msgs, user, before):
+def lead_up(msgs: Iterable[Json], user: str, before: str) -> list[Json]:
     """`user`'s own untagged messages just before `before`, with no one else's between: an ask written in parts with
     the tag last ("readme is too long, compare them", then "@leafy")."""
-    tag, run = f'<@{bot_user()}>', []
+    tag = f'<@{bot_user()}>'
+    run: list[Json] = []
     for m in sorted((m for m in msgs if float(m['ts']) < float(before)), key=lambda m: float(m['ts']), reverse=True):
         typed = m.get('subtype') in (None, 'thread_broadcast', 'file_share')
         if m.get('user') != user or m.get('bot_id') or not typed or tag in (m.get('text') or ''):
@@ -364,7 +401,7 @@ def lead_up(msgs, user, before):
     return run
 
 
-def thread_messages(channel, thread_ts, trigger_ts):
+def thread_messages(channel: str, thread_ts: str, trigger_ts: str) -> list[Json]:
     """The whole thread, or for a new message the ones before it: in a channel the last minutes (older ones are other
     conversations), in a DM the last days, since "I fixed them" there usually answers what was said hours ago."""
     try:

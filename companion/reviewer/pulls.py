@@ -1,8 +1,11 @@
 """Pull requests via the App: the open list, a review's starting facts, and publishing the result."""
 
 import base64
+from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict
 
-from .github import GitHubError
+from .github import App, GitHubError, User
+from .report import Inline
 
 LIST = """query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes { ... on PullRequest {
   number title url isDraft additions deletions createdAt updatedAt headRefOid
@@ -18,9 +21,67 @@ THREADS = """query($owner: String!, $name: String!, $number: Int!) { repository(
 CI = {'SUCCESS': 'passing', 'FAILURE': 'failing', 'ERROR': 'failing', 'PENDING': 'running', 'EXPECTED': 'running'}
 
 
-def open_pulls(app):
+class Target(TypedDict):
+    """The PR a call acts on: facts() has these too."""
+
+    repo: str
+    number: int
+    installation: int
+    url: str
+
+
+class File(TypedDict):
+    path: str
+    status: str
+    additions: int
+    deletions: int
+    patch: str
+
+
+class Comment(TypedDict):
+    by: str
+    body: str
+
+
+class Thread(TypedDict):
+    id: str
+    path: str
+    line: int | None
+    resolved: bool
+    outdated: bool
+    mine: bool
+    up: int
+    down: int
+    first_comment: str | None
+    comments: list[Comment]
+
+
+class Facts(TypedDict):
+    """What a review starts from (facts)."""
+
+    installation: int
+    repo: str
+    number: int
+    title: str
+    body: str
+    url: str
+    author: str
+    state: str
+    draft: bool
+    head: str
+    head_ref: str
+    fork: bool
+    base: str
+    repo_id: int
+    base_ref: str
+    files: list[File]
+    threads: list[Thread]
+    bot: str
+
+
+def open_pulls(app: App) -> list[dict[str, Any]]:
     """Every open PR the App can see, newest activity first."""
-    out = []
+    out: list[dict[str, Any]] = []
     for inst in app.installations():
         q = f'is:pr is:open archived:false sort:updated-desc user:{inst["account"]}'
         for n in app.graphql(LIST, inst['id'], q=q)['search']['nodes']:
@@ -51,9 +112,9 @@ def open_pulls(app):
     return out
 
 
-def people(app, pulls, repos=20, cap=300):
+def people(app: App, pulls: Sequence[Mapping[str, Any]], repos: int = 20, cap: int = 300) -> list[User]:
     """[{login, avatar}] sorted: who can work on the repos with open PRs, and the PRs' authors; once per login."""
-    found = {}
+    found: dict[str, User] = {}
     for p in pulls:
         if p['author'] == 'ghost' or p['author'].endswith('[bot]'):
             continue
@@ -68,11 +129,11 @@ def people(app, pulls, repos=20, cap=300):
     return sorted(found.values(), key=lambda u: u['login'].casefold())[:cap]
 
 
-def facts(app, repo, number):
+def facts(app: App, repo: str, number: int) -> Facts:
     """What a review starts from: the PR, its changed files with patches, and its review threads."""
     inst = app.installation_for(repo)
     if inst is None:
-        raise GitHubError(404, f'the App is not installed on {repo.split("/")[0]}')
+        raise GitHubError(404, f'the App is not installed on {repo.split("/", maxsplit=1)[0]}')
     pr = app.call('GET', f'/repos/{repo}/pulls/{number}', installation=inst)
     files = app.pages(f'/repos/{repo}/pulls/{number}/files', inst)
     owner, name = repo.split('/', 1)
@@ -109,7 +170,7 @@ def facts(app, repo, number):
     }
 
 
-def _thread(t, bot):
+def _thread(t: Any, bot: str) -> Thread:
     comments = t['comments']['nodes']
     first = comments[0] if comments else {}
     reactions = {g['content']: g['reactors']['totalCount'] for g in first.get('reactionGroups') or []}
@@ -127,7 +188,7 @@ def _thread(t, bot):
     }
 
 
-def post_review(app, f, head, body, comments):
+def post_review(app: App, f: Target, head: str, body: str, comments: list[Inline]) -> str:
     """Post one comment-only review on `head`, retrying with unplaceable comments moved to the body; returns its URL."""
     path = f'/repos/{f["repo"]}/pulls/{f["number"]}/reviews'
     payload = {'commit_id': head, 'event': 'COMMENT', 'body': body, 'comments': comments}
@@ -150,13 +211,13 @@ def post_review(app, f, head, body, comments):
     return r.get('html_url', f['url'])
 
 
-def thumbs_up(app, f):
+def thumbs_up(app: App, f: Target) -> None:
     app.call(
         'POST', f'/repos/{f["repo"]}/issues/{f["number"]}/reactions', {'content': '+1'}, installation=f['installation']
     )
 
 
-def close_thread(app, f, thread_id, note):
+def close_thread(app: App, f: Target, thread_id: str, note: str) -> None:
     """Reply to one of the companion's own threads and resolve it."""
     app.graphql(
         """mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input:
@@ -172,7 +233,7 @@ def close_thread(app, f, thread_id, note):
     )
 
 
-def update_comment(app, f, comment_id, body):
+def update_comment(app: App, f: Target, comment_id: str, body: str) -> None:
     """Rewrite one of the companion's own review comments in place."""
     app.graphql(
         """mutation($id: ID!, $body: String!) { updatePullRequestReviewComment(input:
@@ -187,13 +248,13 @@ EVIDENCE_BRANCH = 'main'
 KEEP_DAYS = 60
 
 
-def upload_images(app, evidence, f, paths, folder):
+def upload_images(app: App, evidence: str, f: Target, paths: Sequence[str], folder: str) -> dict[str, str]:
     """Commit screenshots to the `evidence` repo (never the product repo); returns {file name: commit-pinned raw url}."""
     inst = app.installation_for(evidence)
     if inst is None:
         raise GitHubError(404, f'the App is not installed on {evidence}')
     head = _evidence_head(app, evidence, inst)
-    tree = []
+    tree: list[dict[str, str]] = []
     for p in paths:
         with open(p, 'rb') as fh:
             content = base64.b64encode(fh.read()).decode()
@@ -214,7 +275,7 @@ def upload_images(app, evidence, f, paths, folder):
     return {t['path'].rsplit('/', 1)[-1]: f'https://github.com/{evidence}/raw/{commit}/{t["path"]}' for t in tree}
 
 
-def _evidence_head(app, evidence, inst):
+def _evidence_head(app: App, evidence: str, inst: int) -> str:
     """The evidence branch head; seeds an empty repo with a README (the Git Data API needs a first commit)."""
     try:
         return app.call('GET', f'/repos/{evidence}/git/ref/heads/{EVIDENCE_BRANCH}', installation=inst)['object']['sha']
@@ -242,7 +303,7 @@ def _evidence_head(app, evidence, inst):
     return app.call('GET', f'/repos/{evidence}/git/ref/heads/{EVIDENCE_BRANCH}', installation=inst)['object']['sha']
 
 
-def prune_evidence(app, evidence, now):
+def prune_evidence(app: App, evidence: str, now: float) -> int:
     """Rewrite the evidence branch as one parentless commit without runs older than KEEP_DAYS; returns files dropped."""
     inst = app.installation_for(evidence)
     if inst is None:
@@ -276,7 +337,7 @@ def prune_evidence(app, evidence, now):
     return len(blobs) - len(kept)
 
 
-def _run_time(path):
+def _run_time(path: str) -> float:
     """The epoch of the path's run-<epoch> folder; inf outside runs, so they are always kept."""
     for part in path.split('/'):
         if part.startswith('run-') and part[4:].isdigit():
@@ -287,7 +348,7 @@ def _run_time(path):
 QA_MARK = '<!-- companion-qa-report -->'
 
 
-def qa_comment(app, f, body):
+def qa_comment(app: App, f: Target, body: str) -> str:
     """Create or edit (found by QA_MARK) the PR's single QA report comment; returns its URL."""
     body = f'{QA_MARK}\n{body}'[:65000]
     bot = f'{app.slug()}[bot]'

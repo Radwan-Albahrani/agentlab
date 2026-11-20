@@ -3,8 +3,10 @@
 import os
 import threading
 import time
+from collections.abc import Callable
 
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk.web import SlackResponse
 
 from . import (  # noqa: F401  (routing registers the handlers)
     asks,
@@ -23,7 +25,7 @@ from .config import AGENT, ASKS_POLL, BRIDGE, COMP, DATA, FILES, NAME, OWNER, PO
 from .state import lock, prepare_for_start, save, state
 
 
-def _guarded(label, fn, *args):
+def _guarded[*Ts](label: str, fn: Callable[[*Ts], object], *args: *Ts) -> bool:
     try:
         fn(*args)
     except Exception as e:
@@ -32,7 +34,7 @@ def _guarded(label, fn, *args):
     return True
 
 
-def poll():
+def poll() -> None:
     while True:
         time.sleep(POLL)
         for task in list(state['tasks'].values()):
@@ -54,13 +56,13 @@ def poll():
         _guarded('publish', publish.tick)
 
 
-def watch_asks():
+def watch_asks() -> None:
     while True:
         time.sleep(ASKS_POLL)
         _guarded('asks', asks.tick)
 
 
-def _check_scopes(me):
+def _check_scopes(me: SlackResponse) -> None:
     """Say on the hub when the Slack app lacks scopes its manifest asks for: without them messages go unseen."""
     tokens = [('bot', me)]
     if slack.USER:
@@ -81,7 +83,7 @@ def _check_scopes(me):
             )
 
 
-def run():
+def run() -> None:
     for d in (DATA, FILES, drafts.DRAFTS, outbox.OUTBOX):
         os.makedirs(d, exist_ok=True)
     prepare_for_start()
@@ -95,5 +97,5 @@ def run():
     _check_scopes(me)
     threading.Thread(target=poll, daemon=True).start()
     threading.Thread(target=watch_asks, daemon=True).start()
-    publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
-    publish.handler.start()
+    handler = publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
+    handler.start()

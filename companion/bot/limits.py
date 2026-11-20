@@ -23,7 +23,7 @@ AT = re.compile(
 )
 
 
-def parse(text, now=None):
+def parse(text: object, now: float | None = None) -> tuple[bool, float | None]:
     """(True, reset epoch or None) when the text tells of a usage limit, else (False, None)."""
     text = str(text or '')
     if not LIMIT.search(text):
@@ -31,7 +31,7 @@ def parse(text, now=None):
     return True, resets_at(text, now)
 
 
-def from_error(payload, now=None):
+def from_error(payload: str, now: float | None = None) -> tuple[bool, float | None]:
     """The same from a T3 `error` turn item (JSON): failure.class 'usage_limit' with failure.resetAt, else its text."""
     try:
         item = json.loads(payload) if payload else {}
@@ -47,7 +47,7 @@ def from_error(payload, now=None):
     )
 
 
-def resets_at(text, now=None):
+def resets_at(text: object, now: float | None = None) -> float | None:
     """When the limit resets, read leniently from the text; a time without a zone is in local (cluster) time."""
     now = now if now is not None else datetime.now().timestamp()
     text = str(text or '')
@@ -65,12 +65,12 @@ def resets_at(text, now=None):
     return None
 
 
-def _span(text):
+def _span(text: str) -> int:
     units = {'d': 86400, 'h': 3600, 'm': 60}
     return sum(int(n) * units[u[0].lower()] for n, u in re.findall(r'(\d+)\s*([a-z]+)', text, re.I))
 
 
-def _zone(name):
+def _zone(name: str | None) -> ZoneInfo | None:
     if not name:
         return None
     try:
@@ -79,7 +79,7 @@ def _zone(name):
         return None
 
 
-def _clock(m, now):
+def _clock(m: re.Match[str], now: float) -> float | None:
     h, mins = int(m.group('h')), int(m.group('m') or 0)
     ampm = (m.group('ampm') or '').lower()[:1]
     if ampm:
@@ -108,7 +108,7 @@ def _clock(m, now):
     return at.timestamp()
 
 
-def _iso(value):
+def _iso(value: object) -> float | None:
     try:
         return datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp() if value else None
     except ValueError:

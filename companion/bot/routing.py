@@ -1,14 +1,16 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
+from typing import Any
+
 from . import cases, drafts, inbox, jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, has_access, log, mode, requests_channel
 from .state import key, save, state
 
-_seen = []
+_seen: list[str] = []
 IGNORED = ('message_changed', 'message_deleted', 'bot_message', 'channel_join')
 
 
-def _once(ts):
+def _once(ts: str) -> bool:
     if ts in _seen:
         return False
     _seen.append(ts)
@@ -16,7 +18,7 @@ def _once(ts):
     return True
 
 
-def _refuse(channel, thread_ts, user):
+def _refuse(channel: str, thread_ts: str, user: str | None) -> None:
     k = key(channel, thread_ts)
     if k in state['refused']:
         return
@@ -26,22 +28,22 @@ def _refuse(channel, thread_ts, user):
     slack.post(channel, thread_ts, f'Hi <@{user}>, I only take tasks from <@{OWNER}>{can}.')
 
 
-def _reviews_from(user):
+def _reviews_from(user: str | None) -> bool:
     """Can this colleague ask for pull request reviews (the hub's setting; never in dry run)?"""
     who = COMP.setting('review_requests')
     if user == OWNER or mode() == 'owner' or who == 'off':
         return False
-    return has_access(user) or (who == 'team' and requests.team_member(user))
+    return has_access(user) or (who == 'team' and user is not None and requests.team_member(user))
 
 
-def _bot_reads(ev):
+def _bot_reads(ev: dict[str, Any]) -> bool:
     """Can the bot read and post where this message is?"""
     if ev.get('channel_type') in ('im', 'mpim') or ev['channel'].startswith('D'):
         return requests.own_dm(ev['channel'])
     return slack.bot_in(ev['channel'])
 
 
-def tagged_by_edit(ev):
+def tagged_by_edit(ev: dict[str, Any]) -> dict[str, Any] | None:
     """An edit that adds the companion's tag to a message: the message as it is now, or None. Only the tag counts:
     other edits change nothing already asked."""
     if ev.get('subtype') != 'message_changed':
@@ -52,7 +54,7 @@ def tagged_by_edit(ev):
     return dict(new, channel=ev['channel'], channel_type=ev.get('channel_type'))
 
 
-def route(ev, mentioned):
+def route(ev: dict[str, Any], mentioned: bool) -> None:
     edited = tagged_by_edit(ev)
     if edited:
         log('tag added by an edit', ev['channel'], edited['ts'])
@@ -126,13 +128,13 @@ def route(ev, mentioned):
         jobs.run_later(inbox.relay, card, ev.get('text', ''), ts)
         return
     dkey, draft = drafts.for_thread(ch, tts)
-    if draft and thr:
+    if draft and thr and dkey is not None:
         jobs.run_later(drafts.revise, dkey, draft, ev.get('text', ''), ts)
         return
     task = state['tasks'].get(key(ch, tts))
     review = thr and (mentioned or in_dm) and reviews.for_reply(ch, thr, ev.get('text', ''), others=bool(task))
     if review == 'which':
-        jobs.run_later(reviews.which, ch, thr)
+        jobs.run_later(reviews.which, ch, tts)  # tts is thr here: a review only answers in a thread
     elif review:
         jobs.run_later(reviews.answer, review, ev.get('text', ''), ev.get('files'), ts)
     elif task and (mentioned or in_dm):
@@ -143,9 +145,9 @@ def route(ev, mentioned):
         jobs.run_later(tasks.start, ch, tts, ts, ev.get('text', ''))
 
 
-def replay(channel):
+def replay(channel: str) -> None:
     """Handle a DM's messages since the companion's last reply, oldest first: ones it missed (it couldn't see them)."""
-    missed = []
+    missed: list[dict[str, Any]] = []
     for m in slack.app.client.conversations_history(channel=channel, limit=20)['messages']:  # newest first
         if m.get('bot_id') or m.get('user') == slack.bot_user():
             break
@@ -156,10 +158,10 @@ def replay(channel):
 
 
 @slack.app.event('app_mention')
-def on_mention(event):
+def on_mention(event: dict[str, Any]) -> None:
     route(event, True)
 
 
 @slack.app.event('message')
-def on_message(event):
+def on_message(event: dict[str, Any]) -> None:
     route(event, f'<@{slack.bot_user()}>' in (event.get('text') or ''))

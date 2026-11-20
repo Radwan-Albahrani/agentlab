@@ -8,7 +8,7 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import not_, or_, select
+from sqlalchemy import func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from . import t3db
@@ -93,27 +93,27 @@ def triage(prompt: str) -> dict[str, Any]:
     return bridge('/api/t3/triage', {'message': prompt})
 
 
-def _last_run(s: Session, tid: str) -> tuple[str | None, str | None] | None:
-    """(status, completed_at) of the chat's latest run, an open one first, then by completion: a message sent mid-run
-    leaves its own run cancelled."""
-    row = s.execute(
-        select(Run.status, Run.completed_at)
-        .where(Run.thread_id == tid)
-        .order_by(Run.completed_at.is_(None).desc(), Run.completed_at.desc())
-        .limit(1)
-    ).first()
-    return (row[0], row[1]) if row else None
+def _last_runs(s: Session, tids: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """(status, completed_at) of each chat's latest run, an open one first, then by completion: a message sent mid-run
+    leaves its own run cancelled. Chats without runs are left out."""
+    rn = (
+        func.row_number()
+        .over(partition_by=Run.thread_id, order_by=(Run.completed_at.is_(None).desc(), Run.completed_at.desc()))
+        .label('rn')
+    )
+    ranked = select(Run.thread_id, Run.status, Run.completed_at, rn).where(Run.thread_id.in_(tids)).subquery()
+    rows = s.execute(select(ranked.c.thread_id, ranked.c.status, ranked.c.completed_at).where(ranked.c.rn == 1))
+    return {t: (status, done) for t, status, done in rows}
 
 
-def _payload(s: Session, tid: str) -> dict[str, Any] | None:
-    return s.scalar(select(Thread.payload).where(Thread.thread_id == tid))
+def _payloads(s: Session, tids: list[str]) -> dict[str, dict[str, Any]]:
+    return dict(s.execute(select(Thread.thread_id, Thread.payload).where(Thread.thread_id.in_(tids))).all())
 
 
 def snapshot(tid: str, since_iso: str) -> dict[str, Any]:
     """A chat's current state: runs, new answers, pending questions, workers, PRs."""
     with t3db.session() as s:
         open_run = s.scalar(select(Run.run_id).where(Run.thread_id == tid, Run.completed_at.is_(None)).limit(1))
-        last_run = _last_run(s, tid)
         msgs = [
             (m, at, text)
             for m, at, text in s.execute(
@@ -137,16 +137,17 @@ def snapshot(tid: str, since_iso: str) -> dict[str, Any]:
         ]
         reqs = [(rid, kind) for rid, kind, by_message in pending if not by_message]
         items: dict[str, dict[str, Any]] = {}
-        for rid, _, _ in pending:
-            for it in s.scalars(
+        if pending:
+            recent = s.scalars(
                 select(TurnItem.payload)
                 .where(TurnItem.thread_id == tid, TurnItem.type.like('%request%'))
                 .order_by(TurnItem.ordinal.desc())
                 .limit(20)
-            ):
-                if it.get('requestId') == rid:
-                    items[rid] = it
-                    break
+            ).all()
+            for rid, _, _ in pending:
+                found_item = next((it for it in recent if it.get('requestId') == rid), None)
+                if found_item is not None:
+                    items[rid] = found_item
         running = select(Run.run_id).where(Run.thread_id == Thread.thread_id, Run.completed_at.is_(None)).exists()
         found = s.execute(
             select(Thread.thread_id, Thread.title, running, Thread.updated_at).where(parent_of(Thread) == tid)
@@ -158,15 +159,15 @@ def snapshot(tid: str, since_iso: str) -> dict[str, Any]:
             )
         ]
         workers = [(w, title, bool(r) or _subagent_busy(w, updated, reported)) for w, title, r, updated in found]
-        interrupted = [
-            last[1]
-            for t in [tid, *(w for w, *_ in workers)]
-            if (last := _last_run(s, t)) and last[0] == 'interrupted' and last[1]
-        ]
-        lead = _payload(s, tid)
+        chats = [tid, *(w for w, *_ in workers)]
+        last_runs = _last_runs(s, chats)
+        last_run = last_runs.get(tid)
+        interrupted = [last[1] for t in chats if (last := last_runs.get(t)) and last[0] == 'interrupted' and last[1]]
+        payloads = _payloads(s, chats)
+        lead = payloads.get(tid)
         prs = list(lead.get('pullRequests') or []) if lead else []
         for w_tid, *_ in workers:
-            pl = _payload(s, w_tid)
+            pl = payloads.get(w_tid)
             if pl:
                 prs += pl.get('pullRequests') or []
                 if pl.get('branchPullRequest'):
@@ -202,19 +203,28 @@ def _subagent_busy(w_tid: str, updated: str | None, reported: list[str], now: fl
 STEP_TEXT = {'reasoning': 'text', 'assistant_message': 'text', 'command_execution': 'input', 'dynamic_tool': 'title'}
 
 
-def _steps(s: Session, tid: str, limit: int) -> list[str]:
-    """The chat's latest steps, oldest first: what it thought, said and ran, one short line each."""
-    out = []
-    for typ, status, payload in s.execute(
-        select(TurnItem.type, TurnItem.status, TurnItem.payload)
-        .where(TurnItem.thread_id == tid, TurnItem.type.in_(STEP_TEXT))
-        .order_by(TurnItem.ordinal.desc())
-        .limit(limit)
+def _steps_of(s: Session, tids: list[str], limit: int) -> dict[str, list[str]]:
+    """Each chat's latest steps, oldest first: what it thought, said and ran, one short line each."""
+    rn = func.row_number().over(partition_by=TurnItem.thread_id, order_by=TurnItem.ordinal.desc()).label('rn')
+    ranked = (
+        select(TurnItem.thread_id, TurnItem.type, TurnItem.status, TurnItem.payload, rn)
+        .where(TurnItem.thread_id.in_(tids), TurnItem.type.in_(STEP_TEXT))
+        .subquery()
+    )
+    out: dict[str, list[str]] = {t: [] for t in tids}
+    for t, typ, status, payload in s.execute(
+        select(ranked.c.thread_id, ranked.c.type, ranked.c.status, ranked.c.payload)
+        .where(ranked.c.rn <= limit)
+        .order_by(ranked.c.thread_id, ranked.c.rn.desc())
     ):
         text = str(payload.get(STEP_TEXT[typ]) or '').replace('\n', ' ').strip()
         if text:
-            out.append(f'{typ.replace("_", " ")}{" (failed)" if status == "failed" else ""}: {text[:200]}')
-    return out[::-1]
+            out[t].append(f'{typ.replace("_", " ")}{" (failed)" if status == "failed" else ""}: {text[:200]}')
+    return out
+
+
+def _steps(s: Session, tid: str, limit: int) -> list[str]:
+    return _steps_of(s, [tid], limit)[tid]
 
 
 def _local(iso: str | None) -> str:
@@ -265,8 +275,9 @@ def digest(tid: str) -> str:
             *(f'- [{at}] {t[:300]}' for at, t in _said(s, tid, 'assistant', 12)),
         ]
         lines += ['Its latest steps (oldest first):', *(f'- {x}' for x in _steps(s, tid, 6))]
+        worker_steps = _steps_of(s, [w for w, *_ in snap['workers']], 2)
         for w, title, running in snap['workers']:
-            last = _steps(s, w, 2)
+            last = worker_steps[w]
             lines.append(
                 f'Worker "{title}": {"running" if running else "finished"}' + (f'; last: {last[-1]}' if last else '')
             )

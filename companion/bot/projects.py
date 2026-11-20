@@ -22,16 +22,19 @@ a draft is the owner's paperwork and goes to the default project."""
 
 import os
 import re
+from typing import Literal, NotRequired, TypedDict, get_args
 
 from sqlalchemy import select
 
 from . import t3db
 from .config import NAME, default_project
+from .shapes import Route, RouteBy
 from .t3db import Project, Thread
 
-KINDS = ('work', 'home', 'none')
-BY = ('repo', 'named', 'channel', 'thread', 'topic', 'default', 'checkout', 'earlier')
-PURPOSES = {
+Kind = Literal['work', 'home', 'none']
+KINDS: tuple[Kind, ...] = get_args(Kind)
+BY: tuple[RouteBy, ...] = get_args(RouteBy)
+PURPOSES: dict[str, tuple[RouteBy, ...]] = {
     'task': ('named', 'channel', 'thread', 'topic', 'default'),
     'ask': ('named', 'channel', 'thread', 'topic', 'default'),
     'review': ('repo', 'checkout'),
@@ -47,21 +50,30 @@ errors test tests daily audit review simplify simplification service services dr
 STOP = set(STOP_WORDS.split())
 
 
-def kind_of(title, root):
+class Profile(TypedDict):
+    """A work project as _profiles reads it: the names that identify it and its distinctive words."""
+
+    title: str
+    root: str
+    names: set[str]
+    vocab: NotRequired[set[str]]
+
+
+def kind_of(title: str | None, root: str | None) -> Kind:
     root = (root or '').rstrip('/')
     if not root or root == '/workspace' or title in ('No project', 'workspace'):
         return 'none'
     return 'home' if (root + '/').startswith(HOMES) else 'work'
 
 
-def made(project, by, why):
+def made(project: str, by: RouteBy, why: str) -> Route:
     """A route: where the chat starts and why; `by` is one of BY."""
     if by not in BY:
         raise ValueError(f'unknown route {by!r}')
     return {'project': project, 'by': by, 'why': why}
 
 
-def route(purpose, ask='', context='', channel='', repo=''):
+def route(purpose: str, ask: str = '', context: str = '', channel: str = '', repo: str = '') -> Route:
     """The route for a new chat (made()); never raises for a known purpose and never lands outside a work project."""
     if purpose not in PURPOSES:
         raise ValueError(f'unknown purpose {purpose!r}')
@@ -82,7 +94,7 @@ def route(purpose, ask='', context='', channel='', repo=''):
     return made(home, 'default', f'T3 unreadable ({failed})' if failed else 'nothing named a project')
 
 
-def _default(profiles):
+def _default(profiles: dict[str, Profile]) -> str:
     """The default project setting, unless it is not a work project; then the shallowest work project."""
     want = default_project().rstrip('/')
     if kind_of('', want) == 'work':
@@ -91,9 +103,9 @@ def _default(profiles):
     return roots[0] if roots else want
 
 
-def _words(text):
+def _words(text: str) -> set[str]:
     """Topic words: 4+ letters, plurals folded, stop words dropped."""
-    out = set()
+    out: set[str] = set()
     for word in re.findall(r'(?<![\w-])[a-z]{4,}(?![\w-])', text.lower()):
         stem = word[:-1] if len(word) > 4 and word.endswith('s') and not word.endswith('ss') else word
         if stem not in STOP:
@@ -101,42 +113,43 @@ def _words(text):
     return out
 
 
-def _profiles():
+def _profiles() -> dict[str, Profile]:
     """Per work project: identifying names/paths/repos and distinctive words from its chat titles."""
     with t3db.session() as s:
         projs = {
-            pid: (title, root)
+            pid: (title or '', root or '')  # a work project has a root; a missing title reads as ''
             for pid, title, root in s.execute(
                 select(Project.project_id, Project.title, Project.workspace_root).where(Project.deleted_at.is_(None))
             )
             if kind_of(title, root) == 'work'
         }
-        titles, repos = {}, {}
+        titles: dict[str, list[str]] = {}
+        repos: dict[str, set[str]] = {}
         for pid, title, pl in s.execute(
             select(Thread.project_id, Thread.title, Thread.payload)
             .where(Thread.deleted_at.is_(None))
             .order_by(Thread.created_at.desc())
             .limit(1500)
         ):
-            if pid not in projs:
+            if pid is None or pid not in projs:
                 continue
-            titles.setdefault(pid, []).append(title)
+            titles.setdefault(pid, []).append(title or '')
             for pr in pl.get('pullRequests') or []:
                 if pr.get('repository'):
                     repos.setdefault(pid, set()).add(pr['repository'].lower())
-    counts = {pid: {} for pid in projs}
+    counts: dict[str, dict[str, int]] = {pid: {} for pid in projs}
     total = sum(len(ts) for ts in titles.values()) or 1
     for pid, ts in titles.items():
         for t in ts:
             for w in _words(t):
                 counts[pid][w] = counts[pid].get(w, 0) + 1
-    repo_owner = {}  # repo -> its shallowest project
+    repo_owner: dict[str, str] = {}  # repo -> its shallowest project
     for pid, rs in repos.items():
         for r in rs:
             if r not in repo_owner or len(projs[pid][1]) < len(projs[repo_owner[r]][1]):
                 repo_owner[r] = pid
     me = NAME.lower()
-    out = {}
+    out: dict[str, Profile] = {}
     for pid, (title, root) in projs.items():
         base = os.path.basename(root).lower()
         rel = os.path.relpath(root, '/workspace').lower()
@@ -163,7 +176,7 @@ def _profiles():
     return out
 
 
-def _for_repo(profiles, repo):
+def _for_repo(profiles: dict[str, Profile], repo: str) -> str | None:
     """The work project for GitHub repo owner/name, or None."""
     if not repo:
         return None
@@ -174,15 +187,15 @@ def _for_repo(profiles, repo):
     return found[0]['root'] if found else None
 
 
-def hit(name, text):
+def hit(name: str, text: str) -> bool:
     return re.search(r'(?<![\w-])' + re.escape(name) + r'(?![\w-])', text) is not None
 
 
-def _scored(profiles, ask, context, channel):
+def _scored(profiles: dict[str, Profile], ask: str, context: str, channel: str) -> Route | None:
     """The best-evidenced work project as a route, or None when nothing points anywhere."""
     ask_l, ctx_l = ask.lower(), context.lower()
     chan = ' ' + re.sub(r'[_\-.]+', ' ', channel.lower()) + ' '
-    scores = []
+    scores: list[tuple[int, int, str, RouteBy, str]] = []
     for p in profiles.values():
         named = [n for n in p['names'] if hit(n, ask_l)]
         in_channel = [n for n in p['names'] if '/' not in n and hit(n.replace('-', ' '), chan)]
@@ -195,6 +208,7 @@ def _scored(profiles, ask, context, channel):
             + (min(len(topical), 6) if len(topical) >= 2 else 0)
         )
         if score:
+            by: RouteBy
             if named:
                 by, why = 'named', f'the ask names "{named[0]}"'
             elif in_channel:

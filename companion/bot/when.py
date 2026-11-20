@@ -21,7 +21,7 @@ FORMS = {
 RULE = 'Write every time for people on a 12-hour clock with AM or PM (2:30 PM), never 24-hour (14:30).'
 
 
-def say(ts=None, form='time'):
+def say(ts: float | None = None, form: str = 'time') -> str:
     """`ts` (epoch; None: now) in the named form."""
     ts = time.time() if ts is None else float(ts)
     if form == 'near':

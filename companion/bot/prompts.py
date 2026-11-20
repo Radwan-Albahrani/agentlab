@@ -1,30 +1,34 @@
 """Every message the companion writes for the agent or the triage model."""
 
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from typing import Any
 
 from . import when
 from .config import AGENT_FILES, NAME, RECENT, RECENT_DM, org, work_tools
 
+Channels = Sequence[Mapping[str, Any]]  # slack.channels(): {id, name, member}
 
-def outbox(folder):
+
+def outbox(folder: str) -> str:
     return f'{AGENT_FILES}/outbox/{folder}'
 
 
 def task(
-    ask,
-    owner,
-    where,
-    lines,
-    files,
-    folder,
-    channel,
-    channels,
-    open_polls,
-    guest=None,
-    fresh=False,
-    approved=False,
-    history=(),
-):
+    ask: str,
+    owner: str,
+    where: str,
+    lines: Sequence[str],
+    files: Sequence[str],
+    folder: str,
+    channel: str,
+    channels: Channels,
+    open_polls: str,
+    guest: str | None = None,
+    fresh: bool = False,
+    approved: bool = False,
+    history: Sequence[str] = (),
+) -> str:
     """A task given in Slack by the owner, or by a `guest` they gave access (channel: '' for a DM).
     fresh: asked in a new message, not in a thread, so `lines` are only what came just before it.
     approved: the owner approved this one ask (the requests channel), so follow-ups stay within it.
@@ -69,7 +73,7 @@ def task(
     )
 
 
-def colleague_rules(box, guest, owner, channels, approved=False):
+def colleague_rules(box: str, guest: str, owner: str, channels: Channels, approved: bool = False) -> str:
     """A colleague's task: two audiences, each told on purpose (cases.py): the colleague hears only what the agent
     sends them; its final message is the owner's."""
     rules = (
@@ -93,7 +97,7 @@ def colleague_rules(box, guest, owner, channels, approved=False):
     return rules + (within_approval(guest, owner) if approved else '')
 
 
-def within_approval(guest, owner):
+def within_approval(guest: str, owner: str) -> str:
     """An approved ask: follow-ups that leave it, or want sensitive information, go back to the owner first."""
     return (
         f'\n{owner} approved this request as {guest} asked it above, and only that. Small refinements are fine. A'
@@ -102,26 +106,26 @@ def within_approval(guest, owner):
     )
 
 
-def follow_up_reminder(owner):
+def follow_up_reminder(owner: str) -> str:
     return (
         f'\n\n(Reminder: if this goes beyond what {owner} approved or asks for sensitive information, send an'
         f' "approval" to {owner} first.)'
     )
 
 
-def colleague_turn(guest, owner):
+def colleague_turn(guest: str, owner: str) -> str:
     """Tacked onto a colleague's follow-up: who hears what."""
     return f'\n\n({guest} hears only what you send them with "to": "{guest}"; your final message goes to {owner}.)'
 
 
-def owner_in_thread(owner, guest):
+def owner_in_thread(owner: str, guest: str) -> str:
     """Tacked onto the owner's message written in a colleague's thread: the answer is public there."""
     return (
         f'\n\n({owner} wrote this in the thread with {guest}; your final message is posted there, so {guest} reads it.)'
     )
 
 
-def side_answer(question, record):
+def side_answer(question: str, record: str) -> str:
     """For the quick model: a side question about a chat, answered from its record only."""
     return (
         "Someone asked about an AI agent's ongoing work. Answer from the record below only, in at most two short"
@@ -132,7 +136,7 @@ def side_answer(question, record):
     )
 
 
-def owner_private(owner, guest, box, said, pending=''):
+def owner_private(owner: str, guest: str, box: str, said: str, pending: str = '') -> str:
     """The owner's message in a case thread, for the agent."""
     hold = f' Your approval request ({pending}) still waits for their Approve or Reject: do not make that change.'
     return (
@@ -142,7 +146,7 @@ def owner_private(owner, guest, box, said, pending=''):
     )
 
 
-def sending(box, owner, recipients, more=''):
+def sending(box: str, owner: str, recipients: Iterable[str], more: str = '') -> str:
     """The outbox (outbox.py): one file, typed items, an explicit "to", and receipts to check."""
     return (
         f'\n\n## Sending\nYou never post, send, email or upload anything yourself: {NAME} does, from {box}/send.json'
@@ -158,7 +162,7 @@ def sending(box, owner, recipients, more=''):
     )
 
 
-def elsewhere(owner, channels, rule):
+def elsewhere(owner: str, channels: Channels, rule: str) -> list[str]:
     known = ', '.join(f'#{c["name"]}' for c in channels) or f'none: {NAME} has to be invited first'
     return [
         f'"#<channel>": a new message there (channels {NAME} is in: {known})',
@@ -168,7 +172,7 @@ def elsewhere(owner, channels, rule):
     ]
 
 
-def polls_and_edits(owner, open_polls, sent=''):
+def polls_and_edits(owner: str, open_polls: str, sent: str = '') -> str:
     now = datetime.now().astimezone().isoformat(timespec='minutes')
     return (
         '\n- A poll: a message to a channel with "poll": {"question": "...", "options": ["<2 to 10 short labels>"],'
@@ -180,7 +184,7 @@ def polls_and_edits(owner, open_polls, sent=''):
     )
 
 
-def editing(owner, sent=''):
+def editing(owner: str, sent: str = '') -> str:
     """How to change a message the agent sent (posts._apply_edit)."""
     return (
         (f'\nMessages you sent so far (id: where: start):\n{sent}' if sent else '')
@@ -190,7 +194,7 @@ def editing(owner, sent=''):
     )
 
 
-def poll_changes(owner, open_polls):
+def poll_changes(owner: str, open_polls: str) -> str:
     """How to change an open poll; nothing when none is open."""
     if not open_polls:
         return ''
@@ -204,7 +208,7 @@ def poll_changes(owner, open_polls):
     )
 
 
-def approvals(owner, who, then):
+def approvals(owner: str, who: str, then: str) -> str:
     return (
         f"\n- Needs {owner}'s OK first: permissions or access, money, deleting anything, changing settings or data in a"
         ' live service or account, sharing anything confidential (contracts, HR, salaries, customer data,'
@@ -217,7 +221,7 @@ def approvals(owner, who, then):
     )
 
 
-def ask(text, owner, channel, channels, folder, review, open_polls):
+def ask(text: str, owner: str, channel: str, channels: Channels, folder: str, review: bool, open_polls: str) -> str:
     """An ask the owner typed on the hub."""
     picked = (
         f'It goes to channel {channel} ("to": "{channel}").'
@@ -237,7 +241,7 @@ def ask(text, owner, channel, channels, folder, review, open_polls):
     )
 
 
-def errand(who, how, owner, asked, lines, files, folder):
+def errand(who: str, how: str, owner: str, asked: str, lines: Sequence[str], files: Sequence[str], folder: str) -> str:
     """An errand: someone asked the owner for something; the agent handles it as them."""
     return (
         f'{who} {how} in Slack, asking:\n\n{asked}\n\n---\nThe conversation around it:\n'
@@ -277,13 +281,13 @@ TOOL_CHOICE = (
 )
 
 
-def work_accounts(owner):
+def work_accounts(owner: str) -> str:
     """The owner's work tools (work-mail, work-secret), for the owner's own tasks and errands."""
     tools = work_tools()
     return f"\n\nIf this needs something from {owner}'s work accounts:\n{tools}" if tools else ''
 
 
-def credentials(person):
+def credentials(person: str) -> str:
     """The one way a password leaves: a new account's first-login password, as a credential item."""
     return (
         '\n\nNever put a password or code in a message or file, with one exception: a temporary first-login password'
@@ -294,7 +298,7 @@ def credentials(person):
     )
 
 
-def triage(owner, who, convo, texts):
+def triage(owner: str, who: str, convo: str, texts: Iterable[str]) -> str:
     """Team-mode triage of a colleague's message to the owner."""
     return (
         f'You triage Slack messages for {owner} (works at {org()}) and their assistant. The assistant can use'
@@ -317,7 +321,7 @@ def triage(owner, who, convo, texts):
     )
 
 
-def revise_draft(folder, key, owner, feedback, next_revision, video=False):
+def revise_draft(folder: str, key: str, owner: str, feedback: str, next_revision: int, video: bool = False) -> str:
     if video:
         return (
             f'Revise the product update draft in {folder}/{key}/ (update.md, the attachments (screenshots or video) '

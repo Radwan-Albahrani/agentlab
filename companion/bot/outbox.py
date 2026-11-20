@@ -17,9 +17,11 @@ import json
 import os
 import re
 import time
+from typing import Any
 
 from . import cases, errands, gate, ledger, machine, polls, posts, reviews, slack
 from .config import FILES, OWNER, log
+from .shapes import Item, Task
 from .state import review_of
 
 OUTBOX = os.path.join(FILES, 'outbox')
@@ -27,7 +29,7 @@ TYPES = ('message', 'edit', 'approval', 'withdraw', 'credential', 'poll_change')
 CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}')
 
 
-def _take(box, name):
+def _take(box: str, name: str) -> Any:
     """The parsed JSON file, moved aside so it is taken once; None if missing or still being written."""
     path = os.path.join(box, name)
     if not os.path.isfile(path):
@@ -44,11 +46,11 @@ def _take(box, name):
     return data
 
 
-def tick(task):
+def tick(task: Task) -> None:
     if not task.get('outbox'):
         return
     box = os.path.join(OUTBOX, task['outbox'])
-    raw = []
+    raw: list[Any] = []
     m = _take(box, 'send.json')
     if m is not None:
         raw += m if isinstance(m, list) else [m]
@@ -59,7 +61,7 @@ def tick(task):
         reviews.publish(task, box, r)
 
 
-def resolve(task, to):
+def resolve(task: Task, to: object) -> tuple[str, str, str]:
     """(target, label, problem) for a message's "to"; the target is one of the ledger's `to` values."""
     p = machine.party(task)
     if isinstance(to, list):
@@ -84,7 +86,7 @@ def resolve(task, to):
     return 'people', t, ''
 
 
-def take(task, box, raw):
+def take(task: Task, box: str, raw: object) -> None:
     """One item from the agent: checked, recorded, acted on."""
     if not isinstance(raw, dict):
         ledger.add(task, 'message', 'refused', note='an item must be a JSON object')
@@ -107,16 +109,17 @@ def take(task, box, raw):
         return
     text = str(raw.get('text') or '').strip()[:3000]
     files = [os.path.basename(str(f)) for f in raw.get('files') or [] if str(f).strip()]
-    common = {'text': text, 'files': files}
     if kind == 'message':
         target, label, problem = resolve(task, raw.get('to'))
-        it = ledger.add(task, 'message', to=target, label=label, poll=raw.get('poll'), raw_to=raw.get('to'), **common)
+        it = ledger.add(
+            task, 'message', to=target, label=label, poll=raw.get('poll'), raw_to=raw.get('to'), text=text, files=files
+        )
         if problem or (not text and not files and not raw.get('poll')):
             ledger.move(task, it, 'refused', note=problem or 'it has no text and no files')
             return
         _message(task, box, it)
     elif kind == 'edit':
-        it = ledger.add(task, 'edit', ref=str(raw.get('id') or '').strip().lstrip('#'), **common)
+        it = ledger.add(task, 'edit', ref=str(raw.get('id') or '').strip().lstrip('#'), text=text, files=files)
         posts.offer(task, it)
     elif kind == 'approval':
         it = ledger.add(
@@ -125,19 +128,20 @@ def take(task, box, raw):
             action=str(raw.get('action') or '').strip()[:500],
             details=str(raw.get('details') or '').strip()[:3000],
             reply=str(raw.get('reply') or '').strip()[:3000],
-            **common,
+            text=text,
+            files=files,
         )
         if not it['action']:
             ledger.move(task, it, 'refused', note='an approval needs an "action"')
             return
         errands.ask_approval(task, it, box)
     else:
-        it = ledger.add(task, 'poll_change', ref=str(raw.get('poll') or ''), change=raw, **common)
+        it = ledger.add(task, 'poll_change', ref=str(raw.get('poll') or ''), change=raw, text=text, files=files)
         problem = polls.change(raw, task)
         ledger.move(task, it, 'refused' if problem else 'applied', note=problem)
 
 
-def _message(task, box, it):
+def _message(task: Task, box: str, it: Item) -> None:
     ok, refused = gate.files(box, it.get('files') or [])
     to = it['to']
     if to == 'colleague':
