@@ -44,8 +44,9 @@ def _head_md(task, ask, where):
     )
 
 
-def open_case(task, ask, where, card=None):
-    """The owner's case for a colleague's new task: a head message in their DM, or the requests channel's card."""
+def open_case(task, ask, where, card=None, earlier=()):
+    """The owner's case for a colleague's new task: a head message in their DM, or the requests channel's card.
+    earlier: the thread's messages before the ask, synced into the case too."""
     dm = slack.dm_owner()
     if card:
         machine.open_case(task, dm, card, 'card')
@@ -56,9 +57,31 @@ def open_case(task, ask, where, card=None):
             log('case head not posted', key_of(task))
             return
         machine.open_case(task, dm, ts, 'own', md=md)
-    heard(task, machine.party(task)['user'], ask, first=True)
+    _earlier(task, earlier)
+    heard(task, machine.party(task)['user'], ask, first=True, ts=task['trigger_ts'])
     status(task)
     save()
+
+
+def _earlier(task, msgs):
+    """The thread before the case opened, into the case: it is synced whole, not from the tag on."""
+    me, said = slack.bot_user(), []
+    with ledger.muted():
+        for m in msgs:
+            if m.get('user') in (None, me) or m.get('bot_id') or m['ts'] == task['trigger_ts']:
+                continue
+            it = heard(task, m['user'], m.get('text') or '', m.get('files') or (), ts=m['ts'])
+            if it:
+                said.append(f'**{it["label"]}:**\n' + quote(it['text']))
+    if said:
+        note(task, '**Earlier in the thread:**\n' + '\n'.join(said), 'Earlier in the thread')
+
+
+def in_thread(task, ev):
+    """Anyone's message in a case's thread, tagged or not: the case follows the whole thread."""
+    if task.get('case') and ev.get('user') and ev.get('user') != slack.bot_user():
+        heard(task, ev['user'], ev.get('text') or '', ev.get('files') or (), ts=ev['ts'])
+        save()
 
 
 def open_late(task, by, text):
@@ -119,9 +142,12 @@ def at(ch, thread_ts):
     return None
 
 
-def heard(task, by, text, files=(), private=False, first=False):
-    """A message to the companion, into the ledger (and so into the case)."""
-    said = slack.ask(text).strip() or '(files)'
+def heard(task, by, text, files=(), private=False, first=False, ts=None):
+    """A message in the task's thread or to the companion, into the ledger (and so into the case). ts: its Slack ts,
+    so each message is recorded once however it arrives (live, tagged, or with the thread so far)."""
+    if ts and any(i['kind'] == 'in' and i.get('ts') == ts for i in ledger.items(task)):
+        return None
+    said = slack.ask(text).strip() or ('(files)' if files else f'(tagged {NAME})')
     it = ledger.add(
         task,
         'in',
@@ -131,6 +157,7 @@ def heard(task, by, text, files=(), private=False, first=False):
         files=[os.path.basename(str(f.get('name') if isinstance(f, dict) else f)) for f in files or ()],
         private=private or None,
         first=first or None,
+        ts=ts,
     )
     if not private:
         COMP.event('received', f'{slack.name(by)} wrote', task=key_of(task), detail=said)
