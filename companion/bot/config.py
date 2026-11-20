@@ -2,18 +2,19 @@
 
 import os
 import time
+from typing import Any
 
 from companion import Companion
 
 SECRETS = os.environ.get('COMPANION_SECRETS', '/secrets')
 
 
-def secret(name):
+def secret(name: str) -> str:
     with open(os.path.join(SECRETS, name)) as f:
         return f.read().strip()
 
 
-def optional_secret(name):
+def optional_secret(name: str) -> str:
     """The secret, or '' when the file is missing."""
     try:
         return secret(name)
@@ -45,7 +46,7 @@ RECENT_DM = 3 * 86400  # ...and in a DM, one conversation with one person (up to
 DM_LINES = 20
 HISTORY_DAYS = 3  # what the companion did with the asker lately, from its own records
 
-MODES = [
+MODES: list[dict[str, Any]] = [
     {
         'value': 'tag',
         'label': 'Restricted',
@@ -63,7 +64,7 @@ MODES = [
         'help': 'Practice: messages you send yourself play the colleague, and nothing is ever sent to anyone else.',
     },
 ]
-SCHEMA = [
+SCHEMA: list[dict[str, Any]] = [
     {
         'key': 'mode',
         'label': 'Mode',
@@ -175,40 +176,40 @@ SCHEMA = [
 COMP = Companion(ID, AGENT, DATA, SCHEMA)
 
 
-def mode():
+def mode() -> str:
     return COMP.setting('mode')
 
 
-def has_access(user):
+def has_access(user: str | None) -> bool:
     """The owner, or someone they gave access to (not in dry run)."""
     return user == OWNER or (mode() != 'owner' and user in (COMP.setting('access') or []))
 
 
-def auto_retry():
+def auto_retry() -> bool:
     return COMP.setting('auto_retry')
 
 
-def org():
+def org() -> str:
     return (COMP.setting('org') or '').strip() or 'the company'
 
 
-def default_project():
+def default_project() -> str:
     return (COMP.setting('default_project') or '').strip() or '/workspace'
 
 
-def requests_channel():
+def requests_channel() -> str:
     return (COMP.setting('requests_channel') or '').strip()
 
 
-def publish_channel():
+def publish_channel() -> str:
     return (COMP.setting('publish_channel') or '').strip()
 
 
-def evidence_repo():
+def evidence_repo() -> str:
     return (COMP.setting('qa_evidence_repo') or '').strip()
 
 
-def review_slots():
+def review_slots() -> int:
     """How many reviews run at once (hub setting, applies live)."""
     try:
         return max(1, int(COMP.setting('review_slots')))
@@ -216,16 +217,16 @@ def review_slots():
         return 4
 
 
-def slack_for_github(login):
+def slack_for_github(login: str | None) -> str:
     """The Slack user id linked to this GitHub login (case-insensitive), or ''."""
     login = (login or '').casefold()
     return next((p['slack'] for p in COMP.setting('github_people') if login and p['github'].casefold() == login), '')
 
 
-def work_tools():
+def work_tools() -> str:
     """Prompt text describing the owner's work tools, from the optional secret work-tools.md."""
     return optional_secret('work-tools.md')
 
 
-def log(*a):
+def log(*a: object) -> None:
     print(time.strftime('%H:%M:%S'), *a, flush=True)

@@ -6,10 +6,17 @@ import json
 import os
 import re
 import time
+from collections.abc import Iterable
+from typing import Any
+
+from slack_bolt import Ack
+from slack_sdk import WebClient
 
 from . import projects, prompts, slack, t3
 from .config import AGENT_FILES, COMP, FILES, NAME, OWNER, log, publish_channel
 from .fsm import DRAFT
+from .shapes import Draft
+from .slack import Json
 from .state import lock, save, state
 from .text import first_sentence, to_slack
 
@@ -24,7 +31,7 @@ UPLOAD_TIMEOUT = 300  # seconds per upload call when a video is attached
 SHARE_TRIES, SHARE_EVERY = 30, 2  # files.info polls for a video post's message, ~60 s: Slack processes videos first
 
 
-def _files(d, meta):
+def _files(d: str, meta: dict[str, Any]) -> tuple[str, list[str]]:
     """update.md without image lines, and the attachments: ready.json's "images" as given, else any videos then images."""
     videos = sorted(f for f in os.listdir(d) if f.lower().endswith(VIDEOS))
     imgs = meta.get('images') or videos + sorted(
@@ -36,11 +43,11 @@ def _files(d, meta):
     return text, [os.path.join(d, f) for f in imgs if os.path.isfile(os.path.join(d, f))]
 
 
-def has_video(paths):
+def has_video(paths: Iterable[str]) -> bool:
     return any(p.lower().endswith(VIDEOS) for p in paths)
 
 
-def _too_big(paths):
+def _too_big(paths: Iterable[str]) -> str:
     """Why these can't be uploaded, or ''."""
     for p in paths:
         mb = os.path.getsize(p) / 2**20
@@ -49,14 +56,14 @@ def _too_big(paths):
     return ''
 
 
-def _uploader():
+def _uploader() -> WebClient:
     """The bot client with a long timeout, for uploads that carry a video."""
     c = copy.copy(slack.app.client)
     c.timeout = UPLOAD_TIMEOUT
     return c
 
 
-def _send(channel, text_md, images, thread_ts=None):
+def _send(channel: str, text_md: str, images: list[str], thread_ts: str | None = None) -> dict[str, Any]:
     """Post text plus screenshots (or a video) as one message; returns where it landed."""
     if images:
         if problem := _too_big(images):
@@ -69,10 +76,11 @@ def _send(channel, text_md, images, thread_ts=None):
             initial_comment=to_slack(text_md, 3900),
             file_uploads=[{'file': p, 'filename': os.path.basename(p)} for p in images],
         )
+        ts: str | None
         if thread_ts:
             ts = None
         elif video:  # a video's message shows up only once Slack has processed it
-            ids = [f['id'] for f in ((r or {}).get('files') or []) if f.get('id')]
+            ids = [f['id'] for f in ((r.get('files') if r else None) or []) if f.get('id')]
             ts = _shared_ts(channel, ids) or _find_upload(channel, since)
         else:
             ts = _find_upload(channel, since)
@@ -80,7 +88,7 @@ def _send(channel, text_md, images, thread_ts=None):
     return {'channel': channel, 'ts': slack.post(channel, thread_ts, first_sentence(text_md, 300), md=text_md)}
 
 
-def _shared_ts(channel, file_ids, tries=SHARE_TRIES):
+def _shared_ts(channel: str, file_ids: list[str], tries: int = SHARE_TRIES) -> str | None:
     """The ts of the message an upload became, from files.info `shares`, filled in once Slack has the file ready."""
     for i in range(tries if file_ids else 0):
         for fid in file_ids:
@@ -98,10 +106,10 @@ def _shared_ts(channel, file_ids, tries=SHARE_TRIES):
     return None
 
 
-_refused = {}  # draft key -> the ready.json mtime already reported as too big to preview
+_refused: dict[str, float] = {}  # draft key -> the ready.json mtime already reported as too big to preview
 
 
-def _find_upload(channel, since, tries=5):
+def _find_upload(channel: str, since: float, tries: int = 5) -> str | None:
     """The ts of the bot's newest message with files since `since` (uploads don't return it)."""
     for i in range(tries):
         msgs = slack.app.client.conversations_history(channel=channel, oldest=f'{since:.6f}', limit=50)['messages']
@@ -113,11 +121,12 @@ def _find_upload(channel, since, tries=5):
     return None
 
 
-def _edit(st, text_md):
+def _edit(st: Draft, text_md: str) -> str:
     """Rewrite the posted message in place."""
-    p = st.get('posted') or {'channel': publish_channel(), 'ts': None, 'files': True}
+    p: dict[str, Any] = st.get('posted') or {'channel': publish_channel(), 'ts': None, 'files': True}
     if not p['ts']:
-        p['ts'] = _find_upload(p['channel'], float(st['thread']), tries=1)
+        thread = st['thread']
+        p['ts'] = _find_upload(p['channel'], float(thread), tries=1) if thread else None
         if not p['ts']:
             raise RuntimeError(f"couldn't find the posted message in <#{p['channel']}>")
         st['posted'] = p
@@ -128,7 +137,7 @@ def _edit(st, text_md):
     return p['channel']
 
 
-def _buttons(key, rev, st, video=False):
+def _buttons(key: str, rev: int, st: Draft, video: bool = False) -> list[Json]:
     if DRAFT.is_(st, 'editing'):
         ch = (st.get('posted') or {}).get('channel') or publish_channel()
         head, go, stop = f'*Edit of the post in <#{ch}>* · revision {rev}', 'Update the post', 'Keep it as it is'
@@ -144,7 +153,7 @@ def _buttons(key, rev, st, video=False):
     ]
 
 
-def tick():
+def tick() -> None:
     if not os.path.isdir(DRAFTS):
         return
     for key in sorted(os.listdir(DRAFTS)):
@@ -193,10 +202,10 @@ def tick():
         else:
             slack.post(dm, st['thread'], 'Revised draft', note=f':pencil2: Revision {rev}')
         _send(dm, text_md, images, st['thread'])
-        if st.get('buttons'):
+        if old := st.get('buttons'):
             slack.update(
                 dm,
-                st['buttons'],
+                old,
                 'Replaced by a newer revision',
                 note=f'Revision {st["revision"]}: replaced by revision {rev}.',
             )
@@ -207,19 +216,19 @@ def tick():
             blocks=_buttons(key, rev, st, has_video(images)),
             reply_broadcast=bool(st['revision']),
         )
-        st.update(revision=rev, buttons=r['ts'], mtime=mtime)
+        st.update({'revision': rev, 'buttons': r['ts'], 'mtime': mtime})
         log('draft preview', key, 'revision', rev)
         save()
 
 
-def for_thread(ch, tts):
+def for_thread(ch: str, tts: str) -> tuple[str | None, Draft | None]:
     for key, st in state['drafts'].items():
         if st['dm'] == ch and st['thread'] == tts:
             return key, st
     return None, None
 
 
-def _draft_has_video(key):
+def _draft_has_video(key: str) -> bool:
     d = os.path.join(DRAFTS, key)
     try:
         with open(os.path.join(d, 'ready.json')) as f:
@@ -228,7 +237,7 @@ def _draft_has_video(key):
         return False
 
 
-def revise(key, st, text, ts):
+def revise(key: str, st: Draft, text: str, ts: str) -> None:
     """Owner feedback on a draft -> a T3 chat that rewrites the draft files."""
     if DRAFT.is_(st, 'discarded'):
         slack.post(st['dm'], st['thread'], 'Discarded', note='This draft was discarded, so there is nothing to change.')
@@ -251,7 +260,7 @@ def revise(key, st, text, ts):
         slack.post(st['dm'], st['thread'], f":warning: Couldn't start the revision: {err}")
 
 
-def _finish(ack, body, posting):
+def _finish(ack: Ack, body: dict[str, Any], posting: bool) -> None:
     ack()
     if body['user']['id'] != OWNER:
         return
@@ -304,7 +313,7 @@ def _finish(ack, body, posting):
         save()
 
 
-def _finish_edit(st, key, btn, updating):
+def _finish_edit(st: Draft, key: str, btn: str, updating: bool) -> None:
     if not updating:
         DRAFT.move(st, 'posted')
         slack.update(

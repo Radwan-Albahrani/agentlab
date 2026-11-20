@@ -1,6 +1,7 @@
 import pytest
-from bot import t3
+from bot import t3, t3db
 from bot.t3db import Message, Request, Run, Thread, TurnItem
+from sqlalchemy import event
 
 LEAD = 'mcp:lead'
 QA = 'thread:provider:claudeAgent:native-thread:provider-thread%3Apending%253Aordinal%253A1%3Aadd228bb765d441b2'
@@ -95,3 +96,23 @@ def test_open_questions_and_errors_are_read_from_their_rows(chat):
     chat.get(Request, 'q1').payload = {'responseCapability': {'type': 'message'}}  # answered by any message
     chat.commit()
     assert not t3.waiting_question(LEAD)
+
+
+def test_reading_a_chat_costs_the_same_queries_however_many_workers_it_has(chat):
+    def queries(fn):
+        n = []
+        listener = lambda *a: n.append(1)  # noqa: E731
+        event.listen(t3db.engine(), 'before_cursor_execute', listener)
+        try:
+            fn(LEAD)
+        finally:
+            event.remove(t3db.engine(), 'before_cursor_execute', listener)
+        return len(n)
+
+    few = queries(lambda t: t3.snapshot(t, '9999')), queries(t3.digest)
+    chat.add_all(
+        Thread(thread_id=f'w{n}', title=f'Worker {n}', updated_at='2026-11-15T22:50:00Z', payload=PARENT)
+        for n in range(4)
+    )
+    chat.commit()
+    assert (queries(lambda t: t3.snapshot(t, '9999')), queries(t3.digest)) == few  # no query per worker

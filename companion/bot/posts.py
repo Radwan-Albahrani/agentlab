@@ -2,28 +2,31 @@
 owner unless they go to the task's own channel or review is off. Each preview card belongs to one ledger item."""
 
 from datetime import datetime
+from typing import Any
 
 from . import cases, errands, ledger, machine, polls, slack
 from .config import COMP, NAME, log
+from .shapes import Item, Task
 from .state import key_of
 from .text import first_sentence, quote
 from .when import say
 
+Post = dict[str, Any]  # a message, poll or edit as the agent or the ledger gives it (Item.post)
 MAX_OPTIONS = 10
 MAX_PEOPLE = 10
 
 
-def in_channel(task):
+def in_channel(task: Task) -> bool:
     return not task['channel'].startswith('D')
 
 
-def _direct(p):
+def _direct(p: Post) -> tuple[Post | None, str]:
     names = p['to'] if isinstance(p['to'], list) else [p['to']]
     if p.get('poll'):
         return None, 'a poll goes to a channel, not to DMs'
     if len(names) > MAX_PEOPLE:
         return None, f'that is more than {MAX_PEOPLE} people; post it in a channel instead'
-    ids = []
+    ids: list[str | None] = []
     for n in names:
         uid, problem = slack.find_user(str(n))
         if problem:
@@ -33,7 +36,7 @@ def _direct(p):
     return ({'to': list(dict.fromkeys(ids)), 'text': text}, '') if text else (None, 'there is nothing to send')
 
 
-def where(post, md=False):
+def where(post: Post, md: bool = False) -> str:
     """'#general', or 'Ali by DM' ('<@U…> by DM' in markdown)."""
     if post.get('edit'):
         return post['where']
@@ -45,7 +48,7 @@ def where(post, md=False):
     return f'<#{post["channel"]}>' if md else '#' + (slack.channel_name(post['channel']) or post['channel'])
 
 
-def parse(p, default=''):
+def parse(p: Post, default: str = '') -> tuple[Post | None, str]:
     """(post, problem): a clean post, or why it can't be used; no channel means `default`."""
     if p.get('to'):
         return _direct(p)
@@ -57,7 +60,7 @@ def parse(p, default=''):
         return None, 'it names no channel'
     if ch not in {c['id'] for c in known if c['member']}:
         return None, f'I am not in <#{ch}>. Invite me there with `/invite @{NAME}`, then reply here to try again'
-    post = {'channel': ch, 'text': str(p.get('text') or '').strip()[:3000]}
+    post: Post = {'channel': ch, 'text': str(p.get('text') or '').strip()[:3000]}
     if p.get('poll'):
         poll, problem = _poll(p['poll'])
         if problem:
@@ -68,7 +71,7 @@ def parse(p, default=''):
     return post, ''
 
 
-def _poll(p):
+def _poll(p: Post) -> tuple[Post | None, str]:
     question = str(p.get('question') or '').strip()[:300]
     options = list(dict.fromkeys(str(o).strip()[:75] for o in p.get('options') or [] if str(o).strip()))
     if not question or not 2 <= len(options) <= MAX_OPTIONS:
@@ -82,7 +85,7 @@ def _poll(p):
     return {'question': question, 'options': options, 'closes': closes, 'multiple': bool(p.get('multiple'))}, ''
 
 
-def _target(task, it):
+def _target(task: Task, it: Item) -> tuple[Post | None, str]:
     """(post, problem) for a ledger message to a channel or people, or an edit."""
     if it['kind'] == 'edit':
         return _edit(task, it)
@@ -97,16 +100,16 @@ def _target(task, it):
     return parse({'channel': ch, 'text': it['text'], 'poll': it.get('poll')})
 
 
-def _sent_messages(task):
+def _sent_messages(task: Task) -> dict[str, Post]:
     """{id: sent record}: ledger messages that went to a channel or people."""
-    out = {}
+    out: dict[str, Post] = {}
     for i in ledger.items(task):
         if i['kind'] == 'message' and i['state'] == 'sent' and i.get('msgs'):
             out[i['id']] = {'id': i['id'], 'where': i['where'], 'msgs': i['msgs'], 'text': i['text']}
     return out
 
 
-def _edit(task, it):
+def _edit(task: Task, it: Item) -> tuple[Post | None, str]:
     sent = _sent_messages(task)
     m = sent.get(it.get('ref') or '')
     if not m:
@@ -117,14 +120,14 @@ def _edit(task, it):
     return {'edit': m['id'], 'where': m['where'], 'msgs': m['msgs'], 'channel': m['msgs'][0][0], 'text': it['text']}, ''
 
 
-def sent_list(task):
+def sent_list(task: Task) -> str:
     """The messages this task sent, for the agent to edit: '- 3: in #general: "Post-mortem is up…"'."""
     return '\n'.join(
         f'- {m["id"]}: {m["where"]}: "{first_sentence(m["text"], 80)}"' for m in _sent_messages(task).values()
     )
 
 
-def preview_md(post):
+def preview_md(post: Post) -> str:
     if post.get('edit'):
         return f'**Edit your message {post["where"]} to:**\n' + quote(post['text'])
     md = f'**To {where(post, md=True)}:**' + ('\n' + quote(post['text']) if post['text'] else '')
@@ -133,11 +136,11 @@ def preview_md(post):
     return md
 
 
-def offer(task, it):
+def offer(task: Task, it: Item) -> None:
     """A ledger message for a channel or people, or an edit: refused, sent at once (this channel, or review off), or a
     preview card for the owner (awaiting_owner)."""
     post, problem = _target(task, it)
-    if problem:
+    if problem or post is None:
         ledger.move(task, it, 'refused', note=problem)
         return
     it['post'] = post
@@ -156,7 +159,7 @@ def offer(task, it):
         thread_ts=at_thread,
         text='Edit this?' if edit else 'Post this?',
         blocks=[
-            *slack.blocks(md, 'Nothing has been changed yet.' if edit else 'Nothing has been posted yet.'),
+            *(slack.blocks(md, 'Nothing has been changed yet.' if edit else 'Nothing has been posted yet.') or []),
             slack.buttons(
                 (
                     'post_send',
@@ -178,7 +181,7 @@ def offer(task, it):
     COMP.event('approval', f'Asked you to check {what}', task=key_of(task))
 
 
-def decide(task, k, send_it, card):
+def decide(task: Task, k: str, send_it: bool, card: str) -> None:
     """The owner's Post / Don't on the preview `card`; a card already decided decides nothing."""
     it = ledger.on_card(task, card)
     if not it or it['state'] != 'awaiting_owner':
@@ -198,7 +201,7 @@ def decide(task, k, send_it, card):
         COMP.event('skipped', 'You chose not to post it', task=k)
 
 
-def send(task, it):
+def send(task: Task, it: Item) -> None:
     """An approved post or edit, out to Slack: sent or failed."""
     post = it['post']
     if post.get('edit'):
@@ -206,7 +209,7 @@ def send(task, it):
         return
     k = key_of(task)
     dest = where(post)
-    at = []
+    at: list[list[str]] = []
     try:
         if post.get('poll'):
             poll = polls.start(post, k)
@@ -237,8 +240,12 @@ def send(task, it):
             thread_ts=dm_thread,
             text=f'Poll in {dest}',
             blocks=[
-                *slack.blocks(
-                    None, f':bar_chart: {post["poll"]["question"]} · in {dest}' + (f' · <{link}|open>' if link else '')
+                *(
+                    slack.blocks(
+                        None,
+                        f':bar_chart: {post["poll"]["question"]} · in {dest}' + (f' · <{link}|open>' if link else ''),
+                    )
+                    or []
                 ),
                 slack.buttons(('poll_close', 'Close the poll now', task['poll'], None)),
             ],
@@ -252,7 +259,7 @@ def send(task, it):
     )
 
 
-def _apply_edit(task, it, post):
+def _apply_edit(task: Task, it: Item, post: Post) -> None:
     """Change a message this task sent, everywhere it went."""
     try:
         for at, ts in post['msgs']:
@@ -263,7 +270,8 @@ def _apply_edit(task, it, post):
         log('edit failed:', e)
         ledger.move(task, it, 'failed', note=f"couldn't edit the message {post['where']}: {str(e)[:200]}")
         return
-    ledger.get(task, post['edit'])['text'] = post['text']
+    if edited := ledger.get(task, post['edit']):  # _edit found it
+        edited['text'] = post['text']
     at, ts = post['msgs'][0]
     link = None if at.startswith('D') else slack.permalink(at, ts)
     slack.note_only(

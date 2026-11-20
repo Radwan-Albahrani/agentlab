@@ -1,30 +1,57 @@
 """review.json -> GitHub review; findings outside the PR side of a diff hunk go in the body (GitHub refuses them inline)."""
 
+import functools
 import re
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Literal, NotRequired, TypedDict
 
 HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', re.M)
 MAX_FINDINGS = 50
 
 
-def hunks(patch):
+class Finding(TypedDict):
+    """One normalised finding of review.json (clean)."""
+
+    title: str
+    severity: Literal['blocking', 'non-blocking']
+    lane: str
+    path: str
+    line: int | None
+    start_line: int | None
+    body: str
+    suggestion: str | None
+
+
+class Inline(TypedDict):
+    """An inline review comment as GitHub takes it."""
+
+    path: str
+    line: int
+    side: str
+    body: str
+    start_line: NotRequired[int]
+    start_side: NotRequired[str]
+
+
+def hunks(patch: str | None) -> list[tuple[int, int]]:
     """[(first, last)] PR-side line ranges of a file's diff hunks."""
     return [(int(s), int(s) + int(n if n is not None else 1) - 1) for s, n in HUNK.findall(patch or '')]
 
 
-def placeable(files, path, line, start=None):
+def placeable(files: Iterable[Mapping[str, str]], path: str, line: int, start: int | None = None) -> bool:
     ranges = hunks(next((f['patch'] for f in files if f['path'] == path), ''))
     lo = start or line
     return any(a <= lo <= line <= b for a, b in ranges)
 
 
-def header(f):
+def header(f: Finding) -> str:
     mark = '`🔴 blocking`' if f['severity'] == 'blocking' else '`🟠 non-blocking`'
     return f'**{f["title"]}** | {mark} | `§ {f["lane"]}`'
 
 
-def clean(raw):
+def clean(raw: Any) -> list[Finding]:
     """Normalised findings from review.json; malformed ones dropped."""
-    out = []
+    out: list[Finding] = []
     for f in (raw or [])[:MAX_FINDINGS]:
         if not isinstance(f, dict) or not str(f.get('title') or '').strip() or not str(f.get('body') or '').strip():
             continue
@@ -45,29 +72,32 @@ def clean(raw):
     return out
 
 
-def _int(v):
+def _int(v: Any) -> int | None:
     try:
         return int(v) if v not in (None, '') and int(v) > 0 else None
     except (TypeError, ValueError):
         return None
 
 
-def permalink(repo, head, f):
+def permalink(repo: str, head: str, f: Finding) -> str:
     lines = f'#L{f["start_line"]}-L{f["line"]}' if f['start_line'] else f'#L{f["line"]}' if f['line'] else ''
     return f'https://github.com/{repo}/blob/{head}/{f["path"]}{lines}'
 
 
-def build(findings, files, repo, head, extra=''):
+def build(
+    findings: Iterable[Finding], files: Iterable[Mapping[str, str]], repo: str, head: str, extra: str = ''
+) -> tuple[str, list[Inline]]:
     """(review body, inline comments) for a review of `head`."""
-    inline, rest = [], []
+    inline: list[Inline] = []
+    rest: list[str] = []
     for f in findings:
         text = header(f) + '\n\n' + f['body']
         if f['path'] and f['line'] and placeable(files, f['path'], f['line'], f['start_line']):
             if f['suggestion'] is not None:
                 text += '\n\n```suggestion\n' + f['suggestion'].rstrip('\n') + '\n```'
-            c = {'path': f['path'], 'line': f['line'], 'side': 'RIGHT', 'body': text}
+            c: Inline = {'path': f['path'], 'line': f['line'], 'side': 'RIGHT', 'body': text}
             if f['start_line']:
-                c.update(start_line=f['start_line'], start_side='RIGHT')
+                c.update({'start_line': f['start_line'], 'start_side': 'RIGHT'})
             inline.append(c)
         else:
             rest.append(text + (f'\n\n{permalink(repo, head, f)}' if f['path'] else ''))
@@ -75,7 +105,7 @@ def build(findings, files, repo, head, extra=''):
     return '\n\n'.join(x for x in (body, extra) if x), inline
 
 
-def _mention(name):
+def _mention(name: str) -> re.Pattern[str]:
     """A local screenshot reference: ![alt](/tmp/name.png), `/tmp/name.png`, or <img src="name.png" ...>."""
     n = re.escape(name)
     return re.compile(
@@ -85,32 +115,32 @@ def _mention(name):
     )
 
 
-def mentions(text, name):
+def mentions(text: str, name: str) -> bool:
     return bool(_mention(name).search(text))
 
 
-def qa_body(text, urls, missing=()):
+def qa_body(text: str, urls: Mapping[str, str], missing: Iterable[str] = ()) -> str:
     """The QA report with local screenshots replaced by their uploaded urls ({file name: url}), or marked not attached."""
     for name, url in urls.items():
-        text = _mention(name).sub(lambda m, n=name, u=url: _linked(m, n, u), text)
+        text = _mention(name).sub(functools.partial(_linked, name=name, url=url), text)
     for name in missing:
         text = _mention(name).sub(f'_(screenshot not attached: {name})_', text)
     return text
 
 
-def _linked(m, name, url):
+def _linked(m: re.Match[str], name: str, url: str) -> str:
     if m.group('tag'):
         return f'{m.group("tag")}{url}{m.group("rest")}'
     return f'![{m.group("alt") or _alt(name)}]({url})'
 
 
-def _alt(name):
+def _alt(name: str) -> str:
     return re.sub(r'[-_]+', ' ', name.rsplit('.', 1)[0])
 
 
-def closing(findings, limitation, verdict, qa_url):
+def closing(findings: Sequence[Finding], limitation: str, verdict: Any, qa_url: str) -> str:
     """What follows the findings in the review body."""
-    lines = []
+    lines: list[str] = []
     if not findings and limitation:
         lines.append('**No problems found in what was checked, but part of this PR was not checked.**')
     if limitation:
@@ -120,7 +150,7 @@ def closing(findings, limitation, verdict, qa_url):
     return '\n\n'.join(lines)
 
 
-def summary(findings, qa):
+def summary(findings: Sequence[Finding], qa: Mapping[str, Any] | None) -> str:
     """'2 findings (1 blocking) · QA verified' style line."""
     n = len(findings)
     blocking = sum(f['severity'] == 'blocking' for f in findings)
@@ -135,7 +165,7 @@ def summary(findings, qa):
     return out
 
 
-def counts_of(summary):
+def counts_of(summary: str) -> dict[str, int | str] | None:
     """Counts parsed from a legacy summary line ("3 findings (3 blocking) · ..."), or None."""
     m = re.match(r'(no findings|(\d+) findings?(?: \((\d+) blocking\))?)', summary or '')
     if not m:

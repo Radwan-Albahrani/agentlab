@@ -34,7 +34,10 @@ part_host() {  # git for the janitor's worktree tests
     cd host && python -m unittest discover -s tests 2>&1 | tail -3'
 }
 part_gate() { py gate 'cd gate && pip install -q -r requirements.txt && python -m unittest discover -s tests -t . 2>&1 | tail -3'; }
-part_companion() { py companion 'cd companion && pip install -q -r tests/requirements.txt && python -m pytest -q -p no:cacheprovider tests 2>&1 | tail -3'; }
+part_companion() {  # mypy first: every function in the bot is typed (companion/mypy.ini)
+  py companion 'cd companion && pip install -q -r tests/requirements.txt && mypy --cache-dir /tmp/mypy  # the repo is read-only here
+    python -m pytest -q -p no:cacheprovider tests 2>&1 | tail -3'
+}
 part_image() {  # gcc for the emulator's non-dumpable preload
   py image 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null
     pip install -q pytest==8.3.4 && python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'

@@ -26,22 +26,25 @@ phase  derived from the three above plus the ledger and a usage-limit pause, sto
          working | waiting_owner | waiting_answer | paused | answered | nothing_to_do | stopped | failed"""
 
 import time
+from collections.abc import Callable, Iterable
+from typing import Any, Literal, get_args
 
 from . import ledger
 from .config import OWNER, log
 from .fsm import IllegalStateError
+from .shapes import Case, Head, Item, Mode, Outcome, Party, PartyKind, Pause, Phase, Place, Task, Turn, TurnBy
 from .state import save
 
-PARTIES = ('owner', 'colleague', 'errand')
-HEADS = ('own', 'card', 'errand')
-MODES = ('private', 'shared')
-PLACES = ('thread', 'case')
-TURN_BY = ('owner', 'colleague', 'decision', 't3', 'system')
-OUTCOMES = ('answered', 'asked', 'silent', 'nothing_to_do', 'failed', 'stopped')
-PHASES = ('working', 'waiting_owner', 'waiting_answer', 'paused', 'answered', 'nothing_to_do', 'stopped', 'failed')
+PARTIES: tuple[PartyKind, ...] = get_args(PartyKind)
+HEADS: tuple[Head, ...] = get_args(Head)
+MODES: tuple[Mode, ...] = get_args(Mode)
+PLACES: tuple[Place, ...] = get_args(Place)
+TURN_BY: tuple[TurnBy, ...] = get_args(TurnBy)
+OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
+PHASES: tuple[Phase, ...] = get_args(Phase)
 
 
-def party_of(guest=None, requester=None):
+def party_of(guest: str | None = None, requester: str | None = None) -> Party:
     if requester:
         return {'kind': 'errand', 'user': requester}
     if guest and guest != OWNER:
@@ -49,15 +52,15 @@ def party_of(guest=None, requester=None):
     return {'kind': 'owner', 'user': OWNER}
 
 
-def party(task):
+def party(task: Task) -> Party:
     return task.get('party') or {'kind': 'owner', 'user': OWNER}
 
 
-def is_colleague(task):
+def is_colleague(task: Task) -> bool:
     return party(task)['kind'] == 'colleague'
 
 
-def set_party(task, kind, user):
+def set_party(task: Task, kind: PartyKind, user: str) -> None:
     if kind not in PARTIES:
         raise IllegalStateError(f'party {kind!r}')
     old = party(task)['kind']
@@ -66,23 +69,27 @@ def set_party(task, kind, user):
     task['party'] = {'kind': kind, 'user': user}
 
 
-def open_case(task, ch, ts, head, mode='private', md=None):
+def open_case(task: Task, ch: str, ts: str, head: Head, mode: Mode = 'private', md: str | None = None) -> None:
     if head not in HEADS or mode not in MODES:
         raise IllegalStateError(f'case {head}/{mode}')
     if party(task)['kind'] == 'owner':
         raise IllegalStateError('the owner needs no case for their own task')
     if task.get('case'):
         raise IllegalStateError('the task has a case already')
-    task['case'] = {'ch': ch, 'ts': ts, 'head': head, 'mode': mode, **({'md': md} if md else {})}
+    case: Case = {'ch': ch, 'ts': ts, 'head': head, 'mode': mode}
+    if md:
+        case['md'] = md
+    task['case'] = case
 
 
-def case_mode(task):
-    return (task.get('case') or {}).get('mode', '')
+def case_mode(task: Task) -> str:
+    c = task.get('case')
+    return c.get('mode', '') if c else ''
 
 
-def final_goes_to(task):
+def final_goes_to(task: Task) -> Place:
     """Where the agent's final message goes: 'case' (the owner, privately) or 'thread' (the task's own thread)."""
-    c = task.get('case') or {}
+    c = task.get('case')
     if not c or c['head'] == 'errand':  # the owner's own thread (an errand's thread is in the owner's DM)
         return 'thread'
     if c['mode'] == 'private' and turn(task).get('by') in ('colleague', 'decision', 'system'):
@@ -90,11 +97,11 @@ def final_goes_to(task):
     return place(task)
 
 
-def turn(task):
+def turn(task: Task) -> Turn:
     return task.get('turn') or {}
 
 
-def begin_turn(task, by, place):
+def begin_turn(task: Task, by: TurnBy, place: Place) -> None:
     """A new turn: whoever's message (or decision) the agent is now answering, and where it was written."""
     if by not in TURN_BY or place not in PLACES:
         raise IllegalStateError(f'turn by {by!r} at {place!r}')
@@ -115,62 +122,62 @@ def begin_turn(task, by, place):
     settle(task)
 
 
-def place(task):
+def place(task: Task) -> Place:
     """Where the current (or last) turn is answered: 'thread' | 'case'."""
     return turn(task).get('place') or 'thread'
 
 
-def retake_turn(task, by, place):
+def retake_turn(task: Task, by: TurnBy, place: Place) -> None:
     """The running turn is taken over by a new message (`by`, written at `place`): it is answered there now."""
     if by not in TURN_BY or place not in PLACES:
         raise IllegalStateError(f'turn by {by!r} at {place!r}')
     if turn(task).get('state') != 'running':
         begin_turn(task, by, place)
         return
-    task['turn'].update(by=by, place=place)
+    task['turn'].update({'by': by, 'place': place})
 
 
-def end_turn(task, outcome):
+def end_turn(task: Task, outcome: Outcome) -> None:
     if outcome not in OUTCOMES:
         raise IllegalStateError(f'outcome {outcome!r}')
     t = turn(task)
     if t.get('state') != 'running':
         raise IllegalStateError('no turn is running')
-    t.update(state='ended', outcome=outcome, ended=time.time())
+    t.update({'state': 'ended', 'outcome': outcome, 'ended': time.time()})
     settle(task)
 
 
-def running(task):
+def running(task: Task) -> bool:
     return turn(task).get('state') == 'running'
 
 
-def outcome(task):
+def outcome(task: Task) -> Outcome | Literal['']:
     """How the last turn ended ('' while one runs)."""
     return turn(task).get('outcome') or ''
 
 
-def owners_turn(task):
+def owners_turn(task: Task) -> bool:
     return running(task) and turn(task).get('by') in ('owner', 't3') and bool(task.get('case'))
 
 
-def asking(task):
+def asking(task: Task) -> bool:
     """The agent waits on an answer to a question it asked (in T3's record)."""
     return bool(task.get('question'))
 
 
-def set_asking(task, asked):
+def set_asking(task: Task, asked: bool) -> None:
     """The only way the question flag changes: the phase follows at once."""
     if asking(task) != asked:
         task['question'] = asked
         settle(task)
 
 
-def paused(task):
+def paused(task: Task) -> Pause | None:
     """The usage-limit pause of the running turn, {at, resumes_at, run, nudged}, or None."""
     return task.get('paused')
 
 
-def pause(task, at, resumes_at, run):
+def pause(task: Task, at: float, resumes_at: float | None, run: str | None) -> None:
     """The turn waits for T3 to resume the chat at the usage limit's reset (resumes_at: epoch, or None if unknown)."""
     if not running(task):
         raise IllegalStateError('only a running turn can pause')
@@ -178,7 +185,7 @@ def pause(task, at, resumes_at, run):
     settle(task)
 
 
-def unpause(task):
+def unpause(task: Task) -> bool:
     """The pause ends (T3 resumed, or the wait is given up); False if there was none."""
     if not task.pop('paused', None):
         return False
@@ -186,7 +193,7 @@ def unpause(task):
     return True
 
 
-def phase_of(task):
+def phase_of(task: Task) -> Phase:
     if ledger.pending(task):
         return 'waiting_owner'
     if running(task):
@@ -194,18 +201,23 @@ def phase_of(task):
             return 'paused'
         return 'waiting_answer' if asking(task) else 'working'
     out = outcome(task) or 'answered'
-    return {'asked': 'waiting_answer', 'silent': 'answered'}.get(out, out)
+    if out == 'asked':
+        return 'waiting_answer'
+    if out == 'silent':
+        return 'answered'
+    return out
 
 
-_phase_listeners = []  # fn(task) once its phase changed: the case head (cases.py)
+PhaseListener = Callable[[Task], object]
+_phase_listeners: list[PhaseListener] = []  # fn(task) once its phase changed: the case head (cases.py)
 
 
-def on_phase(fn):
+def on_phase[F: PhaseListener](fn: F) -> F:
     _phase_listeners.append(fn)
     return fn
 
 
-def settle(task):
+def settle(task: Task) -> bool:
     """Recompute the stored phase; True when it changed."""
     p = phase_of(task)
     if p not in PHASES:
@@ -225,12 +237,12 @@ def settle(task):
 
 
 @ledger.listen
-def _items_changed(task, it, old):
+def _items_changed(task: Task, it: Item, old: str | None) -> None:
     if it['state'] == 'awaiting_owner' or old == 'awaiting_owner':
         settle(task)
 
 
-def prepare_all(tasks):
+def prepare_all(tasks: Iterable[Task]) -> None:
     """After a restart: tasks saved before these states are converted once; a turn that is not running has no live
     thinking line."""
     for t in tasks:
@@ -244,11 +256,12 @@ def prepare_all(tasks):
         settle(t)
 
 
-OLD = (
+Old = Literal[
     'guest', 'colleague', 'requester', 'approved', 'approval', 'post_draft', 'reply_draft', 'reply_pending',
     'cred_ask', 'told', 'posted', 'answer_to', 'active', 'outcome', 'sent', 'limit_checked',
-)  # fmt: skip
-OLD_OUTCOMES = {
+]  # fmt: skip
+OLD: tuple[Old, ...] = get_args(Old)
+OLD_OUTCOMES: dict[str, Outcome] = {
     'answered': 'answered',
     'asked you': 'asked',
     'posted': 'answered',
@@ -259,28 +272,29 @@ OLD_OUTCOMES = {
 }
 
 
-def migrate(task):
+def migrate(task: Task) -> None:
     """One task saved before these states, converted: every old flag becomes the state it meant, then is gone."""
     task['party'] = party_of(task.get('guest') or task.get('colleague'), task.get('requester'))
     if task.get('colleague') and not task.get('guest'):
         task['party'] = {'kind': 'colleague', 'user': task['colleague']}
     old = task.pop('case', None)
+    approved = task.get('approved')
     if task['party']['kind'] == 'errand':
         task['case'] = {'ch': task['channel'], 'ts': task['thread_ts'], 'head': 'errand', 'mode': 'private'}
     elif old:
-        head = 'own' if old.get('own') else 'card'
-        mode = 'shared' if task.get('colleague') and not task.get('guest') else 'private'
-        task['case'] = {
+        case: Case = {
             'ch': old['ch'],
             'ts': old['ts'],
-            'head': head,
-            'mode': mode,
-            **({'md': old['md']} if old.get('md') else {}),
+            'head': 'own' if old.get('own') else 'card',
+            'mode': 'shared' if task.get('colleague') and not task.get('guest') else 'private',
         }
-    elif task['party']['kind'] == 'colleague' and isinstance(task.get('approved'), str) and task['approved']:
+        if old.get('md'):
+            case['md'] = old['md']
+        task['case'] = case
+    elif task['party']['kind'] == 'colleague' and isinstance(approved, str) and approved:
         ch = (task.get('approval') or {}).get('ch') or ''
-        task['case'] = {'ch': ch, 'ts': task['approved'], 'head': 'card', 'mode': 'private'}
-    by = 'owner' if task.get('answer_to') else 'colleague' if task['party']['kind'] != 'owner' else 'owner'
+        task['case'] = {'ch': ch, 'ts': approved, 'head': 'card', 'mode': 'private'}
+    by: TurnBy = 'owner' if task.get('answer_to') else 'colleague' if task['party']['kind'] != 'owner' else 'owner'
     live = bool(task.get('active'))
     task['turn'] = {
         'n': 1,
@@ -302,7 +316,7 @@ def migrate(task):
         task.pop(k, None)
 
 
-def _migrate_items(task):
+def _migrate_items(task: Task) -> None:
     """The old waiting slots and sent posts, as ledger items in the state they were in."""
     for m in task.get('sent') or []:  # posts to channels and DMs: kept so they can still be edited
         ledger.add(
@@ -327,7 +341,7 @@ def _migrate_items(task):
             ledger.move(task, it, 'replaced', note=f'was {a["decided"]}')
     d = task.get('post_draft')
     if d:
-        post = {k: d[k] for k in ('channel', 'to', 'poll', 'edit', 'where', 'msgs', 'text') if k in d}
+        post: dict[str, Any] = {k: d[k] for k in ('channel', 'to', 'poll', 'edit', 'where', 'msgs', 'text') if k in d}
         it = ledger.add(
             task,
             'edit' if d.get('edit') else 'message',

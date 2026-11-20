@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
 
 APP = '/app'
 DATA = os.environ.get('COMPANION_DATA', '/data')
@@ -21,11 +22,18 @@ VENV = os.path.join(DATA, 'venv')
 REQUIRED = ('owner.txt', 'bot-token.txt', 'app-token.txt', 'agent-key.txt')
 ERROR_WORDS = ('failed', 'error', 'traceback', 'exception')
 
-status = {'name': ID, 'state': 'starting', 'since': time.time(), 'heartbeat': None, 'version': '', 'error': ''}
+status: dict[str, Any] = {
+    'name': ID,
+    'state': 'starting',
+    'since': time.time(),
+    'heartbeat': None,
+    'version': '',
+    'error': '',
+}
 log = logging.getLogger('companion')
 
 
-def setup_logs():
+def setup_logs() -> None:
     os.makedirs(os.path.join(OWN, 'logs'), exist_ok=True)
     log.setLevel(logging.INFO)
     for h in (
@@ -38,11 +46,11 @@ def setup_logs():
         log.addHandler(h)
 
 
-def say(msg):
+def say(msg: str) -> None:
     log.info('%s %s', time.strftime('%H:%M:%S'), msg)
 
 
-def write_status(**changes):
+def write_status(**changes: Any) -> None:
     status.update(changes, updated=time.time())
     try:
         with open(os.path.join(DATA, 'heartbeat.json')) as f:
@@ -55,7 +63,7 @@ def write_status(**changes):
     os.replace(tmp, os.path.join(OWN, 'status.json'))
 
 
-def version():
+def version() -> str:
     """The checkout's short commit, read from .git without git; '' if unreadable."""
     git = os.path.join(APP, '.git')
     try:
@@ -74,7 +82,7 @@ def version():
         return ''
 
 
-def missing_secrets():
+def missing_secrets() -> list[str]:
     out = []
     for name in REQUIRED:
         try:
@@ -86,12 +94,12 @@ def missing_secrets():
     return out
 
 
-def sha256(path):
+def sha256(path: str) -> str:
     with open(path, 'rb') as f:
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def python():
+def python() -> str:
     """The image's interpreter, or the venv's when the checkout needs other packages."""
     req = os.path.join(APP, 'requirements.txt')
     if not os.path.isfile(req):
@@ -125,12 +133,12 @@ def python():
     return venv_py
 
 
-def keep_status(stop):
+def keep_status(stop: threading.Event) -> None:
     while not stop.wait(10):
         write_status()
 
 
-def main():
+def main() -> int:
     setup_logs()
     write_status(state='starting', version=version())
     missing = missing_secrets()
@@ -153,8 +161,8 @@ def main():
     )
     stop = threading.Event()
     threading.Thread(target=keep_status, args=(stop,), daemon=True).start()
-    tail = []
-    for raw in proc.stdout:
+    tail: list[str] = []
+    for raw in proc.stdout or ():  # piped, so always set
         line = raw.rstrip('\n')
         log.info('%s', line)
         tail = [*tail[-19:], line]

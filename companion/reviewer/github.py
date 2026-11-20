@@ -5,36 +5,52 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from typing import Any, TypedDict
 
 import jwt
 
 API = 'https://api.github.com'
 
 
+class Installation(TypedDict):
+    id: int
+    account: str
+
+
+class User(TypedDict):
+    login: str
+    avatar: str
+
+
+class Repo(TypedDict):
+    name: str
+    private: bool
+
+
 class GitHubError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status: int, message: str) -> None:
         super().__init__(f'GitHub {status}: {message}')
         self.status = status
 
 
 class App:
-    def __init__(self, app_id, private_key):
+    def __init__(self, app_id: str | int, private_key: str) -> None:
         self.app_id, self.key = str(app_id).strip(), private_key
-        self._tokens = {}  # installation id -> (token, expires epoch)
-        self._installs = (0.0, [])
+        self._tokens: dict[int, tuple[str, float]] = {}  # installation id -> (token, expires epoch)
+        self._installs: tuple[float, list[Installation]] = (0.0, [])
         self._slug = ''
 
-    def _jwt(self):
+    def _jwt(self) -> str:
         now = int(time.time())
         return jwt.encode({'iat': now - 60, 'exp': now + 540, 'iss': self.app_id}, self.key, algorithm='RS256')
 
-    def slug(self):
+    def slug(self) -> str:
         """The App's slug: its bot is <slug>[bot] in REST and <slug> in GraphQL."""
         if not self._slug:
             self._slug = self.call('GET', '/app', auth=f'Bearer {self._jwt()}')['slug']
         return self._slug
 
-    def installations(self):
+    def installations(self) -> list[Installation]:
         """[{id, account}] where the App is installed (cached 10 minutes)."""
         at, cached = self._installs
         if time.time() - at > 600:
@@ -43,7 +59,7 @@ class App:
             self._installs = (time.time(), cached)
         return cached
 
-    def token(self, installation):
+    def token(self, installation: int) -> str:
         tok, until = self._tokens.get(installation, ('', 0))
         if time.time() > until - 300:
             r = self.call('POST', f'/app/installations/{installation}/access_tokens', auth=f'Bearer {self._jwt()}')
@@ -52,12 +68,14 @@ class App:
             self._tokens[installation] = (tok, until)
         return tok
 
-    def installation_for(self, repo):
+    def installation_for(self, repo: str) -> int | None:
         """The installation that covers owner/repo (by its account), or None."""
         owner = repo.split('/', 1)[0].lower()
         return next((i['id'] for i in self.installations() if i['account'].lower() == owner), None)
 
-    def call(self, method, path, body=None, auth=None, installation=None):
+    def call(
+        self, method: str, path: str, body: object = None, auth: str | None = None, installation: int | None = None
+    ) -> Any:
         """One REST call, signed with `installation`'s token when given."""
         if installation is not None:
             auth = f'token {self.token(installation)}'
@@ -84,9 +102,10 @@ class App:
             raise GitHubError(e.code, msg) from None
         return json.loads(raw) if raw else {}
 
-    def pages(self, path, installation, limit=3000):
+    def pages(self, path: str, installation: int | None, limit: int = 3000) -> list[Any]:
         """Every item of a paginated list (per_page=100), up to `limit`."""
-        out, page = [], 1
+        out: list[Any] = []
+        page = 1
         sep = '&' if '?' in path else '?'
         while len(out) < limit:
             batch = self.call('GET', f'{path}{sep}per_page=100&page={page}', installation=installation)
@@ -96,14 +115,14 @@ class App:
             page += 1
         return out[:limit]
 
-    def assignees(self, repo, limit=300):
+    def assignees(self, repo: str, limit: int = 300) -> list[User]:
         """[{login, avatar}] of who can be assigned in owner/repo: its collaborators, in practice."""
         found = self.pages(f'/repos/{repo}/assignees', self.installation_for(repo), limit)
         return [{'login': u['login'], 'avatar': u.get('avatar_url', '')} for u in found]
 
-    def repositories(self, limit=1000):
+    def repositories(self, limit: int = 1000) -> list[Repo]:
         """[{name, private}] of every repo the App is installed on, as owner/repo."""
-        out = []
+        out: list[Repo] = []
         for inst in self.installations():
             page = 1
             while len(out) < limit:
@@ -115,12 +134,12 @@ class App:
                 page += 1
         return out[:limit]
 
-    def graphql(self, query, installation, **variables):
+    def graphql(self, query: str, installation: int, **variables: object) -> Any:
         r = self.call('POST', '/graphql', {'query': query, 'variables': variables}, installation=installation)
         if r.get('errors'):
             raise GitHubError(200, '; '.join(e.get('message', '') for e in r['errors'])[:300])
         return r['data']
 
 
-def _epoch(iso):
+def _epoch(iso: str) -> float:
     return datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp()

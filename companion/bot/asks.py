@@ -1,12 +1,14 @@
 """Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
+from typing import Any
+
 from . import jobs, machine, polls, projects, prompts, publish, reviews, routing, slack, t3, tasks
 from .config import COMP, OWNER, log
 from .state import key, lock, new_task
 from .text import first_sentence, quote
 
 
-def tick():
+def tick() -> None:
     for ask in COMP.take_asks():
         if ask.get('type') == 'poll':
             with lock:
@@ -28,19 +30,19 @@ def tick():
             jobs.run_later(start, ask)
 
 
-def refresh_pulls():
+def refresh_pulls() -> None:
     """Re-read open pull requests and publish them at once."""
     reviews.refresh()
     publish.now()
 
 
-def refresh_channels():
+def refresh_channels() -> None:
     """Re-read the Slack channels (a hub search found none: maybe one it was just invited to) and publish at once."""
     slack.forget_channels()
     publish.now()
 
 
-def start(ask):
+def start(ask: dict[str, Any]) -> None:
     text = str(ask.get('text') or '').strip()[:4000]
     if not text:
         return

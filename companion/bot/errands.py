@@ -1,13 +1,20 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from slack_bolt import Ack
+
 from . import cases, gate, jobs, ledger, machine, projects, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, log, mode
+from .shapes import Item, Request, Route, Task
+from .slack import Json
 from .state import key, key_of, lock, new_task, save, state
 from .text import first_sentence, quote
 from .when import say
 
 
-def start(p, what=''):
+def start(p: Request, what: str = '') -> None:
     """p: the request: ch, ts, thread_ts, user (who asked), im, texts, files, tagged."""
     who, ch = slack.name(p['user']), p['ch']
     asked = '\n'.join(p['texts']).strip()
@@ -25,18 +32,20 @@ def start(p, what=''):
         channel=dm,
         text=f'{who} {how}: {first_sentence(asked, 120)}',
         blocks=[
-            *slack.blocks(md, 'Working on it. Sensitive changes wait for your approval here.'),
+            *(slack.blocks(md, 'Working on it. Sensitive changes wait for your approval here.') or []),
             slack.buttons(('errand_stop', 'Stop', 'stop', 'danger')),
         ],
     )['ts']
     folder = f'req-{ch}-{p["ts"].replace(".", "")}'
     try:
         if p['thread_ts']:
-            msgs = slack.USER.conversations_replies(channel=ch, ts=p['thread_ts'], limit=60)['messages']
+            msgs = slack.owner_client().conversations_replies(channel=ch, ts=p['thread_ts'], limit=60)['messages']
         else:
             msgs = list(
                 reversed(
-                    slack.USER.conversations_history(channel=ch, latest=p['ts'], inclusive=True, limit=15)['messages']
+                    slack.owner_client().conversations_history(channel=ch, latest=p['ts'], inclusive=True, limit=15)[
+                        'messages'
+                    ]
                 )
             )
     except Exception as e:
@@ -57,7 +66,7 @@ def start(p, what=''):
     track(p, dm, head, tid, title, folder, link, where_to)
 
 
-def track(p, dm, head, tid, title, folder, link, where_to):
+def track(p: Request, dm: str, head: str, tid: str, title: str, folder: str, link: str, where_to: Route) -> None:
     """Register an errand's chat as a task in the owner's DM thread."""
     task = new_task(
         dm,
@@ -86,7 +95,7 @@ def track(p, dm, head, tid, title, folder, link, where_to):
     COMP.event('started', title, task=key(dm, head), detail=f'errand for {slack.name(p["user"])}')
 
 
-def close_head(task, line, emoji):
+def close_head(task: Task, line: str, emoji: str) -> None:
     """Mark the errand's head message ended: no Stop button, :eyes: -> `emoji`, footer -> `line`."""
     if machine.party(task)['kind'] != 'errand':
         return
@@ -99,7 +108,7 @@ def close_head(task, line, emoji):
         log('close head: message not found', e)
         return
 
-    def swap(x):
+    def swap(x: object) -> None:
         if isinstance(x, dict):
             if x.get('type') == 'emoji' and x.get('name') == 'eyes':
                 x['name'] = emoji
@@ -122,8 +131,8 @@ def close_head(task, line, emoji):
         log('close head failed:', e)
 
 
-def _approval_blocks(md, note, task_key='', buttons=True):
-    b = slack.blocks(md, note)
+def _approval_blocks(md: str, note: str, task_key: str = '', buttons: bool = True) -> list[Json]:
+    b = slack.blocks(md, note) or []
     if buttons:
         b.append(
             slack.buttons(
@@ -133,19 +142,19 @@ def _approval_blocks(md, note, task_key='', buttons=True):
     return b
 
 
-def approver(task):
+def approver(task: Task) -> tuple[str, str]:
     """Where the owner decides: the case thread, else the task's own thread."""
     return cases.owner_place(task)
 
 
-def _close_card(it, line):
+def _close_card(it: Item, line: str) -> None:
     """Take the buttons off a card, with `line` saying why."""
     slack.app.client.chat_update(
         channel=it['card']['ch'], ts=it['card']['ts'], text=line, blocks=_approval_blocks(it['md'], line, buttons=False)
     )
 
 
-def ask_approval(task, it, box=None):
+def ask_approval(task: Task, it: Item, box: str | None = None) -> None:
     """A ledger approval -> owner-only Approve / Reject where the owner follows the task. It replaces any approval
     still waiting; the files it would send are shown with it."""
     who = cases.who(task)
@@ -180,7 +189,7 @@ def ask_approval(task, it, box=None):
     COMP.event('approval', f'Asked you to approve: {it["action"]}'[:200], task=k, detail=f'for {who}')
 
 
-def withdraw(task, why):
+def withdraw(task: Task, why: str) -> None:
     """The agent takes back the approval waiting (it learned more, or was told to hold)."""
     waiting = ledger.pending(task, 'approval')
     if not waiting:
@@ -192,7 +201,7 @@ def withdraw(task, why):
     COMP.event('withdrawn', f'Withdrew the approval request: {it["action"]}'[:200], task=key_of(task), detail=why)
 
 
-def decide(task, k, approved, card):
+def decide(task: Task, k: str, approved: bool, card: str) -> None:
     """The owner's Approve / Reject on `card`; a card no longer waiting (replaced, withdrawn, decided) decides
     nothing."""
     it = ledger.on_card(task, card)
@@ -224,7 +233,7 @@ def decide(task, k, approved, card):
     jobs.run_later(tasks.follow_up, task, msg, None, card, 'thread', None, True)
 
 
-def after_turn(task, completed):
+def after_turn(task: Task, completed: bool) -> None:
     """Messages approved to go once the turn is over: sent if it completed, else failed."""
     for it in ledger.items(task):
         if it['kind'] == 'message' and it['state'] == 'approved' and it.get('after') == 'turn':
@@ -234,7 +243,7 @@ def after_turn(task, completed):
                 ledger.move(task, it, 'failed', note='the turn did not complete')
 
 
-def stop(task, k):
+def stop(task: Task, k: str) -> None:
     res = t3.stop(task['thread'])
     after_turn(task, completed=False)
     COMP.event('stopped', f'You stopped: {task.get("title", "")}', task=k, ok=bool(res.get('ok')))
@@ -252,7 +261,7 @@ def stop(task, k):
         )
 
 
-def offer_reply(task, it, ok=(), refused=()):
+def offer_reply(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[str] = ()) -> None:
     """A ledger message for an errand's requester: Send / Don't send for the owner (sent at once when it answers a
     decision the owner just approved; never sent in dry run)."""
     who = cases.who(task)
@@ -287,7 +296,7 @@ def offer_reply(task, it, ok=(), refused=()):
         thread_ts=task['thread_ts'],
         text=f'Send to {who}?',
         blocks=[
-            *slack.blocks(md, 'Nothing has been sent yet.'),
+            *(slack.blocks(md, 'Nothing has been sent yet.') or []),
             slack.buttons(
                 ('reply_send', f'Send to {who}', key_of(task), 'primary'),
                 ('reply_skip', "Don't send", key_of(task), None),
@@ -297,10 +306,12 @@ def offer_reply(task, it, ok=(), refused=()):
     ledger.move(task, it, 'awaiting_owner', card={'ch': task['channel'], 'ts': ts}, md=md)
 
 
-def send_to_requester(task, it, files=()):
+def send_to_requester(task: Task, it: Item, files: Sequence[str] = ()) -> None:
     """Send the reply in the requester's thread if possible, else by DM; sent or failed."""
     who, req = cases.who(task), machine.party(task)['user']
-    targets = [] if task.get('source_im') else [(task['source_ch'], task.get('source_thread'))]
+    targets: list[tuple[str, str | None]] = (
+        [] if task.get('source_im') else [(task['source_ch'], task.get('source_thread'))]
+    )
     for target, tts in [*targets, ('dm', None)]:
         ch = target
         try:
@@ -338,7 +349,7 @@ def send_to_requester(task, it, files=()):
     close_head(task, f':white_check_mark: Done · sent to {who} at {say()}', 'white_check_mark')
 
 
-def decide_reply(task, k, send, card):
+def decide_reply(task: Task, k: str, send: bool, card: str) -> None:
     it = ledger.on_card(task, card)
     if not it or it['state'] != 'awaiting_owner':
         return
@@ -361,10 +372,11 @@ def decide_reply(task, k, send, card):
         COMP.event('skipped', f'You chose not to send the reply to {who}', task=k, to=who)
 
 
-_creds = {}  # (task key, item id) -> login; memory only, never persisted, never in the ledger
+# (task key, item id) -> login; memory only, never persisted, never in the ledger
+_creds: dict[tuple[str, str], dict[str, str]] = {}
 
 
-def ask_credential(task, raw):
+def ask_credential(task: Task, raw: dict[str, Any]) -> None:
     """Ask the owner whether to DM a temporary password to the person the task is for (never into a thread)."""
     p = machine.party(task)
     c = {f: str(raw.get(f) or '')[:300] for f in ('service', 'url', 'username', 'password', 'note')}
@@ -389,7 +401,7 @@ def ask_credential(task, raw):
         thread_ts=tts,
         text=f'Send {who} their login?',
         blocks=[
-            *slack.blocks(md, f'Goes to {who} in a private DM.'),
+            *(slack.blocks(md, f'Goes to {who} in a private DM.') or []),
             slack.buttons(('cred_send', f'Send login to {who}', k, 'primary'), ('cred_skip', "Don't send", k, None)),
         ],
     )['ts']
@@ -397,7 +409,7 @@ def ask_credential(task, raw):
     COMP.event('approval', f'Asked you to send {who} their {c["service"] or "new"} login', task=k, to=who)
 
 
-def decide_credential(task, k, send, card):
+def decide_credential(task: Task, k: str, send: bool, card: str) -> None:
     it = ledger.on_card(task, card)
     if not it or it['state'] != 'awaiting_owner':
         return
@@ -439,11 +451,11 @@ def decide_credential(task, k, send, card):
     slack.app.client.chat_update(channel=it['card']['ch'], ts=card, text=line, blocks=slack.blocks(it['md'], line))
 
 
-def owner_action(handler, locked=True, card=False):
+def owner_action(handler: Callable[..., None], locked: bool = True, card: bool = False) -> Callable[[Ack, Json], None]:
     """Wrap a button handler: ack, owner only, resolve the task, run under the state lock if `locked`; `card`: also
     pass the pressed message's ts."""
 
-    def run(ack, body):
+    def run(ack: Ack, body: Json) -> None:
         ack()
         if body['user']['id'] != OWNER:
             return

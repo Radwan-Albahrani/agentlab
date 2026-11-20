@@ -3,24 +3,27 @@
 import json
 import threading
 from datetime import UTC, datetime
+from typing import Any, Unpack, cast
 
 from .config import COMP, default_project
+from .shapes import Line, Review, Route, State, Task
 
 lock = threading.RLock()
-_written = {}  # store key -> JSON last written
+_written: dict[str, str] = {}  # store key -> JSON last written
 
 
-def _rows(s):
+def _rows(s: State) -> dict[str, Any]:
     """Store rows: task:<key> per task, other top-level keys as themselves."""
-    rows = {f'task:{k}': t for k, t in s['tasks'].items()}
+    rows: dict[str, Any] = {f'task:{k}': t for k, t in s['tasks'].items()}
     rows.update((k, v) for k, v in s.items() if k != 'tasks')
     return rows
 
 
-def _load():
+def _load() -> State:
     rows = COMP.store_all()
-    s = {'tasks': {k[5:]: v for k, v in rows.items() if k.startswith('task:')}}
-    s.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
+    raw: dict[str, Any] = {'tasks': {k[5:]: v for k, v in rows.items() if k.startswith('task:')}}
+    raw.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
+    s = cast(State, raw)  # the stored JSON, in the shapes it was saved in
     s.setdefault('refused', [])
     s.setdefault('drafts', {})
     s.setdefault('polls', {})
@@ -31,7 +34,7 @@ def _load():
 state = _load()
 
 
-def save():
+def save() -> None:
     with lock:
         rows = _rows(state)
         dumped = {k: json.dumps(v, sort_keys=True) for k, v in rows.items()}
@@ -45,42 +48,53 @@ def save():
         _written.update((k, dumped[k]) for k in changed)
 
 
-def key(channel, thread_ts):
+def key(channel: str, thread_ts: str) -> str:
     return f'{channel}:{thread_ts}'
 
 
-def key_of(task):
+def key_of(task: Task) -> str:
     """The task's key in state['tasks']: its thread's, unless it shares the thread (reviews of one batch)."""
     return task.get('key') or key(task['channel'], task['thread_ts'])
 
 
-def tasks():
+def tasks() -> dict[str, Task]:
     return state['tasks']
 
 
-def task_of(channel, thread_ts):
+def task_of(channel: str, thread_ts: str) -> Task | None:
     return state['tasks'].get(key(channel, thread_ts))
 
 
-def review_of(task):
+def review_of(task: Task) -> Review:
     """The PR review a task runs, or {} (a hub ask's `review` is its approve-before-posting flag)."""
     r = task.get('review')
     return r if isinstance(r, dict) else {}
 
 
-def now_iso():
+def now_iso() -> str:
     """Now in T3's timestamp format; compared as strings with T3's, so keep the format exact."""
     return datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
 
-def parse_iso(iso):
+def parse_iso(iso: str | None) -> float:
     return datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp() if iso else 0.0
 
 
-def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, line, route, **extra):
+def new_task(
+    channel: str,
+    thread_ts: str,
+    thread: str,
+    title: str,
+    outbox: str,
+    trigger_ts: str,
+    line: Line | None,
+    route: Route,
+    /,
+    **extra: Unpack[Task],
+) -> Task:
     """line: its thinking line (tasks.post_line) or None; route: where its chat started and why (projects.route)."""
     now = now_iso()
-    t = {
+    t: Task = {
         'thread': thread,
         'title': title,
         'route': route,
@@ -108,7 +122,7 @@ def new_task(channel, thread_ts, thread, title, outbox, trigger_ts, line, route,
     return t
 
 
-def prepare_for_start():
+def prepare_for_start() -> None:
     """Normalise loaded tasks after a restart (their states: machine.prepare_all)."""
     for t in state['tasks'].values():
         if 'route' not in t:  # saved before routes were recorded (projects.BY 'earlier'): its chat stays where it is

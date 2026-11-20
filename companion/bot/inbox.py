@@ -4,18 +4,22 @@ An approved ask runs as the colleague's task in its thread (a pull request link:
 is told so. The card is the ask's case (see cases.py): while it is pending the owner's replies under it go to the
 colleague; once taken on they are the owner talking to the companion, privately."""
 
+from collections.abc import Callable
+from typing import Any
+
 from . import jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, log, mode
 from .fsm import ASK
+from .shapes import Ask
 from .state import key, lock, save, state
 from .text import first_sentence, quote
 
 
-def _asks():
+def _asks() -> dict[str, Ask]:
     return state.setdefault('inbox', {})
 
 
-def route(ev, mentioned):
+def route(ev: dict[str, Any], mentioned: bool) -> bool:
     """Handle a message in the requests channel; False leaves it to the usual routing.
 
     Only tags count, top level or in a thread: people discuss things there too."""
@@ -39,7 +43,7 @@ def route(ev, mentioned):
     return False
 
 
-def ask(ev):
+def ask(ev: dict[str, Any]) -> None:
     ch, ts, user = ev['channel'], ev['ts'], ev['user']
     text = slack.ask(ev.get('text') or '').strip()
     who, owner = slack.name(user), slack.name(OWNER)
@@ -53,7 +57,7 @@ def ask(ev):
     if not card:
         slack.post(ch, ts, 'Not sent', md=f":warning: I couldn't pass this on to {owner}. Try again later.")
         return
-    a = {'ch': ch, 'ts': ts, 'user': user, 'name': who, 'text': text, 'card': card}
+    a: Ask = {'ch': ch, 'ts': ts, 'user': user, 'name': who, 'text': text, 'card': card}
     ASK.start(a, 'pending')
     with lock:
         _asks()[key(ch, ts)] = a
@@ -65,14 +69,14 @@ def ask(ev):
     COMP.event('noticed', f'{who} asked: {first_sentence(text, 80)}', detail='waiting for your approval')
 
 
-def _show(a):
+def _show(a: Ask) -> None:
     """The owner's card: the ask with Approve / Decline while pending, its outcome after."""
     head = f':inbox_tray: **{a["name"]}** asked in <#{a["ch"]}>\n' + quote(a['text'])
     k = key(a['ch'], a['ts'])
     if ASK.is_(a, 'pending'):
         note = 'Reply in this thread to message them.'
         buttons = slack.buttons(('inbox_approve', 'Approve', k, 'primary'), ('inbox_decline', 'Decline', k, 'danger'))
-        blocks = [*slack.blocks(head, note), buttons]
+        blocks: list[dict[str, Any]] | None = [*(slack.blocks(head, note) or []), buttons]
     else:
         note = {
             'approved': ':white_check_mark: Approved: working on it in their thread',
@@ -83,7 +87,7 @@ def _show(a):
     slack.app.client.chat_update(channel=slack.dm_owner(), ts=a['card'], text=f'{a["name"]} asked', blocks=blocks)
 
 
-def _added(a, text):
+def _added(a: Ask, text: str) -> None:
     """The colleague added to a pending ask: it joins the ask, and the owner sees it under the card."""
     more = slack.ask(text).strip()
     if not more:
@@ -97,7 +101,7 @@ def _added(a, text):
     )
 
 
-def decide(k, approve):
+def decide(k: str, approve: bool) -> None:
     with lock:
         a = _asks().get(k)
         if not a or not ASK.is_(a, 'pending'):
@@ -112,21 +116,21 @@ def decide(k, approve):
         COMP.event('sent', f'Declined the request of {a["name"]}', to=a['name'], detail=first_sentence(a['text'], 120))
         return
     slack.note_only(a['ch'], a['ts'], f':white_check_mark: {owner} approved this. Starting now.')
-    how = {'via': f'in the requests channel #{slack.channel_name(a["ch"])}'}
+    via = f'in the requests channel #{slack.channel_name(a["ch"])}'
     if not reviews.from_slack(
-        a['ch'], a['ts'], a['ts'], a['text'], by=a['user'], any_words=True, approved_by=OWNER, **how
+        a['ch'], a['ts'], a['ts'], a['text'], by=a['user'], any_words=True, approved_by=OWNER, via=via
     ):
-        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'], approved=a['card'], **how)
+        tasks.start(a['ch'], a['ts'], a['ts'], a['text'], guest=a['user'], approved=a['card'], via=via)
 
 
-def card_of(channel, thread_ts):
+def card_of(channel: str, thread_ts: str) -> Ask | None:
     """The ask whose card is this message in the owner's DM, or None."""
     if channel != slack.dm_owner():
         return None
     return next((a for a in _asks().values() if a['card'] == thread_ts), None)
 
 
-def relay(a, text, ts):
+def relay(a: Ask, text: str, ts: str) -> None:
     """The owner's reply under an ask's card, passed on to the colleague's thread."""
     said = slack.readable(text).strip()
     if said and slack.post(
@@ -135,8 +139,8 @@ def relay(a, text, ts):
         slack.react(slack.dm_owner(), ts, 'white_check_mark')
 
 
-def _decide_action(approve):
-    def run(ack, body):
+def _decide_action(approve: bool) -> Callable[[Callable[[], object], dict[str, Any]], None]:
+    def run(ack: Callable[[], object], body: dict[str, Any]) -> None:
         ack()
         if body['user']['id'] == OWNER:
             decide(body['actions'][0].get('value') or '', approve)

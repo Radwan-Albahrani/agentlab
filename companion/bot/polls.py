@@ -4,10 +4,15 @@ import re
 import secrets
 import time
 from datetime import datetime
+from typing import Any
+
+from slack_bolt import Ack
 
 from . import slack
 from .config import COMP, OWNER, log
 from .fsm import POLL
+from .shapes import Poll, Task
+from .slack import Json
 from .state import lock, save, state
 from .when import say
 
@@ -15,7 +20,7 @@ BAR = 10  # characters of the longest bar
 AVATARS = 9  # Slack context rows hold max 10 elements: pictures + one names element
 
 
-def describe(poll):
+def describe(poll: Poll) -> str:
     """The poll as preview text."""
     when = say(poll['closes'], 'date')
     return (
@@ -26,7 +31,7 @@ def describe(poll):
     )
 
 
-def counts(poll):
+def counts(poll: Poll) -> list[int]:
     n = [0] * len(poll['options'])
     for chosen in poll['votes'].values():
         for i in chosen:
@@ -34,26 +39,26 @@ def counts(poll):
     return n
 
 
-def voters(poll):
+def voters(poll: Poll) -> int:
     return sum(1 for chosen in poll['votes'].values() if chosen)
 
 
-def _people(k):
+def _people(k: int) -> str:
     return f'{k} {"person" if k == 1 else "people"}'
 
 
-def who(poll, i):
+def who(poll: Poll, i: int) -> list[str]:
     """Voters for option i, in voting order."""
     return [u for u, chosen in poll['votes'].items() if i in chosen]
 
 
-def voter(poll, u):
+def voter(poll: Poll, u: str) -> str:
     """A voter's name, marked when the owner added the vote."""
     by = poll.get('added_by', {}).get(u)
     return slack.name(u) + (f' (added by {slack.name(by)})' if by else '')
 
 
-def _voters_line(poll, people):
+def _voters_line(poll: Poll, people: list[str]) -> Json:
     """Context row under an option: up to AVATARS pictures, then the names."""
     pics = [
         {'type': 'image', 'image_url': slack.avatar(u), 'alt_text': slack.name(u)} for u in people if slack.avatar(u)
@@ -62,14 +67,14 @@ def _voters_line(poll, people):
     return {'type': 'context', 'elements': [*pics, {'type': 'mrkdwn', 'text': names[:2900]}]}
 
 
-def _blocks(poll):
+def _blocks(poll: Poll) -> list[Json]:
     n = counts(poll)
     top = max(n) or 1
     state_ = f'closes {say(poll["closes"], "day")}' if POLL.is_(poll, 'open') else 'closed'
     intro = (poll['text'] + '\n\n' if poll['text'] else '') + f':bar_chart: **{poll["question"]}** · {state_}'
-    b = slack.blocks(intro)
+    b = slack.blocks(intro) or []
     for i, (o, c) in enumerate(zip(poll['options'], n, strict=True)):
-        b += slack.blocks(f'**{o}**  `{"█" * round(BAR * c / top) or "·"}` {c} vote{"s" if c != 1 else ""}')
+        b += slack.blocks(f'**{o}**  `{"█" * round(BAR * c / top) or "·"}` {c} vote{"s" if c != 1 else ""}') or []
         if c:
             b.append(_voters_line(poll, who(poll, i)))
     how = (
@@ -77,7 +82,7 @@ def _blocks(poll):
         if poll.get('multiple')
         else 'press your choice again to take your vote back'
     )
-    b += slack.blocks(None, f'{_people(voters(poll))} voted' + (f' · {how}' if POLL.is_(poll, 'open') else ''))
+    b += slack.blocks(None, f'{_people(voters(poll))} voted' + (f' · {how}' if POLL.is_(poll, 'open') else '')) or []
     if POLL.is_(poll, 'open'):
         b.append(
             slack.buttons(*((f'poll_vote_{i}', o, f'{poll["id"]}:{i}', None) for i, o in enumerate(poll['options'])))
@@ -85,9 +90,9 @@ def _blocks(poll):
     return b
 
 
-def start(post, task_key):
+def start(post: dict[str, Any], task_key: str) -> Poll:
     """Post the poll in its channel; returns it with its message ts."""
-    poll = {
+    poll: Poll = {
         'id': secrets.token_hex(4),
         'channel': post['channel'],
         'text': post['text'],
@@ -106,11 +111,11 @@ def start(post, task_key):
     return poll
 
 
-def _refresh(poll):
+def _refresh(poll: Poll) -> None:
     slack.app.client.chat_update(channel=poll['channel'], ts=poll['ts'], text=poll['question'], blocks=_blocks(poll))
 
 
-def migrate():
+def migrate() -> None:
     """Convert legacy single-index votes to multiple-choice lists."""
     for poll in state['polls'].values():
         if 'multiple' in poll:
@@ -123,7 +128,7 @@ def migrate():
     save()
 
 
-def vote(poll, user, i):
+def vote(poll: Poll, user: str, i: int) -> None:
     if not POLL.is_(poll, 'open') or not 0 <= i < len(poll['options']):
         return
     mine = poll['votes'].get(user, [])
@@ -141,7 +146,7 @@ def vote(poll, user, i):
     _refresh(poll)
 
 
-def for_prompt(channel='', thread_ts=''):
+def for_prompt(channel: str = '', thread_ts: str = '') -> str:
     """The open polls as prompt text for the agent."""
     open_polls = [p for p in state['polls'].values() if POLL.is_(p, 'open')]
     if not open_polls:
@@ -157,13 +162,13 @@ def for_prompt(channel='', thread_ts=''):
     return '\n\nOpen polls the companion is running:\n' + '\n'.join(lines)
 
 
-def _thread_for(poll):
+def _thread_for(poll: Poll) -> tuple[str, str | None]:
     """The poll's task thread, else the owner's DM."""
     task = state['tasks'].get(poll['task'])
     return (task['channel'], task['thread_ts']) if task else (slack.dm_owner(), None)
 
 
-def change(c, task=None):
+def change(c: dict[str, Any], task: Task | None = None) -> str:
     """Apply a poll change from the agent (a ledger poll_change) or the hub (task None): choice mode, closing time,
     close now. -> '' once applied (or nothing needed changing), else why not."""
     poll = state['polls'].get(str(c.get('poll') or ''))
@@ -176,7 +181,7 @@ def change(c, task=None):
     if not POLL.is_(poll, 'open'):
         slack.post(ch, tts, 'Poll not changed', md=':warning: That poll is already closed.')
         return 'that poll is already closed'
-    closes = None
+    closes: float | None = None
     if c.get('closes'):
         try:  # epoch from the hub, ISO 8601 from the agent
             closes = (
@@ -189,7 +194,7 @@ def change(c, task=None):
         if closes <= time.time():
             slack.post(ch, tts, 'Poll not changed', md=':warning: The new closing time must be in the future.')
             return 'the new closing time must be in the future'
-    done = []
+    done: list[str] = []
     if 'multiple' in c and bool(c['multiple']) != bool(poll.get('multiple')):
         poll['multiple'] = bool(c['multiple'])
         trimmed = 0
@@ -226,7 +231,7 @@ def change(c, task=None):
     return ''
 
 
-def _vote_for(poll, v):
+def _vote_for(poll: Poll, v: dict[str, Any]) -> tuple[str, bool]:
     """Owner adds/removes someone's vote -> (line, ok); the person is looked up by name, never an agent-given id."""
     uid, problem = slack.find_user(str(v.get('for') or ''))
     if not uid:
@@ -237,7 +242,7 @@ def _vote_for(poll, v):
         poll.get('added_by', {}).pop(uid, None)
         return f"removed {who_}'s vote", True
     labels = {o.casefold(): i for i, o in enumerate(poll['options'])}
-    picks = []
+    picks: list[int] = []
     for want in v.get('options') or []:
         w = str(want).strip().casefold()
         hits = [i for label, i in labels.items() if label == w] or [
@@ -254,7 +259,7 @@ def _vote_for(poll, v):
     return f"added {who_}'s vote for {', '.join(poll['options'][i] for i in picks)}", True
 
 
-def result(poll):
+def result(poll: Poll) -> str:
     n, people = counts(poll), voters(poll)
     best = max(n)
     winners = [o for o, c in zip(poll['options'], n, strict=True) if c == best]
@@ -273,7 +278,7 @@ def result(poll):
     return f'{head}\n\n_{poll["question"]}_\n{table}'
 
 
-def close(poll, by=''):
+def close(poll: Poll, by: str = '') -> None:
     """Remove the buttons and announce the result."""
     if not POLL.is_(poll, 'open'):
         return
@@ -300,7 +305,7 @@ def close(poll, by=''):
     save()
 
 
-def card(poll):
+def card(poll: Poll) -> dict[str, Any]:
     """The hub's poll card (see companion.py)."""
     n = counts(poll)
     return {
@@ -324,12 +329,12 @@ def card(poll):
     }
 
 
-def summary(poll):
+def summary(poll: Poll) -> str:
     when = say(poll['closes'], 'day')
     return f'Poll open until {when} · {_people(voters(poll))} voted'
 
 
-def tick():
+def tick() -> None:
     now = time.time()
     for poll in list(state['polls'].values()):
         if POLL.is_(poll, 'open') and now >= poll['closes']:
@@ -337,7 +342,7 @@ def tick():
 
 
 @slack.app.action(re.compile(r'^poll_vote_\d+$'))
-def on_vote(ack, body):
+def on_vote(ack: Ack, body: dict[str, Any]) -> None:
     ack()
     pid, _, i = body['actions'][0]['value'].rpartition(':')
     with lock:
@@ -347,7 +352,7 @@ def on_vote(ack, body):
 
 
 @slack.app.action('poll_close')
-def on_close(ack, body):
+def on_close(ack: Ack, body: dict[str, Any]) -> None:
     ack()
     if body['user']['id'] != OWNER:
         return

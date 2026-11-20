@@ -9,9 +9,12 @@ colleague's thread is public and answered there (machine turn place)."""
 
 import os
 import time
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 from . import ledger, machine, prompts, slack, t3
 from .config import COMP, NAME, OWNER, log
+from .shapes import Item, ItemFields, Queued, Task
 from .state import key_of, lock, now_iso, save, state
 from .text import first_sentence, no_emoji, quote
 from .when import say
@@ -19,22 +22,22 @@ from .when import say
 THINKING = ':seedling: thinking…'
 
 
-def of(task):
+def of(task: Task) -> tuple[str, str] | None:
     """(channel, ts) of the task's case thread, or None (the owner's own task)."""
     c = task.get('case')
     return (c['ch'], c['ts']) if c else None
 
 
-def owner_place(task):
+def owner_place(task: Task) -> tuple[str, str]:
     """Where the owner reads about this task: its case thread, else its own thread."""
     return of(task) or (task['channel'], task['thread_ts'])
 
 
-def who(task):
+def who(task: Task) -> str:
     return slack.name(machine.party(task)['user'])
 
 
-def _head_md(task, ask, where):
+def _head_md(task: Task, ask: str, where: str) -> str:
     link = slack.permalink(task['channel'], task['thread_ts'])
     return (
         f':speech_balloon: **{who(task)}** messaged {NAME} {where}'
@@ -44,7 +47,9 @@ def _head_md(task, ask, where):
     )
 
 
-def open_case(task, ask, where, card=None, earlier=()):
+def open_case(
+    task: Task, ask: str, where: str, card: str | None = None, earlier: Iterable[dict[str, Any]] = ()
+) -> None:
     """The owner's case for a colleague's new task: a head message in their DM, or the requests channel's card.
     earlier: the thread's messages before the ask, synced into the case too."""
     dm = slack.dm_owner()
@@ -63,9 +68,10 @@ def open_case(task, ask, where, card=None, earlier=()):
     save()
 
 
-def _earlier(task, msgs):
+def _earlier(task: Task, msgs: Iterable[dict[str, Any]]) -> None:
     """The thread before the case opened, into the case: it is synced whole, not from the tag on."""
-    me, said = slack.bot_user(), []
+    me = slack.bot_user()
+    said: list[str] = []
     with ledger.muted():
         for m in msgs:
             if m.get('user') in (None, me) or m.get('bot_id') or m['ts'] == task['trigger_ts']:
@@ -77,14 +83,14 @@ def _earlier(task, msgs):
         note(task, '**Earlier in the thread:**\n' + '\n'.join(said), 'Earlier in the thread')
 
 
-def in_thread(task, ev):
+def in_thread(task: Task, ev: dict[str, Any]) -> None:
     """Anyone's message in a case's thread, tagged or not: the case follows the whole thread."""
     if task.get('case') and ev.get('user') and ev.get('user') != slack.bot_user():
         heard(task, ev['user'], ev.get('text') or '', ev.get('files') or (), ts=ev['ts'])
         save()
 
 
-def open_late(task, by, text):
+def open_late(task: Task, by: str, text: str) -> None:
     """A colleague talks in a task started without a case (a review they asked for): a shared case, from now on."""
     chan = slack.channel_name(task['channel'])
     machine.set_party(task, 'colleague', by)
@@ -110,10 +116,10 @@ _NOTES = {
 }
 
 
-def status(task):
+def status(task: Task) -> None:
     """The head's grey line, from the task's phase."""
-    c = task.get('case') or {}
-    if c.get('head') != 'own':
+    c = task.get('case')
+    if not c or c.get('head') != 'own':
         return
     n = len(ledger.pending(task))
     line = _NOTES[task.get('phase') or 'working'].format(
@@ -125,16 +131,16 @@ def status(task):
 machine.on_phase(status)
 
 
-def note(task, md, text=None):
+def note(task: Task, md: str, text: str | None = None) -> None:
     """Post `md` where the owner follows the task."""
     slack.post(*owner_place(task), text or first_sentence(no_emoji(md), 150) or 'Update', md=md)
 
 
-def at(ch, thread_ts):
+def at(ch: str, thread_ts: str) -> Task | None:
     """The task whose case head, or a card waiting on the owner, is `thread_ts` in `ch`."""
     for task in state['tasks'].values():
-        c = task.get('case') or {}
-        if c.get('ts') == thread_ts and c.get('ch') == ch and c.get('head') != 'errand':
+        c = task.get('case')
+        if c and c.get('ts') == thread_ts and c.get('ch') == ch and c.get('head') != 'errand':
             return task
         it = ledger.on_card(task, thread_ts)
         if it and (it.get('card') or {}).get('ch') == ch and task.get('case'):
@@ -142,32 +148,42 @@ def at(ch, thread_ts):
     return None
 
 
-def heard(task, by, text, files=(), private=False, first=False, ts=None):
+def heard(
+    task: Task,
+    by: str,
+    text: str,
+    files: Iterable[dict[str, Any] | str] | None = (),
+    private: bool = False,
+    first: bool = False,
+    ts: str | None = None,
+) -> Item | None:
     """A message in the task's thread or to the companion, into the ledger (and so into the case). ts: its Slack ts,
     so each message is recorded once however it arrives (live, tagged, or with the thread so far)."""
     if ts and any(i['kind'] == 'in' and i.get('ts') == ts for i in ledger.items(task)):
         return None
     said = slack.ask(text).strip() or ('(files)' if files else f'(tagged {NAME})')
-    it = ledger.add(
-        task,
-        'in',
-        by=by,
-        label=slack.name(by),
-        text=said,
-        files=[os.path.basename(str(f.get('name') if isinstance(f, dict) else f)) for f in files or ()],
-        private=private or None,
-        first=first or None,
-        ts=ts,
-    )
+    fields: ItemFields = {
+        'by': by,
+        'label': slack.name(by),
+        'text': said,
+        'files': [os.path.basename(str(f.get('name') if isinstance(f, dict) else f)) for f in files or ()],
+    }
+    if private:  # ledger.add drops fields given as None
+        fields['private'] = True
+    if first:
+        fields['first'] = True
+    if ts is not None:
+        fields['ts'] = ts
+    it = ledger.add(task, 'in', **fields)
     if not private:
         COMP.event('received', f'{slack.name(by)} wrote', task=key_of(task), detail=said)
     return it
 
 
 @ledger.listen
-def _render(task, it, old):
+def _render(task: Task, it: Item, old: str | None) -> None:
     """Copies and warnings into the case thread; the cards and the agent's own lines are posted where they happen."""
-    c = task.get('case') or {}
+    c = task.get('case')
     kind, st = it['kind'], it['state']
     if st in ('refused', 'failed', 'lost'):
         what = {'in': 'A message', 'final': 'The reply'}.get(kind, f"{NAME}'s {kind.replace('_', ' ')}")
@@ -187,7 +203,7 @@ def _render(task, it, old):
         note(task, f'**{NAME} → {who(task)}:**\n{it["text"]}', f'{NAME} replied to {who(task)}')
 
 
-def ask(task, text, files, ts):
+def ask(task: Task, text: str, files: list[dict[str, Any]] | None, ts: str) -> None:
     """The owner talks to the companion about a case: privately, answered in the case thread only."""
     c = of(task)
     if not c:
@@ -221,33 +237,35 @@ def ask(task, text, files, ts):
         machine.set_asking(task, False)
         machine.begin_turn(task, 'owner', 'case')
         task.update(
-            burst_start=now,
-            step_from=now,
-            ended='',
-            trigger_ts=ts,
-            seen_ts=ts,
-            quiet_since=0,
-            options={},
-            last_status='',
-            last_status_at=0,
+            {
+                'burst_start': now,
+                'step_from': now,
+                'ended': '',
+                'trigger_ts': ts,
+                'seen_ts': ts,
+                'quiet_since': 0,
+                'options': {},
+                'last_status': '',
+                'last_status_at': 0,
+            }
         )
         ts_line = slack.note_only(*c, THINKING)
         task['line'] = {'ch': c[0], 'ts': ts_line, 'since': time.time()} if ts_line else None
     save()
 
 
-def queue(task, item):
+def queue(task: Task, item: Queued) -> None:
     task.setdefault('queue', []).append(item)
     save()
 
 
-def next_in_line(task):
+def next_in_line(task: Task) -> Queued | None:
     """After a turn: the oldest message that waited for it, or None."""
     q = task.get('queue') or []
     return q.pop(0) if q else None
 
 
-def deliver(task, it, ok=(), refused=()):
+def deliver(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[str] = ()) -> None:
     """A ledger message for the colleague: into their thread at once. ok / refused: its files, through the gate."""
     if refused:
         it['held'] = ', '.join(refused)

@@ -21,11 +21,14 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable, Collection, Iterable, Iterator
+from typing import Any, Literal, Unpack, cast, get_args
 
 from .config import COMP, FILES, log
+from .shapes import Item, ItemData, ItemFields, Task
 from .state import key_of, save
 
-STATES = {
+STATES: dict[str, tuple[str, ...]] = {
     'in': ('received',),
     'final': ('sent', 'silent'),
     'message': (
@@ -44,7 +47,7 @@ STATES = {
     'credential': ('received', 'awaiting_owner', 'sent', 'rejected', 'refused', 'failed', 'lost'),
     'poll_change': ('received', 'applied', 'refused'),
 }
-MOVES = {
+MOVES: dict[str, set[str]] = {
     'received': {'awaiting_owner', 'approved', 'sent', 'applied', 'refused', 'failed', 'dry_run'},
     'awaiting_owner': {'approved', 'sent', 'rejected', 'replaced', 'withdrawn', 'failed', 'lost'},
     'approved': {'sent', 'failed'},
@@ -71,17 +74,18 @@ class IllegalMoveError(ValueError):
     """A move the item's state machine does not allow: a bug, never something to work around."""
 
 
-_listeners = []  # fn(task, item, old_state): the case thread renders from here (cases.py)
+Listener = Callable[[Task, Item, str | None], object]
+_listeners: list[Listener] = []  # fn(task, item, old_state): the case thread renders from here (cases.py)
 _mute = threading.local()
 
 
-def listen(fn):
+def listen[F: Listener](fn: F) -> F:
     _listeners.append(fn)
     return fn
 
 
 @contextlib.contextmanager
-def muted():
+def muted() -> Iterator[None]:
     """Record without showing (a migration of what was already shown)."""
     _mute.on = True
     try:
@@ -90,11 +94,11 @@ def muted():
         _mute.on = False
 
 
-def items(task):
+def items(task: Task) -> list[Item]:
     return task.setdefault('items', [])
 
 
-def add(task, kind, state=None, **fields):
+def add(task: Task, kind: str, state: str | None = None, **fields: Unpack[ItemFields]) -> Item:
     """A new item in its kind's first state (or `state`, one of its kind's states)."""
     if kind not in STATES:
         raise IllegalMoveError(f'unknown kind {kind!r}')
@@ -102,27 +106,28 @@ def add(task, kind, state=None, **fields):
     if state not in STATES[kind]:
         raise IllegalMoveError(f'{kind} cannot start as {state}')
     now = time.time()
-    it = {
+    it: Item = {
         'id': f'{len(items(task)) + 1}',
         'kind': kind,
         'state': state,
         'at': now,
         'updated': now,
         'history': [[state, now, fields.get('note', '')]],
-        **{k: v for k, v in fields.items() if v is not None},
     }
+    it.update(cast(ItemFields, {k: v for k, v in fields.items() if v is not None}))  # the fields given, less the None
     items(task).append(it)
     _changed(task, it, None)
     return it
 
 
-def move(task, it, state, note='', **fields):
+def move(task: Task, it: Item, state: str, note: str = '', **fields: Unpack[ItemData]) -> Item:
     """Move `it` to `state` along MOVES; anything else raises IllegalMoveError."""
     old = it['state']
     if state not in STATES[it['kind']] or state not in MOVES.get(old, ()):
         raise IllegalMoveError(f'{it["kind"]} {it["id"]}: {old} -> {state}')
     now = time.time()
-    it.update(state=state, updated=now, **fields)
+    it.update({'state': state, 'updated': now})
+    it.update(fields)
     if note:
         it['note'] = note
     it['history'].append([state, now, note])
@@ -130,31 +135,31 @@ def move(task, it, state, note='', **fields):
     return it
 
 
-def get(task, item_id):
+def get(task: Task, item_id: str | int) -> Item | None:
     return next((i for i in items(task) if i['id'] == str(item_id)), None)
 
 
-def on_card(task, ts):
+def on_card(task: Task, ts: str) -> Item | None:
     """The item whose decision card is the message `ts`."""
     return next((i for i in items(task) if (i.get('card') or {}).get('ts') == ts), None)
 
 
-def pending(task, kind=None):
+def pending(task: Task, kind: str | None = None) -> list[Item]:
     """Items waiting for the owner, oldest first."""
     return [i for i in items(task) if i['state'] == 'awaiting_owner' and (kind is None or i['kind'] == kind)]
 
 
-def latest(task, kind, states=OPEN):
+def latest(task: Task, kind: str, states: Collection[str] = OPEN) -> Item | None:
     return next((i for i in reversed(items(task)) if i['kind'] == kind and i['state'] in states), None)
 
 
-def turn_items(task):
+def turn_items(task: Task) -> list[Item]:
     """What the turn under way produced."""
     since = (task.get('turn') or {}).get('at', 0)
     return [i for i in items(task) if i['at'] >= since]
 
 
-def _changed(task, it, old):
+def _changed(task: Task, it: Item, old: str | None) -> None:
     task['items_rev'] = task.get('items_rev', 0) + 1
     for fn in [] if getattr(_mute, 'on', False) else _listeners:
         try:
@@ -165,7 +170,7 @@ def _changed(task, it, old):
     save()
 
 
-def receipts(task):
+def receipts(task: Task) -> None:
     """outbox/<task>/receipts.json: what became of everything the agent handed over, for the agent to read."""
     if not task.get('outbox'):
         return
@@ -193,13 +198,14 @@ def receipts(task):
         log('receipts not written:', e)
 
 
-SHOWN = (  # what the hub gets of an item; never cards, drafts' markup or file paths
+Shown = Literal[  # what the hub gets of an item; never cards, drafts' markup or file paths
     'by', 'to', 'label', 'text', 'files', 'private', 'note', 'ref', 'action', 'details', 'side', 'question', 'where',
     'held', 'history',
-)  # fmt: skip
+]  # fmt: skip
+SHOWN: tuple[Shown, ...] = get_args(Shown)
 
 
-def rows(task):
+def rows(task: Task) -> list[dict[str, Any]]:
     """The items as the hub stores them (companion.py `items` table)."""
     k = key_of(task)
     return [
@@ -216,5 +222,5 @@ def rows(task):
     ]
 
 
-def publish(tasks):
+def publish(tasks: Iterable[Task]) -> None:
     COMP.items([r for t in tasks for r in rows(t)])

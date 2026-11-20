@@ -5,15 +5,17 @@ not listed raises IllegalStateError: a bug, never something to work around. mach
 and the machines below are the whole of the companion's lifecycle state."""
 
 from collections.abc import Mapping, MutableMapping
-from typing import Any
+from typing import Any, cast
+
+from .shapes import Ask, Draft, Poll, Retry, ReviewEntry
 
 
 class IllegalStateError(ValueError):
     """A state or move a machine does not allow."""
 
 
-class Machine:
-    """States and moves of one kind of record, kept in `record[field]`."""
+class Machine[R: Mapping[str, Any]]:
+    """States and moves of one kind of record (R, a shapes.py TypedDict), kept in `record[field]`."""
 
     def __init__(self, name: str, moves: Mapping[str, tuple[str, ...]], field: str = 'state') -> None:
         self.name, self.field = name, field
@@ -23,28 +25,31 @@ class Machine:
             if not to <= self.states:
                 raise IllegalStateError(f'{name}: a move to an unknown state {sorted(to - self.states)}')
 
-    def of(self, record: Mapping[str, Any]) -> str:
+    def of(self, record: R) -> str:
         s = record.get(self.field)
         if s not in self.states:
             raise IllegalStateError(f'{self.name} in no known state: {s!r}')
         return s
 
-    def is_(self, record: Mapping[str, Any], *states: str) -> bool:
+    def is_(self, record: R, *states: str) -> bool:
         return self.of(record) in states
 
-    def start(self, record: MutableMapping[str, Any], state: str) -> None:
+    def _set(self, record: R, state: str) -> None:
+        cast(MutableMapping[str, Any], record)[self.field] = state  # a TypedDict takes no key named at runtime
+
+    def start(self, record: R, state: str) -> None:
         if state not in self.states:
             raise IllegalStateError(f'{self.name} cannot start as {state!r}')
-        record[self.field] = state
+        self._set(record, state)
 
-    def can(self, record: Mapping[str, Any], to: str) -> bool:
+    def can(self, record: R, to: str) -> bool:
         return to in self.moves[self.of(record)]
 
-    def move(self, record: MutableMapping[str, Any], to: str) -> None:
+    def move(self, record: R, to: str) -> None:
         old = self.of(record)
         if to not in self.moves[old]:
             raise IllegalStateError(f'{self.name}: {old} -> {to}')
-        record[self.field] = to
+        self._set(record, to)
 
 
 # A product-update draft (drafts.py), by its folder.
@@ -53,7 +58,7 @@ class Machine:
 #   revising  the owner asked to change the posted update; a chat is rewriting it
 #   editing   the rewrite is previewed: update the post in place, or keep it
 #   discarded the owner threw the draft away
-DRAFT = Machine(
+DRAFT: Machine[Draft] = Machine(
     'draft',
     {
         'pending': ('posted', 'discarded'),
@@ -66,7 +71,9 @@ DRAFT = Machine(
 )
 
 # An ask in the requests channel (inbox.py): the owner approves or declines it once.
-ASK = Machine('ask', {'pending': ('approved', 'declined'), 'approved': (), 'declined': ()}, field='status')
+ASK: Machine[Ask] = Machine(
+    'ask', {'pending': ('approved', 'declined'), 'approved': (), 'declined': ()}, field='status'
+)
 
 # A pull request in a review batch (reviews.py), as its card line shows it.
 #   queued     waiting for a free slot          reviewing  its chat is running
@@ -77,7 +84,7 @@ ASK = Machine('ask', {'pending': ('approved', 'declined'), 'approved': (), 'decl
 # review publishes again when its chat is re-run.
 _LIVE = ('reviewing', 'waiting', 'paused')
 _ENDS = ('approved', 'changes', 'failed', 'stopped', 'asked')
-REVIEW = Machine(
+REVIEW: Machine[ReviewEntry] = Machine(
     'review',
     {
         'queued': ('reviewing', 'failed'),
@@ -93,7 +100,7 @@ REVIEW_ENDS = _ENDS  # a review in one of these has a verdict
 #   idle     nothing pending (count: the retries this turn so far)
 #   waiting  "continue" is due at `at`
 #   sent     "continue" went at `at`; the chat gets a grace period to start running before anything else is decided
-RETRY = Machine('retry', {'idle': ('waiting',), 'waiting': ('sent', 'idle'), 'sent': ('idle',)})
+RETRY: Machine[Retry] = Machine('retry', {'idle': ('waiting',), 'waiting': ('sent', 'idle'), 'sent': ('idle',)})
 
 # A poll (polls.py): open until it closes, by its time, the owner, or the hub.
-POLL = Machine('poll', {'open': ('closed',), 'closed': ()})
+POLL: Machine[Poll] = Machine('poll', {'open': ('closed',), 'closed': ()})

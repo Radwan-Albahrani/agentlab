@@ -6,14 +6,16 @@ import time
 
 from . import errands, jobs, prompts, reviews, slack, t3, tasks
 from .config import COMP, OWNER, REQ_SETTLE, log, mode
+from .shapes import Request
+from .slack import Json
 from .state import lock, save, state
 from .text import first_sentence, quote
 
-_pending = {}  # conversation -> request being collected
-_known = {}  # cached lookups: channel kinds, members
+_pending: dict[tuple[str, str], Request] = {}  # conversation -> request being collected
+_known: dict[str, bool] = {}  # cached lookups: channel kinds, members
 
 
-def own_dm(ch):
+def own_dm(ch: str) -> bool:
     """Is this DM the companion's own (not one the owner's token sees)? Failures are deliberately not cached."""
     if ch in _known:
         return _known[ch]
@@ -34,18 +36,18 @@ def own_dm(ch):
     return _known[ch]
 
 
-def _self_dm(ch):
+def _self_dm(ch: str) -> bool:
     k = 'self:' + ch
     if k not in _known:
         try:
-            c = slack.USER.conversations_info(channel=ch)['channel']
+            c = slack.owner_client().conversations_info(channel=ch)['channel']
             _known[k] = bool(c.get('is_im')) and c.get('user') == OWNER
         except Exception:
             _known[k] = False
     return _known[k]
 
 
-def team_member(uid):
+def team_member(uid: str) -> bool:
     """Not a bot, deactivated, guest or Slack Connect user."""
     k = 'member:' + uid
     if k not in _known:
@@ -59,21 +61,21 @@ def team_member(uid):
     return _known[k]
 
 
-def thread_root_user(ch, tts):
+def thread_root_user(ch: str, tts: str) -> str | None:
     """Who started this thread, read with the owner's token."""
     try:
-        m = slack.USER.conversations_replies(channel=ch, ts=tts, limit=1)['messages'][0]
+        m = slack.owner_client().conversations_replies(channel=ch, ts=tts, limit=1)['messages'][0]
         return None if m.get('bot_id') else m.get('user')
     except Exception:
         return None
 
 
-def bare_tag(text):
+def bare_tag(text: str | None) -> bool:
     """Just "@companion", maybe with punctuation (an errand, not a task)."""
     return not re.sub(r'<@[A-Z0-9]+>|[\s\W_]+', '', text or '')
 
 
-def tagged_in_thread(ev):
+def tagged_in_thread(ev: Json) -> None:
     """The owner tagged @companion under someone else's channel message: errand, review or task."""
     ch, thr = ev['channel'], ev['thread_ts']
     if bare_tag(ev.get('text')):
@@ -86,7 +88,7 @@ def tagged_in_thread(ev):
         tasks.start(ch, thr, ev['ts'], ev.get('text', ''))
 
 
-def tagged_in_dm(ev):
+def tagged_in_dm(ev: Json) -> None:
     """The owner tagged @companion in one of their DMs: errand, or a task run in the owner's DM with the companion."""
     if bare_tag(ev.get('text')):
         owner_tagged(ev)
@@ -107,23 +109,26 @@ def tagged_in_dm(ev):
         tasks.start(dm, head, head, ev.get('text', ''), elsewhere=(f'their Slack DM with {who}', msgs))
 
 
-def _conversation(ev):
+def _conversation(ev: Json) -> tuple[list[Json], Json]:
     """(messages oldest first, conversation info) up to the tag, read with the owner's token."""
     ch, ts, thr = ev['channel'], ev['ts'], ev.get('thread_ts')
     try:
         if thr:
-            msgs = slack.USER.conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=60)
-            msgs = msgs['messages']
+            msgs = slack.owner_client().conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=60)[
+                'messages'
+            ]
         else:
-            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
+            msgs = slack.owner_client().conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)[
+                'messages'
+            ]
             msgs.reverse()
-        return msgs, slack.USER.conversations_info(channel=ch)['channel']
+        return msgs, slack.owner_client().conversations_info(channel=ch)['channel']
     except Exception as e:
         log('tagged conversation unreadable:', e)
         return [], {}
 
 
-def guest_tagged(ev):
+def guest_tagged(ev: Json) -> None:
     """Someone with access tagged @companion where it can't read or post (their DM with the owner, a channel it
     isn't in): the task runs in their DM with the companion."""
     user = ev['user']
@@ -148,24 +153,26 @@ def guest_tagged(ev):
         tasks.start(dm, head, head, ev.get('text', ''), (f"{slack.name(user)}'s Slack {where}", msgs), user)
 
 
-def owner_tagged(ev):
+def owner_tagged(ev: Json) -> None:
     """Bare owner tag on someone else's request: start an errand on their messages since the owner's last one."""
     ch, ts, thr = ev['channel'], ev['ts'], ev.get('thread_ts')
     try:
         if thr:
             msgs = list(
                 reversed(
-                    slack.USER.conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=50)[
+                    slack.owner_client().conversations_replies(channel=ch, ts=thr, latest=ts, inclusive=True, limit=50)[
                         'messages'
                     ]
                 )
             )
         else:
-            msgs = slack.USER.conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)['messages']
+            msgs = slack.owner_client().conversations_history(channel=ch, latest=ts, inclusive=True, limit=15)[
+                'messages'
+            ]
     except Exception as e:
         log('tagged conversation unreadable:', e)
         msgs = []
-    theirs = []
+    theirs: list[Json] = []
     for m in msgs:
         if m.get('user') == OWNER:
             if theirs:
@@ -177,7 +184,7 @@ def owner_tagged(ev):
     texts = [slack.readable(m.get('text') or '') for m in reversed(theirs)] or [own or '(see the conversation)']
     if own and theirs:
         texts.append(f'({slack.name(OWNER)} added: {own})')
-    p = {
+    p: Request = {
         'ch': ch,
         'ts': theirs[0]['ts'] if theirs else ts,
         'thread_ts': thr,
@@ -191,7 +198,7 @@ def owner_tagged(ev):
     errands.start(p, own)
 
 
-def await_invite(ev):
+def await_invite(ev: Json) -> None:
     """Tagged in a channel it isn't in: keep the tag until invited (invite_tick), for up to a day."""
     with lock:
         state.setdefault('awaiting_invite', {})[ev['ts']] = {
@@ -205,7 +212,7 @@ def await_invite(ev):
     log('tagged in', ev['channel'], 'but not a member: waiting for the invite')
 
 
-def invite_tick():
+def invite_tick() -> None:
     waiting = state.get('awaiting_invite') or {}
     if not waiting or time.time() < state.get('_invite_check', 0):
         return
@@ -219,12 +226,12 @@ def invite_tick():
             jobs.run_later(tasks.start, w['ch'], w['thread_ts'] or ts, ts, w['text'])
 
 
-def notice(ev):
+def notice(ev: Json) -> None:
     """Collect a message not addressed to the companion if it may be someone asking the owner."""
     m = mode()
     if m not in ('owner', 'team') or not slack.USER:
         return
-    ch, ts, user, text = ev['channel'], ev['ts'], ev.get('user'), ev.get('text') or ''
+    ch, ts, user, text = ev['channel'], ev['ts'], ev.get('user') or '', ev.get('text') or ''
     im = ch.startswith('D')
     if m == 'owner':  # dry run
         ok = user == OWNER and ((im and _self_dm(ch)) or (not im and f'<@{OWNER}>' in text))
@@ -244,7 +251,7 @@ def notice(ev):
     log('request seen from', user, 'in', ch)
 
 
-def pending_tick():
+def pending_tick() -> None:
     now = time.time()
     for conv, p in list(_pending.items()):
         if now - p['last'] >= REQ_SETTLE:
@@ -252,11 +259,13 @@ def pending_tick():
             jobs.run_later(triage, p)
 
 
-def triage(p):
+def triage(p: Request) -> None:
     """One model call classifies the request: errand, task (heads-up) or nothing."""
     who, owner = slack.name(p['user']), slack.name(OWNER)
     try:
-        msgs = list(reversed(slack.USER.conversations_history(channel=p['ch'], latest=p['ts'], limit=8)['messages']))
+        msgs = list(
+            reversed(slack.owner_client().conversations_history(channel=p['ch'], latest=p['ts'], limit=8)['messages'])
+        )
     except Exception:
         msgs = []
     convo = '\n'.join(f'{slack.name(m.get("user", "?"))}: {slack.readable(m.get("text") or "")[:400]}' for m in msgs)
@@ -283,7 +292,7 @@ def triage(p):
         )
 
 
-def _heads_up(p, who, what):
+def _heads_up(p: Request, who: str, what: str) -> None:
     link = slack.permalink(p['ch'], p['ts'], slack.USER)
     slack.post(
         slack.dm_owner(),
