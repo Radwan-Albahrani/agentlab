@@ -1,12 +1,11 @@
 """`agentctl update`: fast-forward pull, images, apply, then wait for busy agents ([updates] on_busy)."""
 
-import contextlib
 import datetime
 import json
 import os
-import sqlite3
 import sys
 import time
+from typing import Any
 
 from . import apply, deploy, images, render
 from .util import REPO, Failed, Plan, load_json, need_root, run, say
@@ -54,21 +53,25 @@ def pull(branch):
     return before, head()
 
 
-def inflight(agent):
-    """[(run id, thread id)] of T3 turns in progress, read on the host."""
-    db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
-    try:
-        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5)) as c:
-            marks = ','.join('?' * len(deploy.SETTLED))
-            q = f'select run_id, thread_id from orchestration_v2_projection_runs where status not in ({marks})'
-            return [tuple(r) for r in c.execute(q, deploy.SETTLED)]
-    except sqlite3.Error:
+def inflight(cfg: dict[str, Any], agent: dict[str, Any]) -> list[tuple[str, str]]:
+    """[(run id, thread id)] of T3 turns without a finished status, as the agent reports them; none when it is
+    stopped or can't answer."""
+    got = deploy.ask_t3(cfg, agent, 'inflight')
+    if not isinstance(got, list):
         return []
+    out = []
+    for row in got:
+        match row:
+            case [str(run_id), str(thread_id)]:
+                out.append((run_id, thread_id))
+            case _:
+                return []  # garbage
+    return out
 
 
-def resume(cfg, agent, kind, key, plan):
+def resume(cfg: dict[str, Any], agent: dict[str, Any], kind: str, key: str | None, plan: Plan) -> list[str]:
     """Restart a busy agent anyway (T3 resumes the cut-off turns itself). -> the chats that were mid-turn"""
-    running = sorted({thread for _, thread in inflight(agent)})
+    running = sorted({thread for _, thread in inflight(cfg, agent)})
     deploy.deploy(cfg, f'agentlab-agent-{agent["id"]}', kind, key, plan, force=True)
     return running
 
@@ -96,7 +99,7 @@ def wait_for_agents(cfg, plan, wait_hours, on_busy, sleep=time.sleep, clock=time
     deadline = clock() + wait_hours * 3600
     while pending:
         for a in list(pending):
-            if not deploy.agent_busy(a):
+            if not deploy.agent_busy(cfg, a):
                 say(f'  {a["id"]} is idle: updating it')
                 kind, key = stacks[f'agentlab-agent-{a["id"]}']
                 deploy.deploy(cfg, f'agentlab-agent-{a["id"]}', kind, key, plan, force=True)

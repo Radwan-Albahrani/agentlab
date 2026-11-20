@@ -165,13 +165,4 @@ def summary(findings: Sequence[Finding], qa: Mapping[str, Any] | None) -> str:
     return out
 
 
-def counts_of(summary: str) -> dict[str, int | str] | None:
-    """Counts parsed from a legacy summary line ("3 findings (3 blocking) · ..."), or None."""
-    m = re.match(r'(no findings|(\d+) findings?(?: \((\d+) blocking\))?)', summary or '')
-    if not m:
-        return None
-    qa = next((v for v, words in QA_WORDS.items() if summary.endswith('QA ' + words)), '')
-    return {'findings': int(m.group(2) or 0), 'blocking': int(m.group(3) or 0), 'open': 0, 'qa': qa}
-
-
 QA_WORDS = {'pass': 'verified', 'fail': 'found problems', 'partial': 'partly verified', 'skipped': 'not needed'}

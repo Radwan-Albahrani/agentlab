@@ -1,6 +1,8 @@
 """The page's button actions: each returns the toast text; ValueError carries a message for the user."""
 
 import re
+from collections.abc import Callable
+from typing import Any
 
 import cluster
 import display
@@ -9,8 +11,10 @@ import scope
 import screens
 import store
 
+Json = dict[str, Any]  # a request body
 
-def companion(name, what, b):
+
+def companion(name: str, what: str, b: Json) -> str:
     if name not in cluster.companions():
         raise ValueError('Unknown companion.')
     if what == 'restart':
@@ -42,20 +46,20 @@ def companion(name, what, b):
         changed = store.companions.save_secret(name, str(b.get('file', '')), str(b.get('value', '')))
         return f'Saved; {cluster.display_name(name)} restarts with it.' if changed else 'No change.'
     if what == 'ask':
-        store.companions.ask(name, b.get('text'), b.get('channel', ''), b.get('review', True))
+        store.companions.ask(name, str(b.get('text') or ''), str(b.get('channel') or ''), bool(b.get('review', True)))
         return f'Sent. {cluster.display_name(name)} is on it; follow along in your Slack DM.'
     f = store.companions.set_setting(name, b.get('key', ''), b.get('value'))
     return f'{f["label"]} saved. {cluster.display_name(name)} picks it up within seconds.'
 
 
-def service(what, b):
+def service(what: str, b: Json) -> str:
     if b.get('name') not in store.watch.container_names():
         raise ValueError('Unknown container.')
     store.watch.request(f'{what}~{b["name"]}')
     return 'Restarting.' if what == 'restart' else 'Fetching logs…'
 
 
-def config_deploy(b):
+def config_deploy(b: Json) -> str:
     if b.get('id') not in {s['id'] for s in store.stacks.stacks()}:
         raise ValueError('Unknown stack.')
     store.watch.request('deploy~' + b['id'])
@@ -69,8 +73,8 @@ RESERVE = re.compile(r'^\d{1,2}%$|^\d+(\.\d+)?[kmgt]?b?$', re.IGNORECASE)
 NO_WATCHER = 'The host watcher (agentlab-watch) is not running, so nothing can change right now.'
 
 
-def _limit_args(b):
-    out = {}
+def _limit_args(b: Json) -> dict[str, str]:
+    out: dict[str, str] = {}
     memory, cpus = str(b.get('memory') or '').strip().lower(), str(b.get('cpus') or '').strip().lower()
     if memory:
         if memory not in ('default', 'auto') and not SIZE.match(memory):
@@ -87,7 +91,7 @@ def _limit_args(b):
     return out
 
 
-def manage(what, b):
+def manage(what: str, b: Json) -> str:
     """Queue an agent management job for the host; -> the toast text."""
     if not store.watch.alive():
         raise ValueError(NO_WATCHER)
@@ -127,7 +131,7 @@ def manage(what, b):
     return f'Removing {aid}.'
 
 
-def disk_sizes(b):
+def disk_sizes(b: Json) -> str:
     if not store.watch.alive():
         raise ValueError(NO_WATCHER)
     size = str(b.get('personSize') or '').strip().lower()
@@ -142,7 +146,7 @@ def disk_sizes(b):
     return 'Resizing disks. Agents on a disk that shrinks stop for a few minutes.'
 
 
-def storage(what):
+def storage(what: str) -> str:
     store.watch.request(what)
     return (
         'Measuring now; the breakdown updates in about a minute.'
@@ -151,7 +155,7 @@ def storage(what):
     )
 
 
-def secret(what, b):
+def secret(what: str, b: Json) -> str:
     name = b.get('name', '')
     if what == 'save':
         return (
@@ -167,12 +171,12 @@ def secret(what, b):
     return f'{name} restored; it applies within 30 s.'
 
 
-def _toggle(setting):
+def _toggle(setting: str) -> bool:
     notify.update(**{setting: not notify.load()[setting]})
     return notify.load()[setting]
 
 
-def _device_key(b):
+def _device_key(b: Json) -> str:
     key = re.sub(r'^https?://[^/]+/', '', b.get('deviceKey', '').strip()).split('/')[0]  # accepts a pasted Bark URL
     if re.fullmatch(r'[0-9a-f]{64}', key):
         raise ValueError("That is the phone's Apple push token. Paste the short key shown under the server in Bark.")
@@ -180,7 +184,7 @@ def _device_key(b):
     return 'Device key saved.'
 
 
-def _encryption_key(b):
+def _encryption_key(b: Json) -> str:
     key = b.get('key', '').strip()
     if len(key) != 16:
         raise ValueError('The key is 16 characters.')
@@ -188,7 +192,7 @@ def _encryption_key(b):
     return 'Key saved.'
 
 
-def _test_push(_b):
+def _test_push(_b: Json) -> str:
     body = 'If you can read this, agent notifications work.'
     first = next(iter(cluster.ids()), '')
     url = notify.newest_chat_link(first) if first else ''
@@ -196,12 +200,12 @@ def _test_push(_b):
     return 'Test sent.'
 
 
-def _minutes(b):
+def _minutes(b: Json) -> str:
     notify.update(min_minutes=max(0, min(240, int(b.get('minutes') or 3))))
     return 'Saved.'
 
 
-NOTIFICATION_ACTIONS = {
+NOTIFICATION_ACTIONS: dict[str, Callable[[Json], str]] = {
     'test': _test_push,
     'mute': lambda _b: 'Muted.' if _toggle('muted') else 'Unmuted.',
     'encrypt': lambda _b: 'Encryption on.' if _toggle('encrypt') else 'Encryption off.',
@@ -211,18 +215,18 @@ NOTIFICATION_ACTIONS = {
 }
 
 
-def notification(act, b):
+def notification(act: str, b: Json) -> str:
     if act not in NOTIFICATION_ACTIONS:
         raise ValueError('Unknown action.')
     return NOTIFICATION_ACTIONS[act](b)
 
 
-def display_mode(b):
+def display_mode(b: Json) -> str:
     display.set_mode(b.get('key', ''), b.get('value'))
     return 'Saved.'
 
 
-def presenting(b):
+def presenting(b: Json) -> str:
     on = (not display.load()['presenting']) if b.get('toggle') else bool(b.get('on'))
     display.set_presenting(on)
     return 'Done.'

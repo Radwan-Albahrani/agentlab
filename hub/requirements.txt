@@ -1,0 +1,3 @@
+# The backend's packages: the image and test.sh install these. SQLAlchemy is the companion's version.
+SQLAlchemy==2.1.9
+typing-extensions==4.16.0

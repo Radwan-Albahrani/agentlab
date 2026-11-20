@@ -5,18 +5,29 @@ import os
 import re
 import time
 from collections.abc import Callable, Collection
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict
 
 from reviewer import prompt as brief
 from reviewer import pulls, report
-from reviewer.github import App, GitHubError
+from reviewer.github import App, GitHubError, User
 from reviewer.pulls import Target, Thread
 from reviewer.report import Finding
+from tables import CardRow, Counts, Detail, PullReview, PullRow, RunPos
 
 from . import machine, projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, NAME, OWNER, evidence_repo, log, mode, optional_secret, review_slots, slack_for_github
 from .fsm import REVIEW, REVIEW_ENDS
-from .shapes import Review, ReviewBatch, ReviewEntry, ReviewQueued, Task
+from .shapes import (
+    Asker,
+    Json,
+    Origin,
+    Review,
+    ReviewBatch,
+    ReviewEntry,
+    ReviewQueued,
+    ReviewState,
+    Task,
+)
 from .state import key, key_of, lock, new_task, review_of, save, state
 from .text import first_sentence, no_emoji
 from .when import say
@@ -32,7 +43,23 @@ LEADING_REF = re.compile(r'^\s*(?:<?https?://\S*github\.com/\S+/pull/\d+\S*|[\w.
 # The cached App and the secrets it was built with.
 _Cached = TypedDict('_Cached', {'with': tuple[str, str] | None, 'app': App | None})
 
-status: dict[str, Any] = {'ready': False, 'bot': '', 'accounts': [], 'at': 0.0, 'error': ''}
+
+class GithubStatus(TypedDict):
+    """The GitHub App as the hub shows it (heartbeat.json github): ready once it listed the PRs."""
+
+    ready: bool
+    bot: str
+    accounts: list[str]
+    at: float
+    error: str
+
+
+class GithubBeat(GithubStatus):
+    people: list[User]
+    repos: list[str]
+
+
+status: GithubStatus = {'ready': False, 'bot': '', 'accounts': [], 'at': 0.0, 'error': ''}
 PEOPLE_EVERY = 3600
 _app: _Cached = {'with': None, 'app': None}
 
@@ -41,7 +68,7 @@ def app() -> App | None:
     """The GitHub App from Secrets (rebuilt when they change), or None."""
     ident, pem = optional_secret(APP_ID), optional_secret(APP_KEY)
     if not ident or not pem:
-        status.update(ready=False, error='not set up')
+        status.update({'ready': False, 'error': 'not set up'})
         return None
     if _app['with'] != (ident, pem):
         _app.update({'with': (ident, pem), 'app': App(ident, pem)})
@@ -56,13 +83,12 @@ def refresh() -> None:
         return
     try:
         found = pulls.open_pulls(a)
-        status.update(
-            ready=True, error='', bot=a.slug(), accounts=[i['account'] for i in a.installations()], at=time.time()
-        )
+        accounts = [i['account'] for i in a.installations()]
+        status.update({'ready': True, 'error': '', 'bot': a.slug(), 'accounts': accounts, 'at': time.time()})
         state['pulls'] = found
     except Exception as e:  # keep the last list
         log('pull requests unavailable:', e)
-        status.update(error=str(e)[:200], at=time.time())
+        status.update({'error': str(e)[:200], 'at': time.time()})
     _refresh_people(a)
     save()
 
@@ -71,20 +97,20 @@ def _refresh_people(a: App) -> None:
     """Hourly: who can work on the repos with open PRs, and the App's private repos (the hub's pickers).
 
     Failures keep the last list."""
-    known = state.get('github_people') or {}
-    if time.time() - known.get('at', 0) < PEOPLE_EVERY:
+    known = state.get('github_people')
+    if known and time.time() - known['at'] < PEOPLE_EVERY:
         return
     try:
         found = pulls.people(a, state.get('pulls') or [])
     except Exception as e:
         log('GitHub people unavailable:', e)
-        found = known.get('list') or []
+        found = known['list'] if known else []
     state['github_people'] = {'at': time.time(), 'list': found}
     try:
         repos = sorted((r['name'] for r in a.repositories() if r['private']), key=str.casefold)
     except Exception as e:
         log('GitHub repositories unavailable:', e)
-        repos = (state.get('github_repos') or {}).get('list') or []
+        repos = state['github_repos']['list'] if 'github_repos' in state else []
     state['github_repos'] = {'at': time.time(), 'list': repos}
 
 
@@ -94,20 +120,22 @@ def latest(pr_id: str) -> tuple[str, Task] | tuple[None, None]:
     return max(found, key=lambda kt: kt[1].get('start', ''), default=(None, None))
 
 
-def rows(card: Callable[[str, Task], dict[str, Any]]) -> list[dict[str, Any]]:
+def rows(card: Callable[[str, Task], CardRow]) -> list[PullRow]:
     """The hub's PR list, each with its latest review (card: publish.card)."""
     queued = {q['id'] for q in state.get('review_queue', [])}
     entries = _run()
-    run = {e['id']: {'n': i + 1, 'of': len(entries), 'done': bool(verdict_of(e))} for i, e in enumerate(entries)}
+    run: dict[str, RunPos] = {
+        e['id']: {'n': i + 1, 'of': len(entries), 'done': bool(verdict_of(e))} for i, e in enumerate(entries)
+    }
     newest: dict[str, tuple[str, Task]] = {}  # PR id -> (key, task) of its latest review
     for tk, task in state['tasks'].items():
         pr = review_of(task).get('id')
         if pr and (pr not in newest or task.get('start', '') > newest[pr][1].get('start', '')):
             newest[pr] = (tk, task)
-    out = []
+    out: list[PullRow] = []
     for p in state.get('pulls') or []:
         k, t = newest.get(p['id'], (None, None))
-        review: dict[str, Any] | None = None
+        review: PullReview | None = None
         if p['id'] in queued:
             review = {'status': 'queued', 'outcome': 'Waiting for a free slot', 'task': '', 'head': '', 'at': ''}
         elif t and k is not None:
@@ -120,20 +148,21 @@ def rows(card: Callable[[str, Task], dict[str, Any]]) -> list[dict[str, Any]]:
                 'head': r.get('published') or r['head'],
                 'at': t.get('start', ''),
                 'url': r.get('url', ''),
-                'counts': r.get('counts') or report.counts_of(r.get('summary', '')),
             }
+            if 'counts' in r:
+                review['counts'] = r['counts']
             if c['status'] == 'paused':
                 pause = machine.paused(t)
-                review['resumes_at'] = pause.get('resumes_at') if pause else None
-            if r.get('detail') and c['status'] not in ('working', 'waiting', 'paused'):
+                review['resumes_at'] = pause['resumes_at'] if pause else None
+            if 'detail' in r and c['status'] not in ('working', 'waiting', 'paused'):
                 review['detail'] = r['detail']
-        if review and p['id'] in run:
+        if review is not None and p['id'] in run:
             review['run'] = run[p['id']]
-        out.append(dict(p, review=review))
+        out.append({**p, 'review': review})
     return out
 
 
-def request(repo: str, number: int, origin: dict[str, Any] | None = None) -> str:
+def request(repo: str, number: int, origin: Origin | None = None) -> str:
     """Queue a review of repo#number (origin: Slack {channel, thread_ts, trigger_ts}); returns a problem or ''."""
     a = app()
     if not a:
@@ -186,19 +215,19 @@ def from_slack(
     if not pr:
         return False
     repo, number = pr
-    origin: dict[str, Any] = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts}
+    via = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
+    origin: Origin = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts, 'via': via}
     if by:
         origin['by'] = by
     if approved_by:
         origin['approved_by'] = approved_by
-    origin['via'] = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
     with lock:
         going = _going(f'{repo}#{number}') if by else None
         if by and _asked_by(by) >= MAX_ASKED:
             problem = f'you already have {MAX_ASKED} reviews going; ask again once one is done'
-        elif going:  # already queued or running: follow that review
+        elif going and by:  # already queued or running: follow that review
             problem = ''
-            _follow(going, origin, new=False)
+            _follow(going, origin, by, new=False)
             _show()
             save()
         else:
@@ -215,10 +244,9 @@ def _going(pr_id: str) -> ReviewEntry | None:
     return next((e for e in reversed(_run()) if e['id'] == pr_id and verdict_of(e) in (None, 'asked')), None)
 
 
-def _askers(e: ReviewEntry) -> list[dict[str, Any]]:
-    """The colleagues following this review (one dict in the first version)."""
-    v = e.get('for')
-    return [v] if isinstance(v, dict) else v or []
+def _askers(e: ReviewEntry) -> list[Asker]:
+    """The colleagues following this review."""
+    return e.get('for') or []
 
 
 def _asked_by(user: str) -> int:
@@ -226,9 +254,9 @@ def _asked_by(user: str) -> int:
     return sum(1 for e in _run() if verdict_of(e) in (None, 'asked') and any(a['user'] == user for a in _askers(e)))
 
 
-def _follow(e: ReviewEntry, origin: dict[str, Any], new: bool = True) -> None:
+def _follow(e: ReviewEntry, origin: Origin, by: str, new: bool = True) -> None:
     """Keep a colleague posted on a review: an "On it" message whose status line follows it, then the result."""
-    by, ch, thr = origin['by'], origin['channel'], origin['thread_ts']
+    ch, thr = origin['channel'], origin['thread_ts']
     short, line = _short(e['id']), _progress(e)
     pr = f'<{e["url"]}|{short}>'
     if any(a['user'] == by for a in _askers(e)):
@@ -237,8 +265,17 @@ def _follow(e: ReviewEntry, origin: dict[str, Any], new: bool = True) -> None:
     head = f':mag: On it: reviewing {pr}.' if new else f':mag: Already on it: {pr} was asked for before you.'
     md = head + " I'll keep this updated and reply here when it's done."
     ts = slack.post(ch, thr, f'Reviewing {short}', md=md, note=line)
-    asker = {'channel': ch, 'thread': thr, 'user': by, 'name': slack.name(by), 'ts': origin['trigger_ts']}
-    e['for'] = [*_askers(e), dict(asker, msg=ts, md=md, shown=line)]
+    asker: Asker = {
+        'channel': ch,
+        'thread': thr,
+        'user': by,
+        'name': slack.name(by),
+        'ts': origin['trigger_ts'],
+        'msg': ts,
+        'md': md,
+        'shown': line,
+    }
+    e['for'] = [*_askers(e), asker]
     t = state['tasks'].get(e.get('task') or '')
     if t and by not in review_of(t).setdefault('asked_by', []):
         review_of(t)['asked_by'].append(by)
@@ -266,13 +303,13 @@ def _progress(e: ReviewEntry) -> str:
     return f'{icon} {label}' + (f' · {say(e["ended"], "near")}' if e.get('ended') else '')
 
 
-def _status(e: ReviewEntry, a: dict[str, Any]) -> bool:
+def _status(e: ReviewEntry, a: Asker) -> bool:
     """Edit a colleague's status line when it changed; True if it did."""
-    line = _progress(e)
-    if not a.get('msg') or line == a.get('shown'):
+    line, msg = _progress(e), a['msg']
+    if not msg or line == a['shown']:
         return False
     a['shown'] = line
-    slack.update(a['channel'], a['msg'], f'Reviewing {_short(e["id"])}', md=a.get('md'), note=line)
+    slack.update(a['channel'], msg, f'Reviewing {_short(e["id"])}', md=a['md'], note=line)
     return True
 
 
@@ -334,7 +371,7 @@ def for_reply(channel: str, thread_ts: str, text: str, others: bool = False) -> 
     return next(iter(here.values())) if len(here) == 1 else None
 
 
-def answer(task: Task, text: str, files: Any, ts: str) -> None:
+def answer(task: Task, text: str, files: list[Json] | None, ts: str) -> None:
     """Pass a reply on to its review, without the leading PR reference that picked it."""
     msg = LEADING_REF.sub('', slack.ask(text), count=1).strip()
     tasks.follow_up(task, msg or text, files, ts, 'thread')
@@ -414,28 +451,7 @@ VERDICTS = {
 
 def _batch() -> ReviewBatch | None:
     """The current batch, or None. {channel, thread (None: the card is top level), card, prs: [entry]}."""
-    b = state.get('review_batch')
-    if b is None and state.get('review_run'):
-        b = state['review_batch'] = _migrate(state.pop('review_run'))
-    for e in (b or {}).get('prs') or []:
-        _upgrade(e)
-    return b
-
-
-def _migrate(old: list[dict[str, Any]]) -> ReviewBatch:
-    """A run saved by the per-card version: it continues on a fresh batch card; tick retires the old cards."""
-    first = old[0]
-    b: ReviewBatch = {
-        'channel': first['channel'],
-        'thread': None if first.get('hub') else first.get('thread'),
-        'card': None,
-    }
-    b['moved'] = [(e['channel'], e['card'], e['id'], e['url']) for e in old if e.get('card') and not e.get('verdict')]
-    # the saved JSON of the old entries, read as entries (_upgrade gives them a state)
-    b['prs'] = [
-        cast(ReviewEntry, {k: v for k, v in e.items() if k not in ('channel', 'thread', 'card', 'hub')}) for e in old
-    ]
-    return b
+    return state.get('review_batch')
 
 
 def _run() -> list[ReviewEntry]:
@@ -465,12 +481,12 @@ def _join(item: ReviewQueued) -> ReviewEntry:
         'url': f'https://github.com/{item["repo"]}/pull/{item["number"]}',
         'title': next((p['title'] for p in state.get('pulls') or [] if p['id'] == item['id']), ''),
     }
-    REVIEW.start(e, 'queued')
+    e['state'] = REVIEW.first('queued')
     if origin and not by:  # a colleague's 👀 goes with their follow
         e['asked'] = {'channel': origin['channel'], 'ts': origin['trigger_ts']}
     b['prs'].append(e)
     if origin and by:
-        _follow(e, origin)
+        _follow(e, origin, by)
     _show()
     if origin and not by and (origin['channel'], origin['thread_ts']) != (b['channel'], b['thread']) and b.get('card'):
         link = slack.link(b['channel'], b['card'] or '')
@@ -504,30 +520,14 @@ LOOK = {
 
 def verdict_of(e: ReviewEntry) -> str | None:
     """How the review ended (fsm.REVIEW_ENDS), or None while it is queued or running."""
-    s = REVIEW.of(e)
+    s = REVIEW.of(e.get('state'))
     return s if s in REVIEW_ENDS else None
 
 
 def _look(e: ReviewEntry) -> str:
     """The entry's state as the card shows it: a run that ended on a question waits for the owner too."""
-    s = REVIEW.of(e)
+    s = REVIEW.of(e.get('state'))
     return 'waiting' if s == 'asked' else s
-
-
-def _upgrade(e: ReviewEntry) -> None:
-    """An entry saved before entries had a state machine: its flags, read once as the state they meant."""
-    if 'state' in e:
-        return
-    old = e.pop('verdict', None)
-    waiting = e.pop('waiting', False)
-    if old:
-        REVIEW.start(e, old)  # an old verdict it doesn't know is a bug, not a state
-    elif waiting:
-        e['state'] = 'waiting'
-    elif 'paused' in e:
-        e['state'] = 'paused'
-    else:
-        e['state'] = 'reviewing' if e.get('task') else 'queued'
 
 
 def _plural(n: int, word: str) -> str:
@@ -538,10 +538,10 @@ def _line(e: ReviewEntry) -> str:
     """One PR's short line on the card; the details are in its reply in the thread."""
     st = _look(e)
     icon, label = LOOK[st]
-    c = e.get('counts') or {}
-    if st == 'changes' and c.get('blocking'):
+    c: Counts = e.get('counts') or {'findings': 0, 'blocking': 0, 'open': 0, 'qa': ''}
+    if st == 'changes' and c['blocking']:
         label += f' · {c["blocking"]} blocking'
-    elif st == 'approved' and c.get('findings'):
+    elif st == 'approved' and c['findings']:
         label += f' · {_plural(c["findings"], "finding")}'
     pr = f'<{e.get("link") or e["url"]}|#{e["id"].rsplit("#", 1)[-1]}>'
     names = ', '.join(a['name'] for a in _askers(e))
@@ -598,19 +598,10 @@ def _show() -> None:
 
 
 def _tidy() -> None:
-    """A migrated batch: post its card and point the old per-PR cards at it."""
+    """A batch whose card Slack refused: post it again."""
     b = _batch()
-    if not b:
-        return
-    if not b.get('card'):
+    if b and not b.get('card'):
         _show()
-    card = b.get('card')
-    link = slack.link(b['channel'], card) if card else ''
-    for ch, ts, pr_id, url in b.pop('moved', []):
-        where = f'<{link}|the review batch>' if link else 'the review batch'
-        slack.update(
-            ch, ts, f'{pr_id}: followed on the review batch', md=f'<{url}|{pr_id}>', note=f'Followed on {where}'
-        )
 
 
 def _done_md(e: ReviewEntry) -> str:
@@ -620,13 +611,13 @@ def _done_md(e: ReviewEntry) -> str:
 
 
 def _finish(
-    e: ReviewEntry, verdict: str, detail: str = '', link: str = '', thread: tuple[str, str | None] | None = None
+    e: ReviewEntry, verdict: ReviewState, detail: str = '', link: str = '', thread: tuple[str, str | None] | None = None
 ) -> None:
     """Close a review's entry: edit the card, and reply in the batch thread unless the batch's done message will say
     it (a batch of one); thread: (channel, ts) of a review whose batch already ended."""
     if 'state' not in e:  # a re-run from the thread after its batch ended: an entry of its own
-        REVIEW.start(e, 'reviewing')
-    REVIEW.move(e, verdict)
+        e['state'] = REVIEW.first('reviewing')
+    e['state'] = REVIEW.to(e.get('state'), verdict)
     e.update({'detail': detail, 'link': link or e['url'], 'ended': time.time()})
     e.pop('paused', None)
     asked = e.pop('asked', None)
@@ -653,7 +644,7 @@ def _finish(
     save()
 
 
-def _tell_asker(e: ReviewEntry, asker: dict[str, Any]) -> None:
+def _tell_asker(e: ReviewEntry, asker: Asker) -> None:
     """The colleague who asked hears how it ended, in their thread; what went wrong stays with the owner."""
     short, verdict = _short(e['id']), e['state']
     if verdict in ('approved', 'changes'):
@@ -671,7 +662,7 @@ def _tell_asker(e: ReviewEntry, asker: dict[str, Any]) -> None:
     )
 
 
-def _ended(t: Task | None) -> tuple[str, str]:
+def _ended(t: Task | None) -> tuple[ReviewState, str]:
     """(verdict, detail) of a review task that stopped without publishing."""
     outcome = machine.outcome(t or {})
     if outcome == 'stopped':
@@ -692,8 +683,8 @@ def _settle(queue: list[ReviewQueued]) -> None:
     changed = False
     for e in b['prs']:
         t = state['tasks'].get(e.get('task') or '')
-        if REVIEW.is_(e, 'asked', 'failed') and t and machine.running(t):  # answered, or resumed after all
-            REVIEW.move(e, 'reviewing')
+        if REVIEW.is_(e.get('state'), 'asked', 'failed') and t and machine.running(t):  # answered, or resumed after all
+            e['state'] = REVIEW.to(e.get('state'), 'reviewing')
             e.pop('detail', None)
             e.pop('link', None)
             changed = True
@@ -701,9 +692,9 @@ def _settle(queue: list[ReviewQueued]) -> None:
             continue
         if t and machine.running(t):
             paused = machine.paused(t)
-            now = 'waiting' if machine.asking(t) else 'paused' if paused else 'reviewing'
-            if not REVIEW.is_(e, now):
-                REVIEW.move(e, now)
+            now: ReviewState = 'waiting' if machine.asking(t) else 'paused' if paused else 'reviewing'
+            if not REVIEW.is_(e.get('state'), now):
+                e['state'] = REVIEW.to(e.get('state'), now)
                 changed = True
             if paused and e.get('paused') != (paused.get('resumes_at') or 0):
                 e['paused'] = paused.get('resumes_at') or 0  # when it resumes, for the card
@@ -715,7 +706,7 @@ def _settle(queue: list[ReviewQueued]) -> None:
         _finish(e, *_ended(t))
     if changed:
         _show()
-    if any(REVIEW.is_(e, 'paused') for e in b['prs']) and not b.get('limit_told'):
+    if any(REVIEW.is_(e.get('state'), 'paused') for e in b['prs']) and not b.get('limit_told'):
         b['limit_told'] = True
         reset = _reset(b['prs'])
         when = f'at {say(reset, "near")}' if reset else 'when the limit resets'
@@ -789,7 +780,12 @@ def start(item: ReviewQueued, e: ReviewEntry) -> None:
     tid, err = t3.start_thread(where_to['project'], title, message)
     if not tid:
         raise GitHubError(0, f"T3 didn't start the chat: {err}")
-    origin = item.get('origin') or {}
+    origin = item['origin']
+    how = (
+        tasks.audit(origin.get('by', OWNER), origin['via'], origin.get('approved_by'))
+        if origin
+        else tasks.audit(OWNER, 'from the hub')
+    )
     t = new_task(
         ch,
         tts,
@@ -800,7 +796,7 @@ def start(item: ReviewQueued, e: ReviewEntry) -> None:
         None,
         where_to,
         key=k,
-        audit=tasks.audit(origin.get('by') or OWNER, origin.get('via') or 'from the hub', origin.get('approved_by')),
+        audit=how,
         review={
             'id': pr_id,
             'repo': f['repo'],
@@ -817,7 +813,7 @@ def start(item: ReviewQueued, e: ReviewEntry) -> None:
     )
     machine.begin_turn(t, 'system', 'thread')
     e.update({'task': k, 'title': f['title'], 'url': f['url'], 'rereview': rereview, 'began': time.time()})
-    REVIEW.move(e, 'reviewing')
+    e['state'] = REVIEW.to(e.get('state'), 'reviewing')
     _show()
     log('review started', pr_id, tid)
     COMP.event('started', title, task=k, detail=f'{pr_id} at {f["head"][:7]}')
@@ -838,7 +834,7 @@ def _write(box: str, name: str, text: str, private: bool = False) -> None:
     os.chmod(path, 0o600 if private else 0o644)
 
 
-def publish(task: Task, box: str, data: dict[str, Any]) -> None:
+def publish(task: Task, box: str, data: Json) -> None:
     """review.json -> GitHub as the App; failures are reported in the thread."""
     r, ch, tts = review_of(task), task['channel'], task['thread_ts']
     a = app()
@@ -849,14 +845,15 @@ def publish(task: Task, box: str, data: dict[str, Any]) -> None:
     f: Target = {'repo': r['repo'], 'number': r['number'], 'installation': r['installation'], 'url': r['url']}
     findings = report.clean(data.get('findings'))
     raw_qa = data.get('qa')
-    qa: dict[str, Any] = raw_qa if isinstance(raw_qa, dict) else {}
+    qa: Json = raw_qa if isinstance(raw_qa, dict) else {}
     files = _read_json(box, '.files.json')
     mine: dict[str, Thread] = {
         th['id']: th for th in _read_json(box, 'threads.json') if th.get('mine') and not th.get('resolved')
     }
     problems: list[str] = []
     qa_text, qa_url = '', ''
-    still_open = set(mine) - _settle_threads(a, f, head, data.get('threads'), mine, problems)
+    verdicts = data.get('threads')
+    still_open = set(mine) - _settle_threads(a, f, head, verdicts if isinstance(verdicts, list) else [], mine, problems)
     if qa.get('verdict') in ('pass', 'fail', 'partial') and qa.get('report'):
         found = _qa_report(box, qa['report'])
         if found is None:
@@ -879,7 +876,7 @@ def publish(task: Task, box: str, data: dict[str, Any]) -> None:
     note = f':white_check_mark: Review posted on <{link}|{r["id"]}> · {summary}'
     if problems:
         note = f':warning: Review of <{r["url"]}|{r["id"]}> · {summary} · trouble with ' + '; '.join(problems)
-    counts: dict[str, Any] = {
+    counts: Counts = {
         'findings': len(findings),
         'blocking': sum(x['severity'] == 'blocking' for x in findings),
         'open': len(still_open),
@@ -887,8 +884,8 @@ def publish(task: Task, box: str, data: dict[str, Any]) -> None:
     }
     detail = _detail(r['repo'], head, findings, qa, qa_text, qa_url, url)
     r.update({'published': head, 'summary': summary, 'url': link, 'counts': counts, 'detail': detail})
-    task.update({'closed': note, 'posted': True})
-    verdict = 'changes' if counts['blocking'] or counts['open'] or counts['qa'] == 'fail' else 'approved'
+    task['closed'] = note
+    verdict: ReviewState = 'changes' if counts['blocking'] or counts['open'] or counts['qa'] == 'fail' else 'approved'
     said = summary + (' · :warning: trouble with ' + '; '.join(problems) if problems else '')
     k = key_of(task)
     e: ReviewEntry | None = next((x for x in reversed(_run()) if x.get('task') == k), None)
@@ -939,11 +936,11 @@ def _detail(
     repo: str,
     head: str,
     findings: list[Finding],
-    qa: dict[str, Any],
+    qa: Json,
     qa_text: str,
     qa_url: str,
     review_url: str,
-) -> dict[str, Any]:
+) -> Detail:
     """The short review the hub shows when a PR is opened."""
     return {
         'findings': [
@@ -975,11 +972,11 @@ def _trim(text: str | None, limit: int) -> str:
 
 
 def _settle_threads(
-    a: App, f: Target, head: str, verdicts: Any, mine: dict[str, Thread], problems: list[str]
+    a: App, f: Target, head: str, verdicts: list[Json], mine: dict[str, Thread], problems: list[str]
 ) -> set[str]:
     """Resolve or rewrite the companion's own earlier threads per the verdicts; returns the ids closed."""
     closed: set[str] = set()
-    for th in verdicts or []:
+    for th in verdicts:
         if not isinstance(th, dict) or th.get('id') not in mine:
             continue
         note = str(th.get('note') or '').strip()[:1000]
@@ -1030,10 +1027,10 @@ def _post_qa(a: App, f: Target, box: str, text: str, problems: list[str]) -> tup
         return '', body
 
 
-def heartbeat() -> dict[str, Any]:
+def heartbeat() -> GithubBeat:
     app()
-    return dict(
-        status,
-        people=(state.get('github_people') or {}).get('list') or [],
-        repos=(state.get('github_repos') or {}).get('list') or [],
-    )
+    return {
+        **status,
+        'people': state['github_people']['list'] if 'github_people' in state else [],
+        'repos': state['github_repos']['list'] if 'github_repos' in state else [],
+    }

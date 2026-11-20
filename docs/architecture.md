@@ -390,12 +390,16 @@ Two layers, both of which never cut off a running T3 turn by default:
   (`image/tools.sh`) every `updates.agent_tools_hours` (env `AGENTLAB_UPDATE_HOURS`). The CLIs use new versions on
   their next run. T3 is a server, so when the installed T3 differs from the running one (its binary path,
   `~/.t3/runtime/versions/<v>/t3`), only the `t3` supervisord program restarts, and only while no run in T3's
-  database is in progress (`orchestration_v2_projection_runs.status` not completed/cancelled/failed/interrupted).
+  database is in progress (no end time and a status other than completed/cancelled/failed/interrupted/rolled_back).
 - **The cluster**: `agentctl update` (by hand, or `agentlab-update.timer`) fast-forwards the repo (never merges or
   discards local changes), rebuilds or pulls the images, and runs `apply`. `apply` redeploys a stack when its file
   changed or when a running container's image is older than its local tag; an agent is only redeployed while idle
   (`--force` overrides). `update` then waits for busy agents, checking every 5 min for up to `updates.wait_hours`,
   updating each the moment it is idle; the core and companions never wait.
+- **Whether an agent is busy** comes from the agent itself: the host runs `agent-t3 busy | inflight | worktrees` in
+  its container (`docker exec -u agent`; the program reads T3's database with typed models, see `image/README.md`)
+  and never opens the database. A stopped agent counts as idle; one that can't answer counts as busy, and the
+  janitor leaves its worktrees alone that night.
 - **Each deploy finishes before the next step.** A stack is deployed at most once per run, and agentctl waits until
   every service of it runs in a container from this render (each service carries an `agentlab.rendered` label with the
   render's digest) before moving on. Coolify deploys in the background, so without this a second deploy could race

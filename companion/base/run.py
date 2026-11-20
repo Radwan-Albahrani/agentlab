@@ -50,7 +50,7 @@ def say(msg: str) -> None:
     log.info('%s %s', time.strftime('%H:%M:%S'), msg)
 
 
-def write_status(**changes: Any) -> None:
+def write_status(**changes: object) -> None:
     status.update(changes, updated=time.time())
     try:
         with open(os.path.join(DATA, 'heartbeat.json')) as f:

@@ -2,9 +2,8 @@
 
 import os
 import time
-from typing import Any
 
-from companion import Companion
+from companion import Choice, Companion, Field
 
 SECRETS = os.environ.get('COMPANION_SECRETS', '/secrets')
 
@@ -46,7 +45,7 @@ RECENT_DM = 3 * 86400  # ...and in a DM, one conversation with one person (up to
 DM_LINES = 20
 HISTORY_DAYS = 3  # what the companion did with the asker lately, from its own records
 
-MODES: list[dict[str, Any]] = [
+MODES: list[Choice] = [
     {
         'value': 'tag',
         'label': 'Restricted',
@@ -64,7 +63,7 @@ MODES: list[dict[str, Any]] = [
         'help': 'Practice: messages you send yourself play the colleague, and nothing is ever sent to anyone else.',
     },
 ]
-SCHEMA: list[dict[str, Any]] = [
+SCHEMA: list[Field] = [
     {
         'key': 'mode',
         'label': 'Mode',

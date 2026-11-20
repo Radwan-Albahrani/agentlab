@@ -22,7 +22,7 @@ from . import (  # noqa: F401  (routing registers the handlers)
     tasks,
 )
 from .config import AGENT, ASKS_POLL, BRIDGE, COMP, DATA, FILES, NAME, OWNER, POLL, log, mode, secret
-from .state import lock, prepare_for_start, save, state
+from .state import lock, save, state
 
 
 def _guarded[*Ts](label: str, fn: Callable[[*Ts], object], *args: *Ts) -> bool:
@@ -86,10 +86,7 @@ def _check_scopes(me: SlackResponse) -> None:
 def run() -> None:
     for d in (DATA, FILES, drafts.DRAFTS, outbox.OUTBOX):
         os.makedirs(d, exist_ok=True)
-    prepare_for_start()
     machine.prepare_all(list(state['tasks'].values()))
-    tasks.adopt_lines(list(state['tasks'].values()))
-    polls.migrate()
     log(f'{NAME} for {AGENT}: owner {OWNER}, bridge {BRIDGE}, {len(state["tasks"])} known threads, mode {mode()}')
     me = slack.app.client.auth_test()  # also verifies the bot token
     slack.WORKSPACE = me['url']

@@ -1,6 +1,8 @@
 """The JSON API: one table per method, each route with the display key(s) it needs ('{0}' is the first path group)."""
 
 import re
+from collections.abc import Callable
+from typing import Any
 
 import actions
 import cluster
@@ -8,6 +10,11 @@ import display
 import scope
 import screens
 import store
+
+Json = dict[str, Any]  # query parameters or a request body
+Groups = tuple[str, ...]  # the path's groups
+Handler = Callable[[Groups, Json, str], Any]  # (groups, query or body, Host header) -> the JSON answer
+Route = tuple[str, str | tuple[str, ...] | None, Handler]  # (path pattern, display key(s) it needs, handler)
 
 
 class NotFoundError(Exception):
@@ -18,9 +25,9 @@ class ForbiddenError(Exception):
     pass
 
 
-def _agent_get(path):
+def _agent_get(path: str) -> Handler:
 
-    def handler(m, q, host):
+    def handler(m: Groups, q: Json, host: str) -> Any:
         status, out = cluster.call(m[0], path)
         if status != 200 or out is None:
             raise ValueError(f'{m[0]} is not reachable right now.')
@@ -29,14 +36,16 @@ def _agent_get(path):
     return handler
 
 
-def _page_host():
+def _page_host() -> Json:
     return {'host': cluster.request_host()}
 
 
-def _agent_post(path, fields, done=None, extra=None):
+def _agent_post(
+    path: str, fields: tuple[str, ...], done: str | None = None, extra: Callable[[], Json] | None = None
+) -> Handler:
     """A POST of only `fields` (plus `extra()`) to the agent's Accounts app; answers `done`, else the agent's answer."""
 
-    def handler(m, b, host):
+    def handler(m: Groups, b: Json, host: str) -> Any:
         status, out = cluster.call(m[0], path, {**{k: b[k] for k in fields if k in b}, **(extra() if extra else {})})
         if status == 502 or out is None:
             raise ValueError(f'{m[0]} is not reachable right now.')
@@ -47,47 +56,47 @@ def _agent_post(path, fields, done=None, extra=None):
     return handler
 
 
-def _agent_page(m, q, host):
+def _agent_page(m: Groups, q: Json, host: str) -> Json:
     status, page = cluster.call(m[0], '/api/page')
     if status != 200 or page is None:
         raise ValueError(f'{m[0]} is not reachable right now.')
     return screens.accounts(host, m[0], page)
 
 
-def _env_value(m, q, host):
+def _env_value(m: Groups, q: Json, host: str) -> Any:
     status, out = cluster.call(m[0], '/api/env/value?k=' + re.sub(r'[^\w]', '', q.get('k', '')))
     if status != 200 or out is None:
         raise ValueError('Not available.')
     return out
 
 
-def _config(m, q, host):
+def _config(m: Groups, q: Json, host: str) -> Json:
     try:
         return screens.config(q.get('id', ''))
     except LookupError:
         raise NotFoundError from None
 
 
-def _secret_value(m, q, host):
+def _secret_value(m: Groups, q: Json, host: str) -> Json:
     try:
         return {'value': store.secrets.value(q.get('name', ''))}
     except (OSError, ValueError):
         raise NotFoundError from None
 
 
-def _companion_secret_value(m, q, host):
+def _companion_secret_value(m: Groups, q: Json, host: str) -> Json:
     try:
         return {'value': store.secrets.value(f'companions/{m[0]}/{q.get("file", "")}')}
     except (OSError, ValueError):
         raise NotFoundError from None
 
 
-def _logs(m, q, host):
+def _logs(m: Groups, q: Json, host: str) -> Json:
     text, at = store.watch.logs(q.get('name', ''))
     return {'text': text, 'at': at}
 
 
-GET = [
+GET: list[Route] = [
     (r'/api/nav', None, lambda m, q, host: screens.nav()),
     (r'/api/overview', None, lambda m, q, host: screens.overview()),
     (r'/api/now', None, lambda m, q, host: screens.now()),
@@ -120,7 +129,7 @@ GET = [
 ]
 
 
-def _account_act(m, b, host):
+def _account_act(m: Groups, b: Json, host: str) -> str:
     status, out = cluster.call(m[0], '/api/act', b)
     if status == 502 or out is None:
         raise ValueError(f'{m[0]} is not reachable right now.')
@@ -129,7 +138,7 @@ def _account_act(m, b, host):
     return out.get('message') or 'Done.'
 
 
-def _env(m, b, host):
+def _env(m: Groups, b: Json, host: str) -> str:
     _status, out = cluster.call(m[0], f'/api/env/{m[1]}', b)
     if out is None:
         raise ValueError(f'{m[0]} is not reachable right now.')
@@ -138,11 +147,11 @@ def _env(m, b, host):
     return 'Saved.' if m[1] != 'delete' else 'Removed.'
 
 
-def _companion(m, b, host):
+def _companion(m: Groups, b: Json, host: str) -> str:
     return actions.companion(m[0], m[1], b)
 
 
-POST = [
+POST: list[Route] = [
     (r'/api/agents/([\w-]+)/accounts/act', 'profile.{0}', _account_act),
     (r'/api/agents/([\w-]+)/accounts/env/(set|delete|import)', ('profile.{0}', 'agent.env'), _env),
     (r'/api/agents/([\w-]+)/onboarding/finish', 'profile.{0}', _agent_post('/api/onboarding/finish', (), 'All set.')),
@@ -174,7 +183,7 @@ POST = [
 ]
 
 
-def resolve(table, path):
+def resolve(table: list[Route], path: str) -> tuple[Handler, Groups]:
     """(handler, groups) for a route this person may use, else NotFoundError / ForbiddenError."""
     for pattern, keys, handler in table:
         m = re.fullmatch(pattern, path)
@@ -189,7 +198,7 @@ def resolve(table, path):
     raise NotFoundError
 
 
-def _known(key, groups):
+def _known(key: str, groups: Groups) -> bool:
     if key == 'profile.{0}':
         return groups[0] in cluster.agents()
     if key == 'companion.{0}':

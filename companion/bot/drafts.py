@@ -7,7 +7,6 @@ import os
 import re
 import time
 from collections.abc import Iterable
-from typing import Any
 
 from slack_bolt import Ack
 from slack_sdk import WebClient
@@ -15,7 +14,7 @@ from slack_sdk import WebClient
 from . import projects, prompts, slack, t3
 from .config import AGENT_FILES, COMP, FILES, NAME, OWNER, log, publish_channel
 from .fsm import DRAFT
-from .shapes import Draft
+from .shapes import Draft, Posted
 from .slack import Json
 from .state import lock, save, state
 from .text import first_sentence, to_slack
@@ -31,7 +30,7 @@ UPLOAD_TIMEOUT = 300  # seconds per upload call when a video is attached
 SHARE_TRIES, SHARE_EVERY = 30, 2  # files.info polls for a video post's message, ~60 s: Slack processes videos first
 
 
-def _files(d: str, meta: dict[str, Any]) -> tuple[str, list[str]]:
+def _files(d: str, meta: Json) -> tuple[str, list[str]]:
     """update.md without image lines, and the attachments: ready.json's "images" as given, else any videos then images."""
     videos = sorted(f for f in os.listdir(d) if f.lower().endswith(VIDEOS))
     imgs = meta.get('images') or videos + sorted(
@@ -63,7 +62,7 @@ def _uploader() -> WebClient:
     return c
 
 
-def _send(channel: str, text_md: str, images: list[str], thread_ts: str | None = None) -> dict[str, Any]:
+def _send(channel: str, text_md: str, images: list[str], thread_ts: str | None = None) -> Posted:
     """Post text plus screenshots (or a video) as one message; returns where it landed."""
     if images:
         if problem := _too_big(images):
@@ -123,7 +122,7 @@ def _find_upload(channel: str, since: float, tries: int = 5) -> str | None:
 
 def _edit(st: Draft, text_md: str) -> str:
     """Rewrite the posted message in place."""
-    p: dict[str, Any] = st.get('posted') or {'channel': publish_channel(), 'ts': None, 'files': True}
+    p: Posted = st.get('posted') or {'channel': publish_channel(), 'ts': None, 'files': True}
     if not p['ts']:
         thread = st['thread']
         p['ts'] = _find_upload(p['channel'], float(thread), tries=1) if thread else None
@@ -138,8 +137,8 @@ def _edit(st: Draft, text_md: str) -> str:
 
 
 def _buttons(key: str, rev: int, st: Draft, video: bool = False) -> list[Json]:
-    if DRAFT.is_(st, 'editing'):
-        ch = (st.get('posted') or {}).get('channel') or publish_channel()
+    if DRAFT.is_(st.get('status'), 'editing'):
+        ch = st['posted']['channel'] if 'posted' in st else publish_channel()
         head, go, stop = f'*Edit of the post in <#{ch}>* · revision {rev}', 'Update the post', 'Keep it as it is'
         kept = 'the attachments (screenshots or video) stay' if video else 'the screenshots stay'
         foot = f'Updates the text in place; {kept} as posted. Reply here to change something.'
@@ -169,9 +168,11 @@ def tick() -> None:
         st = state['drafts'].get(key)
         if st and mtime <= st.get('mtime', 0):
             continue
-        if st and DRAFT.is_(st, 'revising'):
-            DRAFT.move(st, 'editing')
-        elif st and DRAFT.is_(st, 'posted', 'discarded'):  # a new run into a finished draft's folder: a new draft
+        if st and DRAFT.is_(st.get('status'), 'revising'):
+            st['status'] = DRAFT.to(st.get('status'), 'editing')
+        elif st and DRAFT.is_(
+            st.get('status'), 'posted', 'discarded'
+        ):  # a new run into a finished draft's folder: a new draft
             state['drafts'].pop(key)
             st = None
         if st and rev <= st['revision']:
@@ -198,7 +199,7 @@ def tick() -> None:
                 note='The preview below is exactly what will be posted.',
             )
             st = state['drafts'][key] = {'revision': 0, 'dm': dm, 'thread': head, 'buttons': None}
-            DRAFT.start(st, 'pending')
+            st['status'] = DRAFT.first('pending')
         else:
             slack.post(dm, st['thread'], 'Revised draft', note=f':pencil2: Revision {rev}')
         _send(dm, text_md, images, st['thread'])
@@ -239,7 +240,7 @@ def _draft_has_video(key: str) -> bool:
 
 def revise(key: str, st: Draft, text: str, ts: str) -> None:
     """Owner feedback on a draft -> a T3 chat that rewrites the draft files."""
-    if DRAFT.is_(st, 'discarded'):
+    if DRAFT.is_(st.get('status'), 'discarded'):
         slack.post(st['dm'], st['thread'], 'Discarded', note='This draft was discarded, so there is nothing to change.')
         return
     slack.react(st['dm'], ts, 'eyes')
@@ -253,25 +254,25 @@ def revise(key: str, st: Draft, text: str, ts: str) -> None:
     slack.react(st['dm'], ts, 'eyes', remove=True)
     if tid:
         slack.react(st['dm'], ts, 'pencil2')
-        if DRAFT.is_(st, 'posted'):  # a pending or previewed draft just gets its next revision
-            DRAFT.move(st, 'revising')
+        if DRAFT.is_(st.get('status'), 'posted'):  # a pending or previewed draft just gets its next revision
+            st['status'] = DRAFT.to(st.get('status'), 'revising')
         save()
     else:
         slack.post(st['dm'], st['thread'], f":warning: Couldn't start the revision: {err}")
 
 
-def _finish(ack: Ack, body: dict[str, Any], posting: bool) -> None:
+def _finish(ack: Ack, body: Json, posting: bool) -> None:
     ack()
     if body['user']['id'] != OWNER:
         return
     key = body['actions'][0]['value']
     with lock:
         st = state['drafts'].get(key)
-        if not st or not DRAFT.is_(st, 'pending', 'editing'):
+        if not st or not DRAFT.is_(st.get('status'), 'pending', 'editing'):
             return
         btn = body['container']['message_ts']
         channel = publish_channel()
-        if DRAFT.is_(st, 'editing'):
+        if DRAFT.is_(st.get('status'), 'editing'):
             _finish_edit(st, key, btn, posting)
             return
         if posting and not channel:
@@ -290,12 +291,12 @@ def _finish(ack: Ack, body: dict[str, Any], posting: bool) -> None:
                     st['dm'], st['thread'], f':warning: Posting failed: {str(e)[:300]}. Is {NAME} in <#{channel}>?'
                 )
                 return
-            DRAFT.move(st, 'posted')
+            st['status'] = DRAFT.to(st.get('status'), 'posted')
             slack.update(
                 st['dm'], btn, 'Posted', note=f':white_check_mark: Posted to <#{channel}> (revision {st["revision"]}).'
             )
         else:
-            DRAFT.move(st, 'discarded')
+            st['status'] = DRAFT.to(st.get('status'), 'discarded')
             slack.update(
                 st['dm'],
                 btn,
@@ -315,7 +316,7 @@ def _finish(ack: Ack, body: dict[str, Any], posting: bool) -> None:
 
 def _finish_edit(st: Draft, key: str, btn: str, updating: bool) -> None:
     if not updating:
-        DRAFT.move(st, 'posted')
+        st['status'] = DRAFT.to(st.get('status'), 'posted')
         slack.update(
             st['dm'], btn, 'Kept', note=f':no_entry_sign: Kept the post as it was (revision {st["revision"]}).'
         )
@@ -327,7 +328,7 @@ def _finish_edit(st: Draft, key: str, btn: str, updating: bool) -> None:
     except Exception as e:  # still editing: the owner can tap again
         slack.post(st['dm'], st['thread'], 'Edit failed', note=f':warning: Updating the post failed: {str(e)[:300]}')
         return
-    DRAFT.move(st, 'posted')
+    st['status'] = DRAFT.to(st.get('status'), 'posted')
     slack.update(
         st['dm'], btn, 'Updated', note=f':pencil2: Updated the post in <#{channel}> (revision {st["revision"]}).'
     )

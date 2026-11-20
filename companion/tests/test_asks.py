@@ -306,17 +306,6 @@ def test_multiple_choice_lets_people_pick_several_and_take_one_back(started, fre
     assert '**Wed** wins: 2 of the 2 people who voted picked it' in polls.result(p)
 
 
-def test_polls_from_before_become_multiple_choice_and_keep_their_votes(poll, fresh_bot):
-    _, p = poll
-    p.pop('multiple')
-    p['votes'] = {'U_OWNER': 1}
-    polls.migrate()
-    assert p['multiple'] and p['votes'] == {'U_OWNER': [1]}
-    assert 'pick as many as you like' in json.dumps(fresh_bot.updates[-1])
-    vote(p, 'U_OWNER', 'Pizza')
-    assert p['votes']['U_OWNER'] == [1, 0]
-
-
 def test_votes_are_public_with_pictures_and_names(poll, fresh_bot):
     _, p = poll
     vote(p, 'U_SALAH', 'Shawarma')

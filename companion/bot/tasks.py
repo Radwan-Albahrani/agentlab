@@ -2,8 +2,7 @@
 
 import re
 import time
-from collections.abc import Iterable, Iterator
-from typing import Any, Literal
+from typing import Literal
 
 from . import cases, errands, jobs, ledger, limits, machine, polls, posts, projects, prompts, slack, t3
 from .config import (
@@ -21,7 +20,7 @@ from .config import (
     slack_for_github,
 )
 from .fsm import RETRY
-from .shapes import Audit, Line, Outcome, Place, Retry, Task, TurnBy
+from .shapes import Audit, Json, Line, Outcome, Place, Retry, Task, TurnBy
 from .state import key, key_of, lock, new_task, now_iso, parse_iso, review_of, save, state
 from .text import first_sentence, mins, no_emoji
 from .when import say
@@ -42,28 +41,6 @@ def set_line(task: Task, text: str, note: str) -> None:
     line = task['line']
     assert line, 'set_line needs a thinking line'
     slack.update(line['ch'], line['ts'], text, note=note)
-
-
-def adopt_lines(tasks: Iterable[Task]) -> None:
-    """After a restart: a running turn's line saved before lines knew their place is looked up in Slack (its thread or
-    the case) and kept; one in neither is dropped and a new one is posted on the next beat."""
-    for t in tasks:
-        if 'status_ts' not in t:
-            continue
-        ts, since = t.pop('status_ts'), t.pop('line_start', 0) or time.time()
-        case = cases.of(t)
-        places = [(t['channel'], t['thread_ts']), *([case] if case else [])]
-        found: Iterator[Line] = ({'ch': ch, 'ts': ts, 'since': since} for ch, tts in places if ts and _has(ch, tts, ts))
-        t['line'] = next(found, None)
-        log('line of', key_of(t), 'adopted in', t['line'] and t['line']['ch'])
-
-
-def _has(ch: str, tts: str, ts: str) -> bool:
-    try:
-        msgs = slack.app.client.conversations_replies(channel=ch, ts=tts, oldest=ts, latest=ts, inclusive=True)
-        return any(m['ts'] == ts for m in msgs['messages'])
-    except Exception:
-        return False
 
 
 def quiet(task: Task) -> bool:
@@ -97,7 +74,7 @@ def start(
     thread_ts: str,
     trigger_ts: str,
     text: str,
-    elsewhere: tuple[str, list[dict[str, Any]]] | None = None,
+    elsewhere: tuple[str, list[Json]] | None = None,
     guest: str | None = None,
     approved: str | Literal[False] = False,
     via: str | None = None,
@@ -254,7 +231,7 @@ def answer_place(task: Task) -> tuple[str, str]:
 def follow_up(
     task: Task,
     text: str,
-    files: list[dict[str, Any]] | None,
+    files: list[Json] | None,
     ts: str,
     place: Place,
     by: str | None = None,
@@ -309,7 +286,7 @@ def follow_up(
     if open_polls and POLL_WORDS.search(msg):
         msg += '\n\n---' + prompts.poll_changes(slack.name(OWNER), open_polls)
     slack.react(ch, ts, 'eyes')
-    res: dict[str, Any] = {}
+    res: t3.Reply = {}
     if t3.waiting_question(task['thread']):
         res = t3.answer(task['thread'], msg)
         if not res.get('ok'):
@@ -373,7 +350,7 @@ def status_reply(task: Task, ts: str, place: Place) -> None:
     last = t3.last_answer(tid)
     if last:
         out.append(f'Latest: {first_sentence(last, 300)}')
-    running = [t for _, t, r in s['workers'] if r]
+    running = [t or 'a worker' for _, t, r in s['workers'] if r]
     done = [t for _, t, r in s['workers'] if not r]
     if running:
         out.append(f':jigsaw: Workers running: {", ".join(running[:6])}' + (f' ({len(done)} finished)' if done else ''))
@@ -390,7 +367,7 @@ def status_reply(task: Task, ts: str, place: Place) -> None:
     save()
 
 
-def question_text(item: dict[str, Any]) -> tuple[str, dict[str, str]]:
+def question_text(item: Json) -> tuple[str, dict[str, str]]:
     out: list[str] = []
     opts: dict[str, str] = {}
     n = 0
@@ -405,7 +382,7 @@ def question_text(item: dict[str, Any]) -> tuple[str, dict[str, str]]:
     return '\n\n'.join(out) or 'The agent is waiting for your answer.', opts
 
 
-def working_line(task: Task, s: dict[str, Any], now: float) -> str:
+def working_line(task: Task, s: t3.Snapshot, now: float) -> str:
     """Text of the live 'thinking' line."""
     elapsed = now - parse_iso(task['burst_start'])
     running = sum(1 for _, _, r in s['workers'] if r)
@@ -475,7 +452,7 @@ def reply(task: Task, md: str, note: str | None = None, outcome: str = 'answered
         to=dest,
         label='you' if dest == 'case' else '',
         text=_clip(md, 2900),
-        question=outcome in ('asked you', 'needs approval') or None,
+        question=outcome in ('asked you', 'needs approval'),
     )
 
 
@@ -503,24 +480,23 @@ def retry_of(task: Task) -> Retry:
 
 def reset_retry(task: Task) -> None:
     """No retry pending and none used: a new turn, or a usage-limit pause (which is not retried)."""
-    task['retry'] = {'state': 'idle', 'count': 0, 'at': 0}
-    RETRY.start(task['retry'], 'idle')
+    task['retry'] = {'state': RETRY.first('idle'), 'count': 0, 'at': 0}
 
 
-def retry_transient(task: Task, s: dict[str, Any], now: float) -> bool:
+def retry_transient(task: Task, s: t3.Snapshot, now: float) -> bool:
     """Send "continue" after a transient failure, up to 3 times; True while a retry is pending."""
     r = retry_of(task)
-    if RETRY.is_(r, 'sent'):
+    if RETRY.is_(r.get('state'), 'sent'):
         if now - r['at'] < RETRY_GRACE:
             return True
-        RETRY.move(r, 'idle')
-    if RETRY.is_(r, 'waiting'):
+        r['state'] = RETRY.to(r.get('state'), 'idle')
+    if RETRY.is_(r.get('state'), 'waiting'):
         if now < r['at']:
             return True
         if not t3.send(task['thread'], 'continue').get('ok'):
-            RETRY.move(r, 'idle')
+            r['state'] = RETRY.to(r.get('state'), 'idle')
             return False
-        RETRY.move(r, 'sent')
+        r['state'] = RETRY.to(r.get('state'), 'sent')
         r['at'] = now
         log('retry sent', task['thread'], r['count'])
         COMP.event(
@@ -540,7 +516,7 @@ def retry_transient(task: Task, s: dict[str, Any], now: float) -> bool:
     r['count'] += 1
     n = r['count']
     wait = RETRY_WAITS[n - 1]
-    RETRY.move(r, 'waiting')
+    r['state'] = RETRY.to(r.get('state'), 'waiting')
     r['at'] = now + wait
     line = f':hourglass_flowing_sand: The model is busy, so I\'ll say "continue" in {wait} s ({n}/{len(RETRY_WAITS)})'
     if task.get('line'):
@@ -561,7 +537,7 @@ def _notice(task: Task, now: float | None = None) -> tuple[bool, float | None]:
     return limits.parse(latest, now) if len(latest) <= LIMIT_NOTICE else (False, None)
 
 
-def limit_hit(task: Task, s: dict[str, Any]) -> tuple[bool, float | None]:
+def limit_hit(task: Task, s: t3.Snapshot) -> tuple[bool, float | None]:
     """(True, reset epoch or None) when the chat's last run stopped on a usage limit."""
     if s['last_status'] == 'failed':
         hit, at = limits.from_error(t3.run_error(task['thread']))
@@ -601,7 +577,7 @@ def unpause(task: Task) -> None:
         log('resumed after the usage limit', task['thread'])
 
 
-def hold_for_limit(task: Task, s: dict[str, Any], now: float) -> bool:
+def hold_for_limit(task: Task, s: t3.Snapshot, now: float) -> bool:
     """True while a usage-limited chat waits for T3 to resume it (or once that wait has been closed)."""
     p = machine.paused(task)
     if p and p['run'] == s['last_done']:  # nothing ran since the pause
@@ -654,7 +630,7 @@ def tick(task: Task) -> None:
     now = time.time()
     machine.set_asking(task, bool(s['requests'] or s.get('asked')))
     if s['messages']:
-        task['seen'] = s['messages'][-1][1]
+        task['seen'] = s['messages'][-1][1] or task['seen']
         task['latest'] = s['messages'][-1][2] or task.get('latest', '')
     _post_questions(task, s)
     _post_milestones(task, s)
@@ -694,7 +670,7 @@ def how_to_answer(task: Task, opts: dict[str, str]) -> str:
     return how + (f' If other reviews here ask too, start with #{r["number"]}.' if r else '')
 
 
-def _ask_by_message(task: Task, final: str, items: list[dict[str, Any]], foot: str) -> None:
+def _ask_by_message(task: Task, final: str, items: list[Json], foot: str) -> None:
     """The turn ended on a question answered by a plain message: post it with its numbered options, if any."""
     opts: dict[str, str] = {}
     for item in items:
@@ -705,7 +681,7 @@ def _ask_by_message(task: Task, final: str, items: list[dict[str, Any]], foot: s
     reply(task, md, ' · '.join(x for x in (how_to_answer(task, opts), foot) if x), 'asked you')
 
 
-def _post_questions(task: Task, s: dict[str, Any]) -> None:
+def _post_questions(task: Task, s: t3.Snapshot) -> None:
     """Post the agent's new questions with numbered options."""
     for rid, kind, item in s['requests']:
         if rid in task['asked']:
@@ -719,14 +695,14 @@ def _post_questions(task: Task, s: dict[str, Any]) -> None:
             reply(task, ':raised_hand: I need your approval for a step.', 'Approve it in the T3 app.', 'needs approval')
 
 
-def _post_milestones(task: Task, s: dict[str, Any]) -> None:
+def _post_milestones(task: Task, s: t3.Snapshot) -> None:
     """Post new workers and pull requests as short lines."""
     ch, tts = where(task)
     if quiet(task):
         task['workers_said'] = len(s['workers'])
         return
     if len(s['workers']) > task['workers_said']:
-        new = [t for _, t, _ in s['workers']][task['workers_said'] :]
+        new = [t or 'a worker' for _, t, _ in s['workers']][task['workers_said'] :]
         slack.note_only(ch, tts, f':jigsaw: Splitting this up: {", ".join(new[:6])}{"…" if len(new) > 6 else ""}')
         task['workers_said'] = len(s['workers'])
     for pr in s['prs']:
@@ -750,7 +726,7 @@ REVIEW_NUDGE = (
 )
 
 
-def restarting(task: Task, s: dict[str, Any], now: float) -> bool:
+def restarting(task: Task, s: t3.Snapshot, now: float) -> bool:
     """The agent is restarting or T3 has yet to resume what a restart cut off: nothing is over yet."""
     if not t3.agent_up():
         task.setdefault('down_since', now)
@@ -766,7 +742,7 @@ NO_ACTION = re.compile(r'\s*`?NO_ACTION:?\s*(.*?)`?\s*$', re.S)  # an errand tha
 NO_REPLY = re.compile(r'\s*`?NO_REPLY:?\s*(.*?)`?\s*$', re.S)  # nothing new to say this turn
 
 
-def _finish_turn(task: Task, s: dict[str, Any]) -> None:
+def _finish_turn(task: Task, s: t3.Snapshot) -> None:
     """The turn is over: its final message goes out (reply), the turn ends with an explicit outcome, and whatever
     waited for it goes next."""
     r = review_of(task)

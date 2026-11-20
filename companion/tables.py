@@ -1,6 +1,6 @@
 """companion.db as typed SQLAlchemy models: the tables companion.py's docstring describes (the hub reads them)."""
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from sqlalchemy import JSON, Boolean, Float, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -109,3 +109,159 @@ class Stored(Base):
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[Any] = mapped_column(JSON, nullable=False)
     updated: Mapped[float | None] = mapped_column(Float)
+
+
+# The rows the bot publishes, as dicts: what Companion.tasks/items/polls/pulls take and what the hub reads back.
+
+TaskStatus = Literal['working', 'waiting', 'paused', 'done', 'failed', 'stopped']  # the hub's coarse status
+
+
+class CardRow(TypedDict):
+    """A task as the hub shows it (bot/publish.card); every value is stored as text."""
+
+    id: str
+    title: str
+    kind: Literal['task', 'errand', 'review']
+    requester: str
+    status: TaskStatus
+    waiting: str
+    outcome: str
+    started: str
+    ended: str
+    thread: str
+    slack: str
+    source: str
+    resumes_at: float | str  # epoch while paused with a known reset, else ''
+    started_by: str
+    via: str
+    approved_by: str
+    party: str
+    phase: str
+    case_link: str
+    project: str
+    route_by: str
+    route_why: str
+
+
+class ItemRow(TypedDict):
+    """A ledger item as the hub stores it (bot/ledger.rows): data holds only what may be shown."""
+
+    id: str
+    task: str
+    seq: int
+    kind: str
+    state: str
+    at: float
+    data: dict[str, Any]
+
+
+class Voter(TypedDict):
+    name: str
+    avatar: str
+
+
+class Option(TypedDict):
+    label: str
+    votes: int
+    voters: list[Voter]
+
+
+class PollRow(TypedDict):
+    """A poll as the hub shows it (bot/polls.card)."""
+
+    id: str
+    task: str
+    open: bool
+    closes: float
+    closed: float | None
+    question: str
+    channel: str
+    link: str
+    multiple: bool
+    options: list[Option]
+
+
+class Label(TypedDict):
+    name: str
+    color: str
+
+
+class OpenPull(TypedDict):
+    """An open pull request (reviewer/pulls.open_pulls), kept by the bot (State.pulls) and listed by the hub."""
+
+    id: str
+    repo: str
+    number: int
+    title: str
+    url: str
+    draft: bool
+    author: str
+    avatar: str
+    labels: list[Label]
+    additions: int
+    deletions: int
+    created: str
+    updated: str
+    head: str
+    ci: str
+
+
+class Counts(TypedDict):
+    findings: int
+    blocking: int
+    open: int
+    qa: str
+
+
+class ShownFinding(TypedDict):
+    """A finding as the hub shows it (reviews._detail)."""
+
+    title: str
+    severity: str
+    lane: str
+    path: str
+    line: int | None
+    start_line: int | None
+    body: str
+    link: str
+
+
+class ShownQa(TypedDict):
+    verdict: str
+    text: str
+    url: str
+
+
+class Detail(TypedDict):
+    """The short review the hub shows when a PR is opened (reviews._detail)."""
+
+    findings: list[ShownFinding]
+    qa: ShownQa
+    review_url: str
+
+
+class RunPos(TypedDict):
+    """Where a PR stands in the current review batch."""
+
+    n: int
+    of: int
+    done: bool
+
+
+class PullReview(TypedDict, total=False):
+    """A PR's latest review on the hub's list (bot/reviews.rows)."""
+
+    status: str
+    outcome: str
+    task: str
+    head: str
+    at: str
+    url: str
+    counts: Counts
+    resumes_at: float | None
+    detail: Detail
+    run: RunPos
+
+
+class PullRow(OpenPull):
+    review: PullReview | None

@@ -2,6 +2,7 @@
 
 import json
 import os
+from typing import Any
 
 import cluster
 
@@ -9,7 +10,7 @@ FILE = os.path.join(os.environ.get('NOTIFY_DATA', '/data'), 'display.json')
 INFRA = 'present'
 
 
-def items():
+def items() -> list[tuple[str, str, str, str]]:
     """[(group, key, label, default)] for everything that can be hidden."""
     out = [
         ('Overview', 'overview.tiles', 'Key numbers', 'show'),
@@ -51,7 +52,7 @@ def items():
     return out
 
 
-def load():
+def load() -> dict[str, Any]:
     try:
         with open(FILE) as f:
             s = json.load(f)
@@ -60,19 +61,19 @@ def load():
     return {'presenting': bool(s.get('presenting')), 'items': s.get('items') or {}}
 
 
-def save(s):
+def save(s: dict[str, Any]) -> None:
     with open(FILE + '.tmp', 'w') as f:
         json.dump(s, f, indent=1)
     os.replace(FILE + '.tmp', FILE)
 
 
-def mode(key, s=None):
+def mode(key: str, s: dict[str, Any] | None = None) -> str:
     s = s or load()
     default = next((d for _, k, _, d in items() if k == key), 'show')
     return s['items'].get(key, default)
 
 
-def visible(key, s=None):
+def visible(key: str, s: dict[str, Any] | None = None) -> bool:
     s = s or load()
     if key == 'display':  # always reachable by its address
         return True
@@ -80,7 +81,7 @@ def visible(key, s=None):
     return m == 'show' or (m == 'present' and not s['presenting'])
 
 
-def set_mode(key, value):
+def set_mode(key: str, value: object) -> None:
     if value not in ('show', 'present', 'hide') or key not in {k for _, k, _, _ in items()}:
         raise ValueError('Unknown setting.')
     s = load()
@@ -88,7 +89,7 @@ def set_mode(key, value):
     save(s)
 
 
-def set_presenting(on):
+def set_presenting(on: object) -> None:
     s = load()
     s['presenting'] = bool(on)
     save(s)

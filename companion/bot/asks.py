@@ -1,6 +1,6 @@
 """Handles the hub's asks (see companion.py); an "ask" becomes a task in the owner's DM with the companion."""
 
-from typing import Any
+from companion import HubAsk
 
 from . import jobs, machine, polls, projects, prompts, publish, reviews, routing, slack, t3, tasks
 from .config import COMP, OWNER, log
@@ -42,7 +42,7 @@ def refresh_channels() -> None:
     publish.now()
 
 
-def start(ask: dict[str, Any]) -> None:
+def start(ask: HubAsk) -> None:
     text = str(ask.get('text') or '').strip()[:4000]
     if not text:
         return
@@ -80,7 +80,7 @@ def start(ask: dict[str, Any]) -> None:
         head,
         tasks.post_line(dm, head, tasks.THINKING),
         where_to,
-        review=review,
+        preview=review,
         audit=tasks.audit(OWNER, 'from the hub'),
         party=machine.party_of(),
     )

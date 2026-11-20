@@ -1,7 +1,6 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
 from collections.abc import Callable, Sequence
-from typing import Any
 
 from slack_bolt import Ack
 
@@ -279,7 +278,7 @@ def offer_reply(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[
         ledger.move(task, it, 'dry_run')
         return
     turn = machine.turn(task)
-    approval = ledger.latest(task, 'approval', ('approved',))
+    approval = ledger.latest(task, 'approval', {'approved'})
     if turn.get('by') == 'decision' and approval and approval['updated'] >= turn.get('at', 0) - 5:
         ledger.move(task, it, 'approved', note=f'with approval {approval["id"]}')
         send_to_requester(task, it, ok)
@@ -376,7 +375,7 @@ def decide_reply(task: Task, k: str, send: bool, card: str) -> None:
 _creds: dict[tuple[str, str], dict[str, str]] = {}
 
 
-def ask_credential(task: Task, raw: dict[str, Any]) -> None:
+def ask_credential(task: Task, raw: Json) -> None:
     """Ask the owner whether to DM a temporary password to the person the task is for (never into a thread)."""
     p = machine.party(task)
     c = {f: str(raw.get(f) or '')[:300] for f in ('service', 'url', 'username', 'password', 'note')}

@@ -5,15 +5,16 @@ import os
 import time
 import urllib.error
 import urllib.request
+from typing import Any
 
-from .settings import DATA, load, lock, random_text
+from .settings import DATA, Settings, load, lock, random_text
 
 BARK = os.environ.get('BARK_URL', '')  # empty: phone pushes are off
 LOG = os.path.join(DATA, 'notify-log.json')
-recent = []  # newest first; mutated in place
+recent: list[dict[str, Any]] = []  # newest first; mutated in place
 
 
-def load_recent():
+def load_recent() -> None:
     try:
         with open(LOG) as f:
             recent[:] = json.load(f)
@@ -21,7 +22,17 @@ def load_recent():
         pass
 
 
-def send(title, body, subtitle='', level='active', group='agents', s=None, kind='test', profile='', url=''):
+def send(
+    title: str,
+    body: str,
+    subtitle: str = '',
+    level: str = 'active',
+    group: str = 'agents',
+    s: Settings | None = None,
+    kind: str = 'test',
+    profile: str = '',
+    url: str = '',
+) -> tuple[bool, str]:
     """Push one notification. Returns (ok, detail)."""
     s = s or load()
     if not BARK:
@@ -81,7 +92,7 @@ def send(title, body, subtitle='', level='active', group='agents', s=None, kind=
     return ok, detail
 
 
-def post(payload):
+def post(payload: dict[str, Any]) -> tuple[bool, str]:
     req = urllib.request.Request(
         BARK + '/push',
         data=json.dumps(payload).encode(),
@@ -102,7 +113,7 @@ def post(payload):
         return False, str(e)[:160]
 
 
-def server_up():
+def server_up() -> bool:
     if not BARK:
         return False
     try:
@@ -112,7 +123,7 @@ def server_up():
         return False
 
 
-def aes_cbc(key, iv, data):
+def aes_cbc(key: bytes, iv: bytes, data: bytes) -> bytes:
     """AES-CBC with PKCS7 padding through libcrypto (no extra package)."""
     lib = ctypes.CDLL('libcrypto.so.3')
     vp, cp, ip = ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)

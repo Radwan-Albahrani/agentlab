@@ -1,9 +1,11 @@
 """Nightly backups of agents' T3 and companion databases, hub state and config, via SQLite's online backup API."""
 
+import contextlib
 import datetime
 import os
 import shutil
 import sqlite3
+import time
 
 from . import config, deploy
 from .util import AGENT_UID, Failed, Needs, Plan, need_root, say
@@ -35,15 +37,27 @@ def t3_root(cfg, agent_id):
 BUSY_S = 30  # how long a locked database may hold up its copy before it's reported as failed
 
 
-def copy_db(src, dst):
-    # VACUUM INTO gives up after the busy timeout; sqlite3.backup() retries a locked source forever
+def copy_db(src: str, dst: str) -> None:
+    """A consistent copy of `src` at `dst` (SQLite's online backup, all pages in one step), or sqlite3.Error."""
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     tmp = dst + '.tmp'
     if os.path.exists(tmp):
         os.remove(tmp)
+    give_up = time.monotonic() + BUSY_S
+
+    def progress(status: int, remaining: int, total: int) -> None:
+        # backup() retries a locked source forever; it calls this after every step, busy ones too, and stops on a raise
+        if status in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) and time.monotonic() >= give_up:
+            raise sqlite3.OperationalError(f'database is locked (gave up after {BUSY_S} s)')
+
     source = sqlite3.connect(src, timeout=BUSY_S)
     try:
-        source.execute('VACUUM INTO ?', (tmp,))
+        with contextlib.closing(sqlite3.connect(tmp)) as target:
+            source.backup(target, progress=progress)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
     finally:
         source.close()
     os.replace(tmp, dst)

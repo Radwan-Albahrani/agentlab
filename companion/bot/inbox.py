@@ -5,12 +5,11 @@ is told so. The card is the ask's case (see cases.py): while it is pending the o
 colleague; once taken on they are the owner talking to the companion, privately."""
 
 from collections.abc import Callable
-from typing import Any
 
 from . import jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, log, mode
 from .fsm import ASK
-from .shapes import Ask
+from .shapes import Ask, Json
 from .state import key, lock, save, state
 from .text import first_sentence, quote
 
@@ -19,7 +18,7 @@ def _asks() -> dict[str, Ask]:
     return state.setdefault('inbox', {})
 
 
-def route(ev: dict[str, Any], mentioned: bool) -> bool:
+def route(ev: Json, mentioned: bool) -> bool:
     """Handle a message in the requests channel; False leaves it to the usual routing.
 
     Only tags count, top level or in a thread: people discuss things there too."""
@@ -37,13 +36,13 @@ def route(ev: dict[str, Any], mentioned: bool) -> bool:
         jobs.run_later(tasks.follow_up, task, ev.get('text', ''), ev.get('files'), ts, 'thread', user)
         return True
     a = _asks().get(key(ch, thr))
-    if a and a['user'] == user and ASK.is_(a, 'pending'):
+    if a and a['user'] == user and ASK.is_(a.get('status'), 'pending'):
         jobs.run_later(_added, a, ev.get('text', ''))
         return True
     return False
 
 
-def ask(ev: dict[str, Any]) -> None:
+def ask(ev: Json) -> None:
     ch, ts, user = ev['channel'], ev['ts'], ev['user']
     text = slack.ask(ev.get('text') or '').strip()
     who, owner = slack.name(user), slack.name(OWNER)
@@ -58,7 +57,7 @@ def ask(ev: dict[str, Any]) -> None:
         slack.post(ch, ts, 'Not sent', md=f":warning: I couldn't pass this on to {owner}. Try again later.")
         return
     a: Ask = {'ch': ch, 'ts': ts, 'user': user, 'name': who, 'text': text, 'card': card}
-    ASK.start(a, 'pending')
+    a['status'] = ASK.first('pending')
     with lock:
         _asks()[key(ch, ts)] = a
         _show(a)
@@ -73,16 +72,20 @@ def _show(a: Ask) -> None:
     """The owner's card: the ask with Approve / Decline while pending, its outcome after."""
     head = f':inbox_tray: **{a["name"]}** asked in <#{a["ch"]}>\n' + quote(a['text'])
     k = key(a['ch'], a['ts'])
-    if ASK.is_(a, 'pending'):
+    if ASK.is_(a.get('status'), 'pending'):
         note = 'Reply in this thread to message them.'
         buttons = slack.buttons(('inbox_approve', 'Approve', k, 'primary'), ('inbox_decline', 'Decline', k, 'danger'))
-        blocks: list[dict[str, Any]] | None = [*(slack.blocks(head, note) or []), buttons]
+        blocks: list[Json] | None = [*(slack.blocks(head, note) or []), buttons]
     else:
         note = {
             'approved': ':white_check_mark: Approved: working on it in their thread',
             'declined': ':no_entry_sign: Declined',
-        }[ASK.of(a)]
-        tail = ' · reply here to talk to me about it; they see nothing of it' if ASK.is_(a, 'approved') else ''
+        }[ASK.of(a.get('status'))]
+        tail = (
+            ' · reply here to talk to me about it; they see nothing of it'
+            if ASK.is_(a.get('status'), 'approved')
+            else ''
+        )
         blocks = slack.blocks(head, note + tail)
     slack.app.client.chat_update(channel=slack.dm_owner(), ts=a['card'], text=f'{a["name"]} asked', blocks=blocks)
 
@@ -104,9 +107,9 @@ def _added(a: Ask, text: str) -> None:
 def decide(k: str, approve: bool) -> None:
     with lock:
         a = _asks().get(k)
-        if not a or not ASK.is_(a, 'pending'):
+        if not a or not ASK.is_(a.get('status'), 'pending'):
             return
-        ASK.move(a, 'approved' if approve else 'declined')
+        a['status'] = ASK.to(a.get('status'), 'approved' if approve else 'declined')
         _show(a)
         save()
     slack.react(a['ch'], a['ts'], 'hourglass_flowing_sand', remove=True)
@@ -139,8 +142,8 @@ def relay(a: Ask, text: str, ts: str) -> None:
         slack.react(slack.dm_owner(), ts, 'white_check_mark')
 
 
-def _decide_action(approve: bool) -> Callable[[Callable[[], object], dict[str, Any]], None]:
-    def run(ack: Callable[[], object], body: dict[str, Any]) -> None:
+def _decide_action(approve: bool) -> Callable[[Callable[[], object], Json], None]:
+    def run(ack: Callable[[], object], body: Json) -> None:
         ack()
         if body['user']['id'] == OWNER:
             decide(body['actions'][0].get('value') or '', approve)

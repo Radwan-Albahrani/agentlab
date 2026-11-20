@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import urllib.request
+from typing import Any, Protocol
 
 import cluster
 import scope
@@ -18,29 +19,35 @@ KEYS_FOR = 3600  # s before the team's keys are fetched again
 LEEWAY = 60  # s of clock difference allowed on exp / nbf
 MODES = ('cloudflare-access', 'tailscale', 'tinyauth')
 SHA256_PREFIX = bytes.fromhex('3031300d060960864801650304020105000420')  # DER DigestInfo header for SHA-256
-_keys = {'team': None, 'at': 0.0, 'keys': {}}
+_keys: dict[str, Any] = {'team': None, 'at': 0.0, 'keys': {}}
 _lock = threading.Lock()
+
+
+class Headers(Protocol):
+    """A request's headers: http.client.HTTPMessage, or a dict in tests."""
+
+    def get(self, name: str, /) -> str | None: ...
 
 
 class DeniedError(Exception):
     pass
 
 
-def _b64(part):
+def _b64(part: str) -> bytes:
     return base64.urlsafe_b64decode(part + '=' * (-len(part) % 4))
 
 
-def _int(part):
+def _int(part: str) -> int:
     return int.from_bytes(_b64(part), 'big')
 
 
-def _fetch(team):
+def _fetch(team: str) -> dict[str, tuple[int, int]]:
     with urllib.request.urlopen(CERTS_URL.format(team=team), timeout=10) as r:
         jwks = json.loads(r.read())
     return {k['kid']: (_int(k['n']), _int(k['e'])) for k in jwks.get('keys') or [] if k.get('kty') == 'RSA'}
 
 
-def _key(team, kid):
+def _key(team: str, kid: str | None) -> tuple[int, int]:
     with _lock:
         stale = _keys['team'] != team or time.time() - _keys['at'] > KEYS_FOR
         if stale or kid not in _keys['keys']:
@@ -52,7 +59,7 @@ def _key(team, kid):
         return _keys['keys'][kid]
 
 
-def rsa_ok(signed, signature, n, e):
+def rsa_ok(signed: bytes, signature: bytes, n: int, e: int) -> bool:
     """RSASSA-PKCS1-v1_5 with SHA-256."""
     size = (n.bit_length() + 7) // 8
     if len(signature) != size:
@@ -63,7 +70,7 @@ def rsa_ok(signed, signature, n, e):
     return hmac.compare_digest(em, want)
 
 
-def verify(token, team, audience, now=None):
+def verify(token: str, team: str, audience: str, now: float | None = None) -> dict[str, Any]:
     """The token's claims if it is a valid Access token for this application, else raises DeniedError."""
     now = time.time() if now is None else now
     try:
@@ -74,8 +81,8 @@ def verify(token, team, audience, now=None):
         raise DeniedError('malformed token') from e
     if head.get('alg') != 'RS256':
         raise DeniedError('wrong algorithm')
-    n, e = _key(team, head.get('kid'))
-    if not rsa_ok(f'{head_b64}.{body_b64}'.encode(), signature, n, e):
+    n, exponent = _key(team, head.get('kid'))
+    if not rsa_ok(f'{head_b64}.{body_b64}'.encode(), signature, n, exponent):
         raise DeniedError('bad signature')
     aud = claims.get('aud')
     if audience not in (aud if isinstance(aud, list) else [aud]):
@@ -91,7 +98,7 @@ def verify(token, team, audience, now=None):
     return claims
 
 
-def _gate_key():
+def _gate_key() -> bytes:
     try:
         with open(GATE_KEY, encoding='utf-8') as f:
             text = f.read().strip()
@@ -103,7 +110,7 @@ def _gate_key():
         return text.encode()
 
 
-def proof_ok(headers, user, now=None):
+def proof_ok(headers: Headers, user: str, now: float | None = None) -> bool:
     """Whether X-Agentlab-Proof is the gate's signature over this answer (gate/gate/oidc.py proof())."""
     exp, _, mac = (headers.get('X-Agentlab-Proof') or '').partition('.')
     key = _gate_key()
@@ -116,7 +123,7 @@ def proof_ok(headers, user, now=None):
     return hmac.compare_digest(mac, want)
 
 
-def token_of(headers):
+def token_of(headers: Headers) -> str:
     token = headers.get('Cf-Access-Jwt-Assertion')
     if token:
         return token
@@ -127,7 +134,7 @@ def token_of(headers):
     return ''
 
 
-def viewer(headers):
+def viewer(headers: Headers) -> scope.Viewer:
     """Who is asking (scope.Viewer), or raises DeniedError; the edge strips client copies of X-Agentlab-User."""
     conf = cluster.auth()
     mode = conf.get('mode')

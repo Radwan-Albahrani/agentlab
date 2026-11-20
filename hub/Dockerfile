@@ -1,4 +1,4 @@
-# The hub: the React app is built here and served by the stdlib Python backend. Build: hub/test.sh build
+# The hub: the React app is built here and served by the Python backend. Build: hub/test.sh build
 FROM oven/bun:1.4.4-alpine AS web
 WORKDIR /web
 COPY web/package.json web/bun.lock ./
@@ -11,6 +11,10 @@ FROM python:3.15.0-alpine
 # Alpine has no zone database: without it TZ (the cluster's timezone) is ignored and every time shows as UTC.
 RUN apk add --no-cache tzdata
 WORKDIR /app
+# SQLAlchemy has a musllinux wheel for this Python (no compiler); no .pyc either: they compile on first import
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --no-compile --disable-pip-version-check --root-user-action=ignore --only-binary=:all: \
+      -r requirements.txt
 COPY *.py secrets-map.json ./
 COPY notify/ notify/
 COPY store/ store/

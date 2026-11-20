@@ -58,9 +58,18 @@ RUN usermod -l agent -d /home/agent -m node && groupmod -n agent node \
  && printf '%s\n' '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&resize=scale&path=_agentlab/browser/websockify">' \
       > /usr/share/novnc/index.html
 
+# Typed T3 database reads (agent-t3, agent-updater): SQLAlchemy in a venv of its own (Debian's Python is
+# externally managed); the .pth puts /usr/local/lib/agent-t3 (t3schema.py, t3state.py) on its path.
+RUN python3 -m venv /opt/agent-t3 \
+ && /opt/agent-t3/bin/pip install -q --no-cache-dir --disable-pip-version-check SQLAlchemy==2.1.9 \
+ && echo /usr/local/lib/agent-t3 \
+      > "$(/opt/agent-t3/bin/python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/agent-t3.pth"
+
+COPY t3schema.py t3state.py /usr/local/lib/agent-t3/
 COPY --chmod=755 entrypoint.sh /usr/local/bin/agent-entrypoint
 COPY --chmod=755 agent-config agent-terminal agent-janitor browser-idle-reaper browser-mcp-lazy chrome-on-demand \
-     docker-on-demand agent-dockerd android-emulator adb companion agent-updater agent-teamclaude /usr/local/bin/
+     docker-on-demand agent-dockerd android-emulator adb companion agent-updater agent-teamclaude agent-t3 \
+     /usr/local/bin/
 COPY --chmod=755 agent-dockerd-root /usr/local/sbin/
 # T3 chats delegate to T3 child threads (tracked and shown in T3), not built-in subagents
 COPY --chmod=755 use-t3-threads /usr/local/bin/
@@ -74,7 +83,7 @@ COPY throttle /usr/local/lib/agent-throttle
 COPY nodump.c /tmp/
 RUN gcc -shared -fPIC -O2 -o /usr/local/lib/agent-nodump.so /tmp/nodump.c && rm /tmp/nodump.c
 # The build context may be on a Windows drive (everything 777).
-RUN chmod -R u=rwX,go=rX /opt/accounts /usr/local/lib/agent-throttle /etc/agent/skills \
+RUN chmod -R u=rwX,go=rX /opt/accounts /usr/local/lib/agent-throttle /usr/local/lib/agent-t3 /etc/agent/skills \
  && chmod 755 /usr/local/lib/agent-throttle/shim /usr/local/lib/agent-throttle/shim-sync
 
 USER agent

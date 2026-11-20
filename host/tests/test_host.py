@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -507,45 +506,51 @@ class Dedupe(unittest.TestCase):
 
 
 class Janitor(unittest.TestCase):
+    def idle(self, rc=0, out='', timeout=False):
+        """idle_worktrees on a fake agent whose agent-t3 answers `out` (its chats' finish times per worktree)."""
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        now = time.time()
+        for wt in ('done', 'recent', 'live', 'orphan', 'orphan-new', 'delegated', 'delegated-now'):
+            os.makedirs(f'{root}/workspace/worktrees/app/{wt}')
+            open(f'{root}/workspace/worktrees/app/{wt}/.git', 'w').close()
+        os.utime(f'{root}/workspace/worktrees/app/orphan', (now - 5 * 86400, now - 5 * 86400))
+        if callable(out):
+            out = out(now)
+        calls = []
+
+        def docker(cmd, **_):
+            calls.append(cmd)
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd, 120)
+            return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr='')
+
+        with mock.patch.object(janitor.subprocess, 'run', docker):
+            got = janitor.idle_worktrees('c1', root, now)
+        self.assertEqual(calls[0], ['docker', 'exec', '-u', 'agent', 'c1', 'agent-t3', 'worktrees'])
+        return got
+
     def test_idle_worktrees(self):
-        with tempfile.TemporaryDirectory() as root:
-            os.makedirs(f'{root}/home/.t3/userdata')
-            db = sqlite3.connect(f'{root}/home/.t3/userdata/statev2.sqlite')
-            db.execute('create table orchestration_v2_projection_runs (thread_id, completed_at)')
-            db.execute('create table orchestration_v2_projection_threads (thread_id, payload_json, deleted_at)')
-            now = time.time()
-            old = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 20 * 3600))
-            fresh = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now - 3600))
-            threads = (
-                ('t1', 'done', old),
-                ('t2', 'recent', fresh),
-                ('t3', 'live', None),
-                ('t4', 'delegated', None),
-                ('t5', 'delegated-now', None),
-            )
-            for tid, wt, settled in threads:
-                payload = {'worktreePath': f'/workspace/worktrees/app/{wt}', 'settledAt': settled}
-                db.execute(
-                    'insert into orchestration_v2_projection_threads values (?, ?, null)', (tid, json.dumps(payload))
-                )
-            db.executemany(
-                'insert into orchestration_v2_projection_runs values (?, ?)',
-                [('t3', None), ('t4', old), ('t4', old), ('t5', old), ('t5', fresh)],
-            )
-            db.commit()
-            db.close()
-            for wt in ('done', 'recent', 'live', 'orphan', 'delegated', 'delegated-now'):
-                os.makedirs(f'{root}/workspace/worktrees/app/{wt}')
-                open(f'{root}/workspace/worktrees/app/{wt}/.git', 'w').close()
-            os.utime(f'{root}/workspace/worktrees/app/orphan', (now - 5 * 86400, now - 5 * 86400))
-            self.assertEqual(
-                janitor.idle_worktrees(root, now),
-                [
-                    '/workspace/worktrees/app/delegated',
-                    '/workspace/worktrees/app/done',
-                    '/workspace/worktrees/app/orphan',
-                ],
-            )
+        def answer(now):
+            old, fresh = now - 20 * 3600, now - 3600
+            done = {'done': old, 'recent': fresh, 'live': None, 'delegated': old, 'delegated-now': fresh}
+            return json.dumps({f'/workspace/worktrees/app/{wt}': t for wt, t in done.items()})
+
+        self.assertEqual(
+            self.idle(out=answer),
+            [
+                '/workspace/worktrees/app/delegated',
+                '/workspace/worktrees/app/done',
+                '/workspace/worktrees/app/orphan',
+            ],
+        )
+
+    def test_an_agent_that_cannot_say_keeps_every_worktree(self):
+        self.assertEqual(self.idle(out='null'), [])  # no T3 database yet
+        self.assertEqual(self.idle(rc=1, out='{}'), [])
+        self.assertEqual(self.idle(out='Traceback ...'), [])
+        self.assertEqual(self.idle(out='{"/workspace/worktrees/app/done": "yesterday"}'), [])
+        self.assertEqual(self.idle(out='[]'), [])
+        self.assertEqual(self.idle(timeout=True), [])
 
 
 @unittest.skipUnless(shutil.which('git'), 'needs git')

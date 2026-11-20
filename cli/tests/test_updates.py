@@ -1,8 +1,9 @@
 import contextlib
 import io
+import json
 import os
 import re
-import sqlite3
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -39,25 +40,7 @@ def resolve(data='/srv/agentlab', extra=''):
     return config.resolve(tomllib.loads(BASE.format(data=data) + extra))
 
 
-def runs_db(agent, rows):
-    """T3's runs table at the agent's real host path: [(run id, thread id, status)]."""
-    folder = os.path.join(agent['path'], 'home', '.t3', 'userdata')
-    os.makedirs(folder, exist_ok=True)
-    db = os.path.join(folder, 'statev2.sqlite')
-    with sqlite3.connect(db) as c:
-        c.execute(
-            'create table if not exists orchestration_v2_projection_runs '
-            '(run_id text, thread_id text, status text, completed_at text)'
-        )
-        c.execute('delete from orchestration_v2_projection_runs')
-        c.executemany('insert into orchestration_v2_projection_runs (run_id, thread_id, status) values (?, ?, ?)', rows)
-    return db
-
-
-def set_status(agent, status, where='running'):
-    db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
-    with sqlite3.connect(db) as c:
-        c.execute('update orchestration_v2_projection_runs set status = ? where status = ?', (status, where))
+SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
 
 
 class Config(unittest.TestCase):
@@ -93,12 +76,22 @@ class Stack(unittest.TestCase):
         deploy.mark_deployed(self.cfg, self.stack, self.text)
         # the container was created at 16:00 UTC, the image rebuilt at 16:47:59 UTC
         self.image_now = '2026-11-02T19:47:59.480512677+03:00'
+        self.t3 = {}  # agent id -> its T3 runs [(run id, thread id, status)], as its agent-t3 reports them
         self.enterContext(mock.patch('agentlab.deploy.run', self.docker))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 
-    def docker(self, cmd, check=True):
-        if cmd[:2] == ['docker', 'ps']:
-            return 0, 'c1'
+    def runs(self, agent, rows):
+        self.t3[agent['id']] = list(rows)
+
+    def set_status(self, agent, status, where='running'):
+        self.t3[agent['id']] = [(r, t, status if s == where else s) for r, t, s in self.t3[agent['id']]]
+
+    def docker(self, cmd, check=True, **_):
+        if cmd[:2] == ['docker', 'ps']:  # the container of a stack: c-<its compose project>
+            return 0, 'c-' + cmd[cmd.index('--filter') + 1].rsplit('=', 1)[1]
+        if cmd[:2] == ['docker', 'exec'] and cmd[-2] == 'agent-t3':
+            live = [[r, t] for r, t, s in self.t3.get(cmd[4].removeprefix('c-agentlab-agent-'), []) if s not in SETTLED]
+            return 0, json.dumps(bool(live) if cmd[-1] == 'busy' else live)
         if cmd[:2] == ['docker', 'inspect']:
             return 0, 'agentlab/agent:latest 2026-11-02T16:00:00.5Z'
         if cmd[:3] == ['docker', 'image', 'inspect']:
@@ -108,7 +101,7 @@ class Stack(unittest.TestCase):
 
 class ImageRedeploy(Stack):
     def test_a_newer_image_redeploys_an_idle_agent(self):
-        runs_db(self.sara, [('r1', 't1', 'completed')])
+        self.runs(self.sara, [('r1', 't1', 'completed')])
         reason, skip = deploy.why_deploy(self.cfg, self.stack, self.text)
         self.assertEqual((reason, skip), ('newer image: agentlab/agent:latest', ''))
 
@@ -121,7 +114,7 @@ class ImageRedeploy(Stack):
         self.assertEqual(deploy.why_deploy(self.cfg, self.stack, self.text), ('', ''))
 
     def test_never_mid_turn_unless_forced(self):
-        runs_db(self.sara, [('r1', 't1', 'running')])
+        self.runs(self.sara, [('r1', 't1', 'running')])
         reason, skip = deploy.why_deploy(self.cfg, self.stack, self.text)
         self.assertEqual(reason, '')
         self.assertIn('sara busy', skip)
@@ -130,9 +123,50 @@ class ImageRedeploy(Stack):
     def test_dry_run_plans_it_with_the_reason(self):
         plan = util.Plan(dry=True)
         start = len(util.OUT.changes)
-        runs_db(self.sara, [])
+        self.runs(self.sara, [])
         deploy.deploy(self.cfg, self.stack, 'agent', 'sara', plan)
         self.assertEqual(util.OUT.changes[start]['change'], f'deploy {self.stack} (newer image: agentlab/agent:latest)')
+
+
+class AskT3(unittest.TestCase):
+    """The host asks the agent (agent-t3 in its container); it never opens the agent's database."""
+
+    def setUp(self):
+        self.cfg = resolve()
+        self.sara = self.cfg['agents'][0]
+        self.calls = []
+
+    def ask(self, running=True, rc=0, out='', timeout=False):
+        def docker(cmd, check=True, **_):
+            self.calls.append(cmd)
+            if cmd[:2] == ['docker', 'ps']:
+                return 0, 'c1' if running else ''
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd, 60)
+            return rc, out
+
+        with mock.patch('agentlab.deploy.run', docker):
+            return deploy.agent_busy(self.cfg, self.sara), update.inflight(self.cfg, self.sara)
+
+    def test_asks_the_running_container_as_the_agent(self):
+        self.assertEqual(self.ask(out='true'), (True, []))
+        self.assertEqual(self.calls[1], ['docker', 'exec', '-u', 'agent', 'c1', 'agent-t3', 'busy'])
+        self.assertEqual(self.calls[3][-1], 'inflight')
+        self.assertIn('label=com.docker.compose.service=agent', self.calls[0])
+        self.assertEqual(self.ask(out='false'), (False, []))
+        self.assertEqual(self.ask(out='[["r1", "t1"], ["r2", "t1"]]')[1], [('r1', 't1'), ('r2', 't1')])
+
+    def test_a_stopped_agent_has_nothing_in_progress(self):
+        self.assertEqual(self.ask(running=False), (False, []))
+        self.assertEqual(len(self.calls), 2)  # no exec
+
+    def test_no_answer_counts_as_busy_with_nothing_known_in_flight(self):
+        self.assertEqual(self.ask(rc=1, out='agent-t3: database is locked'), (True, []))
+        self.assertEqual(self.ask(rc=126, out='OCI runtime exec failed'), (True, []))
+        self.assertEqual(self.ask(out='Traceback ...'), (True, []))
+        self.assertEqual(self.ask(out='{"busy": 1}'), (True, []))
+        self.assertEqual(self.ask(out='[["r1"]]'), (True, []))
+        self.assertEqual(self.ask(timeout=True), (True, []))
 
 
 class Pull(unittest.TestCase):
@@ -216,12 +250,12 @@ class Waiting(Stack):
         return update.wait_for_agents(self.cfg, util.Plan(False), 4, on_busy, sleep=sleep, clock=self.clock)
 
     def test_idle_agents_go_at_once_and_busy_ones_as_soon_as_they_are_idle(self):
-        runs_db(self.sara, [('r1', 't1', 'completed')])
-        runs_db(self.omar, [('r2', 't2', 'running')])
+        self.runs(self.sara, [('r1', 't1', 'completed')])
+        self.runs(self.omar, [('r2', 't2', 'running')])
 
         def tick(n):
             if n == 3:
-                set_status(self.omar, 'completed')
+                self.set_status(self.omar, 'completed')
 
         updated, deferred, _ = self.wait('defer', tick)
         self.assertEqual(updated, ['sara', 'omar'])
@@ -229,17 +263,17 @@ class Waiting(Stack):
         self.assertEqual(deferred, [])
 
     def test_still_busy_at_the_end_is_deferred(self):
-        runs_db(self.sara, [])
-        runs_db(self.omar, [('r2', 't2', 'running')])
+        self.runs(self.sara, [])
+        self.runs(self.omar, [('r2', 't2', 'running')])
         updated, deferred, resumed = self.wait('defer', lambda n: None)
         self.assertEqual((updated, deferred, resumed), (['sara'], ['omar'], {}))
         self.assertGreaterEqual(self.clock.t - 1_000_000.0, 4 * 3600)
         self.assertNotIn('agentlab-agent-omar', self.deployed)
 
     def test_resume_restarts_and_leaves_the_cut_off_turns_to_t3(self):
-        runs_db(self.sara, [])
+        self.runs(self.sara, [])
         rows = [('r1', 't1', 'running'), ('r2', 't2', 'running'), ('r3', 't3', 'completed'), ('r4', 't1', 'running')]
-        runs_db(self.omar, rows)
+        self.runs(self.omar, rows)
         updated, deferred, resumed = self.wait('resume', lambda n: None)
         self.assertEqual(updated, ['sara', 'omar'])
         self.assertEqual(deferred, [])
@@ -247,8 +281,8 @@ class Waiting(Stack):
         self.assertEqual(self.deployed, ['agentlab-agent-sara', 'agentlab-agent-omar'])
 
     def test_resume_now_does_not_wait(self):
-        runs_db(self.sara, [])
-        runs_db(self.omar, [('r2', 't2', 'running')])
+        self.runs(self.sara, [])
+        self.runs(self.omar, [('r2', 't2', 'running')])
         slept = []
         updated, deferred, _ = update.wait_for_agents(
             self.cfg, util.Plan(False), 0, 'resume', sleep=slept.append, clock=self.clock
@@ -286,8 +320,8 @@ class HostServices(unittest.TestCase):
 class OncePerRun(Waiting):
     def test_a_stack_apply_deployed_is_not_deployed_again(self):
         deploy.DEPLOYED.add('agentlab-agent-sara')
-        runs_db(self.sara, [])
-        runs_db(self.omar, [])
+        self.runs(self.sara, [])
+        self.runs(self.omar, [])
         updated, _, _ = self.wait('defer', lambda n: None)
         self.assertEqual(updated, ['omar'])
         self.assertEqual(self.deployed, ['agentlab-agent-omar'])

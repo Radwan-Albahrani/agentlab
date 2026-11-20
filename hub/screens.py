@@ -2,6 +2,7 @@
 
 import os
 import time
+from typing import Any
 
 import cluster
 import display
@@ -11,20 +12,23 @@ import notify
 import scope
 import store
 from shapes import epoch
+from store.companions import Companion
+
+Json = dict[str, Any]
 
 BARK_PUBLIC = os.environ.get('BARK_PUBLIC', '')  # Bark server address for the phone app
 DAY = 86400
 
 
-def see(key):
+def see(key: str) -> bool:
     return display.visible(key) and scope.current().sees(key)
 
 
-def shown_profiles():
+def shown_profiles() -> list[str]:
     return [p for p in cluster.ids() if see(f'profile.{p}')]
 
 
-def shown_companions(profile=None):
+def shown_companions(profile: str | None = None) -> list[Companion]:
     return [
         c
         for c in store.companions.all_companions()
@@ -32,7 +36,7 @@ def shown_companions(profile=None):
     ]
 
 
-def nav():
+def nav() -> Json:
     items = store.watch.containers().get('items') or []
     agents = []
     for p in shown_profiles():
@@ -59,7 +63,7 @@ def nav():
     ):
         if not see(f'page.{key}'):
             continue
-        entry = {'key': key, 'path': path, 'label': label}
+        entry: Json = {'key': key, 'path': path, 'label': label}
         if key == 'services':
             entry['count'] = sum(1 for r in items if not domains.healthy(r))
         if key == 'manage':
@@ -77,12 +81,12 @@ def nav():
     }
 
 
-def overview():
+def overview() -> Json:
     sums = cluster.summaries(shown_profiles())
     comps = shown_companions()
-    out = {}
+    out: Json = {}
     if see('overview.tiles'):
-        tiles = {
+        tiles: Json = {
             'agents': {'online': sum(1 for s in sums.values() if s), 'total': len(sums), 'link': see('page.agents')}
         }
         if comps:
@@ -104,7 +108,9 @@ def overview():
     if see('overview.needs'):
         out['needs'] = needs.needs(sums, comps)
     if see('overview.activity'):
-        activity = [dict(e, source=c['name']) for c in comps for e in c['events'][:40] if e.get('kind') != 'live']
+        activity: list[Json] = [
+            {**e, 'source': c['name']} for c in comps for e in c['events'][:40] if e.get('kind') != 'live'
+        ]
         if see('page.services'):
             activity += [dict(e, source='server') for e in store.watch.events(None, 40) if e.get('kind') != 'scan']
         out['activity'] = sorted(activity, key=lambda e: e.get('at', 0), reverse=True)[:14]
@@ -119,12 +125,12 @@ def overview():
     return out
 
 
-def chat_link(p):
+def chat_link(p: str) -> str:
     """Chat opens the T3 app (your newest chat) for your own agent; the web page otherwise or before any chat."""
     return (scope.current().owns(p) and notify.newest_chat_link(p)) or cluster.links(p)['chat']
 
 
-def now():
+def now() -> Json:
     """How busy each of the viewer's own agents is, as counts read from its T3 database (cheap: the page polls it every
     few seconds). Never what the chats are about, and never someone else's agent, admins included."""
     if not see('overview.now'):
@@ -139,7 +145,7 @@ def now():
 BUSY = ('queued', 'working', 'waiting', 'paused')  # paused: a usage limit T3 resumes from on its own
 
 
-def outcome(p):
+def outcome(p: Json) -> str:
     """Where a PR stands (the web app's lib/pulls.ts outcomeOf, kept the same)."""
     r = p.get('review')
     if not r:
@@ -154,12 +160,12 @@ def outcome(p):
     return 'findings' if c.get('findings') or c.get('open') else 'clean'
 
 
-def review_summary(c):
+def review_summary(c: Companion) -> Json | None:
     """A companion's PR reviews at a glance: outcome counts and the batch under way; None when it reviews none."""
     pulls = c.get('pulls') or []
     if not pulls:
         return None
-    counts = {}
+    counts: dict[str, int] = {}
     for p in pulls:
         counts[outcome(p)] = counts.get(outcome(p), 0) + 1
     run = sorted(
@@ -182,7 +188,7 @@ def review_summary(c):
     }
 
 
-def agent_card(n, s):
+def agent_card(n: str, s: Json | None) -> Json:
     if s is None:
         return {'name': n, 'online': False}
     links = cluster.links(n)
@@ -214,9 +220,9 @@ def agent_card(n, s):
     return card
 
 
-def agents(host):
+def agents(host: str) -> Json:
     sums = cluster.summaries(shown_profiles())
-    out = {'agents': [agent_card(n, s) for n, s in sums.items()]}
+    out: Json = {'agents': [agent_card(n, s) for n, s in sums.items()]}
     if see('agent.resources'):
         out['memory'] = {
             'usedMB': sum((s.get('resources') or {}).get('usedMB') or 0 for s in sums.values() if s),
@@ -225,13 +231,13 @@ def agents(host):
     return out
 
 
-def agent(host, prof):
+def agent(host: str, prof: str) -> Json:
     s = cluster.summary(prof)
     groups = domains.by_stack()
     sids = sorted(
         (sid for sid in groups if domains.domain_of(sid)[0] == prof), key=lambda x: domains.domain_of(x)[1] != 'agent'
     )
-    out = {
+    out: Json = {
         'agent': agent_card(prof, s),
         'up': bool(sids) and all(domains.healthy(r) for sid in sids for r in groups[sid]),
         'companions': [
@@ -254,7 +260,7 @@ def agent(host, prof):
     return out
 
 
-def accounts(host, prof, page):
+def accounts(host: str, prof: str, page: Json) -> Json:
     """The agent's own Accounts page minus hidden items, plus its browser link."""
     if not see('agent.env'):
         page.pop('env', None)
@@ -266,24 +272,24 @@ CASE_ITEM = ('seq', 'kind', 'state', 'at', 'to', 'label', 'text', 'files', 'priv
              'side', 'question', 'where', 'held', 'history')  # fmt: skip
 
 
-def _case_item(it):
+def _case_item(it: Json) -> Json:
     """A ledger item as the Cases tab shows it (contract: companion/bot/ledger.py); Slack ids stay behind."""
     out = {k: it[k] for k in CASE_ITEM if it.get(k) not in (None, '', [])}
     out['history'] = [[h[0], h[1]] for h in it.get('history') or []]
     return out
 
 
-def companion(name):
+def companion(name: str) -> Json:
     c = store.companions.companion(name)
     settings = store.companions.settings(name)
-    tasks = [
-        dict(
-            t,
-            startedAt=epoch(t.get('started')),
-            endedAt=epoch(t.get('ended')) or None,
-            resumesAt=float(t['resumes_at']) if t.get('resumes_at') else None,
-            t3=notify.thread_link(c['profile'], t['thread']) if t.get('thread') else '',
-        )
+    tasks: list[Json] = [
+        {
+            **t,
+            'startedAt': epoch(t.get('started')),
+            'endedAt': epoch(t.get('ended')) or None,
+            'resumesAt': float(t['resumes_at']) if t.get('resumes_at') else None,
+            't3': notify.thread_link(c['profile'], t['thread']) if t.get('thread') else '',
+        }
         for t in c['tasks']
     ]
     poll_of = {p['task']: p['id'] for p in c['polls']}
@@ -307,7 +313,7 @@ def companion(name):
         ({o['value']: o['label'] for o in f.get('options', [])}.get(v, v) for f, v in settings if f['key'] == 'mode'),
         hb.get('mode', ''),
     )
-    out = {
+    out: Json = {
         'name': name,
         'display': c['display'],
         'problem': c['problem'],
@@ -330,9 +336,9 @@ def companion(name):
     if see('companion.pulls') and hb.get('github'):
         by_id = {t['id']: t for t in tasks}
         for p in c['pulls']:
-            t = by_id.get((p.get('review') or {}).get('task'))
-            if t:
-                p['review'].update(t3=t['t3'], slack=t['slack'])
+            reviewed = by_id.get((p.get('review') or {}).get('task'))
+            if reviewed:
+                p['review'].update(t3=reviewed['t3'], slack=reviewed['slack'])
         me = next((v for f, v in settings if f['key'] == 'github_user'), '') or ''
         out['pulls'] = {'github': hb['github'], 'me': me, 'items': c['pulls']}
     channels = store.companions.channels(name)
@@ -346,7 +352,7 @@ def companion(name):
     return out
 
 
-def companion_secrets(name):
+def companion_secrets(name: str) -> Json:
     """The companion's own secrets: what each is, never the values."""
     prefix = f'companions/{name}/'
     items = [s for s in store.secrets.all_secrets() if s['name'].startswith(prefix)]
@@ -363,14 +369,14 @@ def companion_secrets(name):
     }
 
 
-def companion_logs(name):
+def companion_logs(name: str) -> Json:
     text, at = store.companions.log_tail(name)
     return {'text': text, 'at': at}
 
 
-def services():
+def services() -> Json:
     groups = domains.by_stack()
-    out = {'domains': [], 'other': []}
+    out: Json = {'domains': [], 'other': []}
     for prof, sids in domains.by_domain(list(groups)):
         stacks = [domains.stack(sid, groups[sid]) for sid in sids]
         if prof:
@@ -380,9 +386,9 @@ def services():
     return out
 
 
-def configs():
+def configs() -> Json:
     stacks = {s['id']: s for s in store.stacks.stacks()}
-    out = {'domains': [], 'other': []}
+    out: Json = {'domains': [], 'other': []}
     for prof, sids in domains.by_domain(list(stacks)):
         rows = []
         for sid in sids:
@@ -404,7 +410,7 @@ def configs():
     return out
 
 
-def config(sid):
+def config(sid: str) -> Json:
     if sid not in {s['id'] for s in store.stacks.stacks()}:
         raise LookupError(sid)
     prof, role = domains.domain_of(sid)
@@ -420,7 +426,7 @@ def config(sid):
     }
 
 
-def people_disks():
+def people_disks() -> list[Json]:
     """[{email, agents, size?, ...}]: each person in scope with their disk and the agents on it."""
     disks, shown = store.watch.people(), set(shown_profiles())
     return [
@@ -430,7 +436,7 @@ def people_disks():
     ]
 
 
-def my_disk():
+def my_disk() -> tuple[Json | None, str]:
     """(disk, label) for the overview: the shared pool, or the person's own disk."""
     if cluster.storage_mode() == 'per-person':
         if scope.current().admin:
@@ -439,10 +445,10 @@ def my_disk():
     return (store.watch.usage().get('pool'), 'Server disk') if see('storage.manage') else (None, '')
 
 
-def storage():
+def storage() -> Json:
     u = store.watch.usage()
     mode = cluster.storage_mode()
-    out = {
+    out: Json = {
         'reported': bool(u),
         'mode': mode,
         'manage': see('storage.manage'),
@@ -492,7 +498,7 @@ FOLDER_HINTS = {
 }
 
 
-def folder_hint(path):
+def folder_hint(path: str) -> str:
     """One line on what a folder is, for the Storage screen."""
     for prefix, hint in FOLDER_HINTS.items():
         if path == prefix or path.startswith(prefix + '/'):
@@ -505,7 +511,7 @@ def folder_hint(path):
     return ''
 
 
-def biggest(rows, n=6, dominant=0.6):
+def biggest(rows: list[Json], n: int = 6, dominant: float = 0.6) -> list[Json]:
     """The largest second-level folders, each named by the subfolder holding most of it (home/.local becomes
     home/.local/share/docker when that is 13 of its 14 GB)."""
     sizes = {i['path']: i['bytes'] for i in rows if i['path']}
@@ -526,7 +532,7 @@ def biggest(rows, n=6, dominant=0.6):
     return sorted(out, key=lambda i: -i['bytes'])[:n]
 
 
-def reconcile(pool, scan):
+def reconcile(pool: Json, scan: Json) -> Json | None:
     """Why the pool's used figure is bigger than the folders: growth since the scan, and the disk's own overhead."""
     at_scan = sum((scan.get('units') or {}).values())
     folders = sum(i['bytes'] for i in scan.get('items') or [] if i.get('path') == '')
@@ -541,7 +547,7 @@ def reconcile(pool, scan):
     }
 
 
-def manage():
+def manage() -> Json:
     """The admin's agent management: every agent with its limits and disk, disk sizing, and the jobs."""
     cfg, u = cluster.load(), store.watch.usage()
     st = cfg.get('storage') or {}
@@ -587,7 +593,7 @@ def manage():
     }
 
 
-def access_setup(cfg):
+def access_setup(cfg: Json) -> Json:
     """What adding an agent involves here: who it can be for, and how people reach it."""
     auth = cfg.get('auth') or {}
     published = any(a.get('publish') for a in cfg.get('agents') or []) or bool((cfg.get('hub') or {}).get('publish'))
@@ -601,7 +607,7 @@ def access_setup(cfg):
     }
 
 
-def effect(s):
+def effect(s: Json) -> str:
     if not s['known']:
         return 'Not mapped yet: nothing happens on change.'
     parts = []
@@ -613,7 +619,7 @@ def effect(s):
     return ('On change: ' + ', '.join(parts) + '.') if parts else (s['note'] or 'Read when used: nothing to apply.')
 
 
-def kinds(s):
+def kinds(s: Json) -> list[str]:
     """What a change does, as filter categories: restart, copy, read or unmapped."""
     if not s['known']:
         return ['unmapped']
@@ -626,7 +632,7 @@ def kinds(s):
     return sorted(found) or ['read']
 
 
-def secrets():
+def secrets() -> Json:
     items = [
         {k: s[k] for k in ('name', 'label', 'used_by', 'about', 'how', 'modified', 'versions', 'group')}
         | {'effect': effect(s), 'kinds': kinds(s)}
@@ -635,7 +641,7 @@ def secrets():
     return {'items': items, 'events': store.secrets.events(20)}
 
 
-def notifications():
+def notifications() -> Json:
     s = notify.load()
     shown = shown_profiles()
     watch = notify.watcher.status if notify.watcher else {}
@@ -667,9 +673,9 @@ def notifications():
     }
 
 
-def display_settings():
+def display_settings() -> Json:
     s = display.load()
-    groups = {}
+    groups: dict[str, list[Json]] = {}
     for g, key, label, _ in display.items():
         groups.setdefault(g, []).append({'key': key, 'label': label, 'mode': display.mode(key, s)})
     return {'presenting': s['presenting'], 'groups': [{'name': g, 'items': i} for g, i in groups.items()]}

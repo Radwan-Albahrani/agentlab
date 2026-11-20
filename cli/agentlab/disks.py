@@ -170,7 +170,7 @@ def shrink(cfg, u, have, want, plan):
                 f'{u["name"]} disk holds {use["used"] / 2**30:.0f} GiB, so it stays {have // 2**30} GiB, not {u["size"]}'
             )
         return
-    busy = [a['id'] for a in cfg['agents'] if f'agentlab-agent-{a["id"]}' in u['stacks'] and deploy.agent_busy(a)]
+    busy = [a['id'] for a in cfg['agents'] if f'agentlab-agent-{a["id"]}' in u['stacks'] and deploy.agent_busy(cfg, a)]
     if busy:
         warn(f'{u["name"]} disk: {", ".join(busy)} mid-turn, so it shrinks on the next apply')
         return

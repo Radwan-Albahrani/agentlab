@@ -360,7 +360,7 @@ def test_findings_become_one_review_with_inline_comments_where_they_fit(gh, told
     assert f'https://github.com/{REPO}/blob/{"a" * 40}/api/g.py#L3' in body['body']
     assert [m[1]['id'] for m in gh.mutations] == ['T_MINE', 'T_MINE']
     assert not os.path.exists(os.path.join(box_of(task), '.token'))
-    assert task['review']['summary'] == '2 findings (1 blocking)' and task['posted']
+    assert task['review']['summary'] == '2 findings (1 blocking)' and task['review']['published']
     assert fresh_bot.messages[-1]['text'] == f'Review of {REPO}#5922: changes requested'
 
 
@@ -513,17 +513,6 @@ def test_screenshots_named_any_way_become_their_uploaded_copies():
     text = report.qa_body('see `/tmp/a.png` and <img alt="B" src="./b.png" width="600">', urls)
     assert text == 'see ![a](https://x/a.png) and <img alt="B" src="https://x/b.png" width="600">'
     assert report.qa_body('<img src="c.png" width="300">', {}, ['c.png']) == '_(screenshot not attached: c.png)_'
-
-
-def test_reviews_from_before_the_counts_still_show_them():
-    assert report.counts_of('3 findings (3 blocking) · QA found problems') == {
-        'findings': 3,
-        'blocking': 3,
-        'open': 0,
-        'qa': 'fail',
-    }
-    assert report.counts_of('no findings · QA verified')['qa'] == 'pass'
-    assert report.counts_of('answered') is None
 
 
 def test_a_review_with_only_a_limitation_says_plainly_what_was_and_was_not_checked(gh, told):
@@ -715,45 +704,6 @@ def test_a_question_goes_to_the_batch_thread_and_the_answer_to_its_own_review(gh
     assert len(fresh_bot.messages) == 5  # the card, three questions, one "which review?"
 
 
-def test_a_run_saved_by_the_per_card_version_continues_on_one_batch_card(gh, told, fresh_bot):
-    old = {
-        'channel': 'D_OWNER',
-        'thread_ts': '7.0',
-        'turn': RUNNING,
-        'start': '2026-11-14T10:00:00.000Z',
-        'review': {'id': f'{REPO}#5922', 'repo': REPO, 'number': 5922, 'url': f'https://github.com/{REPO}/pull/5922'},
-    }
-    state.state['tasks']['D_OWNER:7.0'] = old
-    url = f'https://github.com/{REPO}/pull/'
-    card = {'hub': True, 'channel': 'D_OWNER'}
-    state.state['review_run'] = [
-        {'id': f'{REPO}#5922', 'url': f'{url}5922', 'title': 'PR 5922', 'task': 'D_OWNER:7.0', 'thread': '7.0'}
-        | card
-        | {'card': '7.0'},
-        {'id': f'{REPO}#5923', 'url': f'{url}5923', 'title': 'PR 5923', 'thread': '8.0'} | card | {'card': '8.0'},
-    ]
-    origin = {'channel': 'D_OWNER', 'thread_ts': '8.0', 'trigger_ts': '8.0'}
-    state.state['review_queue'] = [{'id': f'{REPO}#5923', 'repo': REPO, 'number': 5923, 'origin': origin}]
-    reviews.tick()
-    [posted] = fresh_bot.messages
-    assert posted['thread_ts'] is None and 'review_run' not in state.state
-    assert {u['ts'] for u in fresh_bot.updates if 'Followed on' in json.dumps(u['blocks'])} == {'7.0', '8.0'}
-    new = review(5923)
-    assert new['thread_ts'] == '1.0'
-    assert [line.split(' · ')[-1] for line in card_now(fresh_bot, '1.0').split('\n')[1:]] == ['reviewing'] * 2
-
-    ended(old, 'stopped')
-    new['latest'] = 'No Android build.'
-    ended(new, 'failed')
-    reviews.tick()
-    assert [m['text'] for m in fresh_bot.messages[1:]] == [
-        f'{REPO}#5922: stopped',
-        f'{REPO}#5923: failed',
-        'All 2 reviews done',
-    ]
-    assert [m['thread_ts'] for m in fresh_bot.messages[1:]] == ['1.0', '1.0', None]
-
-
 def test_the_hub_gets_a_short_review_once_it_is_done(gh, told, monkeypatch):
     set_settings({'review_slots': '1'})
     pulls_listed(5922, 5923)
@@ -797,7 +747,7 @@ def test_long_text_is_cut_after_a_sentence_or_between_words():
 
 
 def test_hub_asks_are_not_counted_as_reviews(gh, told):
-    state.state['tasks']['D_OWNER:9.0'] = {'review': True, 'turn': dict(RUNNING), 'start': ''}
+    state.state['tasks']['D_OWNER:9.0'] = {'preview': True, 'turn': dict(RUNNING), 'start': ''}
     reviews.refresh()
     assert all(r['review'] is None for r in reviews.rows(lambda k, t: {}))
     for n in (5922, 5923):

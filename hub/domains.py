@@ -1,5 +1,8 @@
 """Stacks grouped by agent: its own stack (agentlab-agent-<id>) plus its companions' (agentlab-companion-<name>)."""
 
+from collections.abc import Iterable
+from typing import Any
+
 import cluster
 import display
 import store
@@ -8,12 +11,12 @@ AGENT_STACK, COMPANION_STACK = 'agentlab-agent-', 'agentlab-companion-'
 STACK_LABELS = {'agentlab-core': 'Core · edge, gate, hub', 'coolify': 'Coolify', 'other': 'Other containers'}
 
 
-def known(sid):
+def known(sid: str) -> bool:
     """agentlab's own stacks and cluster.json's extra ones; anything else stays off the page."""
     return sid in STACK_LABELS or bool(domain_of(sid)[0]) or sid in cluster.extra_stacks()
 
 
-def domain_of(sid):
+def domain_of(sid: str | None) -> tuple[str | None, str | None]:
     """(agent id, role): role is 'agent' for the agent's own stack, else the companion's name; (None, None) outside."""
     sid = sid or ''
     if sid.startswith(AGENT_STACK) and sid[len(AGENT_STACK) :] in cluster.agents():
@@ -26,21 +29,21 @@ def domain_of(sid):
     return None, None
 
 
-def stack_label(sid):
+def stack_label(sid: str) -> str:
     if sid in STACK_LABELS:
         return STACK_LABELS[sid]
     agent, role = domain_of(sid)
-    if agent:
+    if agent and role:
         return f'{agent} agent' if role == 'agent' else f'{cluster.display_name(role)} · {agent} companion'
     return sid
 
 
-def healthy(r):
+def healthy(r: dict[str, Any]) -> bool:
     return r['state'] == 'running' and 'unhealthy' not in (r.get('status') or '')
 
 
-def by_stack():
-    groups = {}
+def by_stack() -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
     for r in store.watch.containers().get('items') or []:
         sid = r.get('stack') or 'other'
         if known(sid):
@@ -48,9 +51,9 @@ def by_stack():
     return {k: sorted(v, key=lambda r: r['service']) for k, v in groups.items()}
 
 
-def by_domain(stack_ids):
+def by_domain(stack_ids: Iterable[str]) -> list[tuple[str | None, list[str]]]:
     """[(agent id or None, [stack ids])]: each visible agent's stacks, then the rest."""
-    out = []
+    out: list[tuple[str | None, list[str]]] = []
     for a in cluster.ids():
         mine = sorted((s for s in stack_ids if domain_of(s)[0] == a), key=lambda s: domain_of(s)[1] != 'agent')
         if mine and display.visible(f'profile.{a}'):
@@ -59,14 +62,14 @@ def by_domain(stack_ids):
     return out + ([(None, rest)] if rest else [])
 
 
-def _rest_order(sid):
+def _rest_order(sid: str) -> tuple[int, int, str]:
     extra = cluster.extra_stacks()
     if sid in STACK_LABELS:
         return 0, list(STACK_LABELS).index(sid), sid
     return 1, extra.index(sid) if sid in extra else len(extra), sid
 
 
-def container(r):
+def container(r: dict[str, Any]) -> dict[str, Any]:
     return {
         'name': r['name'],
         'service': r['service'],
@@ -77,7 +80,7 @@ def container(r):
     }
 
 
-def stack(sid, items):
+def stack(sid: str, items: list[dict[str, Any]]) -> dict[str, Any]:
     agent, role = domain_of(sid)
     return {
         'id': sid,

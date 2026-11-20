@@ -4,6 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 import cluster
 
@@ -20,17 +21,17 @@ VERSIONS_KEPT = 5
 FILE_OK = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$')
 
 
-def _folders():
+def _folders() -> list[str]:
     """Secret folders as name prefixes: '', companions/<name>/ and extra/."""
     return ['', *(f'companions/{n}/' for n in cluster.companions()), *([EXTRA_PREFIX] if EXTRA else [])]
 
 
-def _root(folder):
+def _root(folder: str) -> tuple[str, str]:
     """(directory on disk, prefix inside it) for one of _folders()."""
     return (EXTRA, '') if folder == EXTRA_PREFIX else (SECRETS, folder)
 
 
-def _path(name):
+def _path(name: str) -> str:
     folder, _, file = (name or '').rpartition('/')
     folder += '/' if folder else ''
     if folder not in _folders() or not FILE_OK.match(file):
@@ -39,13 +40,13 @@ def _path(name):
     return os.path.join(root, inner + file)
 
 
-def _versions_folder(name):
+def _versions_folder(name: str) -> str:
     if EXTRA and name.startswith(EXTRA_PREFIX):
         return os.path.join(EXTRA, '.versions', name[len(EXTRA_PREFIX) :])
     return os.path.join(SECRETS, '.versions', name)
 
 
-def _expand(value, name):
+def _expand(value: Any, name: str) -> Any:
     if isinstance(value, str):
         return value.replace('{companion}', name).replace('Companion', cluster.display_name(name))
     if isinstance(value, list):
@@ -55,9 +56,9 @@ def _expand(value, name):
     return value
 
 
-def secrets_map():
+def secrets_map() -> dict[str, Any]:
     """{file name: what it is}, with {companion} entries expanded per companion."""
-    out = {}
+    out: dict[str, Any] = {}
     for key, info in read_json(MAP, {}).items():
         if key == '_about':
             continue
@@ -70,10 +71,10 @@ def secrets_map():
     return out
 
 
-def all_secrets():
+def all_secrets() -> list[dict[str, Any]]:
     described = secrets_map()
-    out = []
-    names = []
+    out: list[dict[str, Any]] = []
+    names: list[str] = []
     for folder in _folders():
         root, inner = _root(folder)
         try:
@@ -102,15 +103,15 @@ def all_secrets():
     return out
 
 
-def value(name):
+def value(name: str) -> str:
     return Path(_path(name)).read_text(encoding='utf-8', errors='replace')
 
 
-def secret_versions(name):
+def secret_versions(name: str) -> list[str]:
     return versions(_versions_folder(name))
 
 
-def save(name, text, create=False):
+def save(name: str, text: str, create: bool = False) -> bool:
     """Write a secret, keeping the old value as a version; False when nothing changed."""
     path = _path(name)
     exists = os.path.isfile(path)
@@ -128,15 +129,15 @@ def save(name, text, create=False):
     return True
 
 
-def delete(name):
+def delete(name: str) -> None:
     keep_version(_path(name), _versions_folder(name), VERSIONS_KEPT)
     os.remove(_path(name))
 
 
-def restore(name, version):
+def restore(name: str, version: str) -> bool:
     text = read_version(_versions_folder(name), version)
     return save(name, text, create=not os.path.isfile(_path(name)))
 
 
-def events(limit=60):
+def events(limit: int = 60) -> list[dict[str, Any]]:
     return watch.events({'secret'}, limit)

@@ -6,9 +6,10 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 
-def read_json(path, default):
+def read_json(path: str, default: Any) -> Any:
     try:
         with open(path, encoding='utf-8') as f:
             return json.load(f)
@@ -16,7 +17,7 @@ def read_json(path, default):
         return default
 
 
-def read_jsonl(path, limit):
+def read_jsonl(path: str, limit: int) -> list[Any]:
     """The last `limit` lines that parse, newest first."""
     try:
         with open(path, encoding='utf-8') as f:
@@ -30,7 +31,7 @@ def read_jsonl(path, limit):
     return out[::-1]
 
 
-def write_json(path, data):
+def write_json(path: str, data: Any) -> None:
     """Atomic write through a temp file."""
     with open(f'{path}.tmp', 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1)
@@ -38,13 +39,13 @@ def write_json(path, data):
     os.chmod(path, 0o644)
 
 
-def write_in_place(path, text):
+def write_in_place(path: str, text: str) -> None:
     """Overwrite the same inode, so containers that bind-mount the file see the change."""
     with open(path, 'w', encoding='utf-8', newline='') as f:
         f.write(text)
 
 
-def versions(folder):
+def versions(folder: str) -> list[str]:
     """Kept versions in `folder`, newest first (names are timestamps)."""
     try:
         return sorted(os.listdir(folder), reverse=True)
@@ -52,7 +53,7 @@ def versions(folder):
         return []
 
 
-def keep_version(path, folder, keep):
+def keep_version(path: str, folder: str, keep: int) -> None:
     if not os.path.isfile(path):
         return
     os.makedirs(folder, exist_ok=True)
@@ -61,7 +62,7 @@ def keep_version(path, folder, keep):
         os.remove(os.path.join(folder, old))
 
 
-def read_version(folder, version):
+def read_version(folder: str, version: str) -> str:
     if version not in versions(folder):
         raise ValueError('That version is gone.')
     return Path(folder, version).read_text(encoding='utf-8', errors='replace')

@@ -24,9 +24,19 @@ part_lint() {  # per part: each folder is its own import root (first-party modul
       (cd \$d && $fix ruff check --output-format concise . && ruff format --check -q .) || exit 1
     done
     echo 'ruff ok'"
+  copies || failed+=(copies)
 }
-part_cli() {  # git for the companion template tests, which work on real repos
+copies() {  # a schema each image needs, kept as exact copies of one source (each image builds from its own folder)
+  local ok=0 pair
+  for pair in image/t3schema.py:companion/t3schema.py image/t3schema.py:hub/notify/t3schema.py \
+    companion/tables.py:hub/store/companion_tables.py; do
+    cmp -s "$REPO/${pair%%:*}" "$REPO/${pair##*:}" || { echo "${pair##*:} differs from ${pair%%:*}: copy it over"; ok=1; }
+  done
+  return $ok
+}
+part_cli() {  # git for the companion template tests, which work on real repos; SQLAlchemy only builds test databases
   py cli 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends git >/dev/null
+    pip install -q SQLAlchemy==2.1.9
     cd cli && python -m unittest discover -s tests 2>&1 | tail -3'
 }
 part_host() {  # git for the janitor's worktree tests
@@ -38,9 +48,11 @@ part_companion() {  # mypy first: every function in the bot is typed (companion/
   py companion 'cd companion && pip install -q -r tests/requirements.txt && mypy --cache-dir /tmp/mypy  # the repo is read-only here
     python -m pytest -q -p no:cacheprovider tests 2>&1 | tail -3'
 }
-part_image() {  # gcc for the emulator's non-dumpable preload
+part_image() {  # gcc for the emulator's non-dumpable preload; mypy for the T3 database readers (image/mypy.ini)
   py image 'apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null
-    pip install -q pytest==8.3.4 && python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'
+    pip install -q pytest==8.3.4 SQLAlchemy==2.1.9 mypy==2.4.1
+    (cd image && mypy --cache-dir /tmp/mypy && mypy --cache-dir /tmp/mypy agent-t3)
+    python -m pytest -q -p no:cacheprovider image/tests 2>&1 | tail -3'
 }
 part_shell() {
   docker run --rm -v "$REPO:/repo:ro" -w /repo "$SHELLCHECK" sh -c \
