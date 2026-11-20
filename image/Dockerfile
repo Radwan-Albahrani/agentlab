@@ -1,5 +1,5 @@
 # Node >= 24.22.1 carries the CA list without the distrusted emSign root (see the CA step below).
-FROM node:26.13.0-bookworm
+FROM node:26.13.1-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG TTYD_VERSION=1.7.7
