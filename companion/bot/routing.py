@@ -1,9 +1,8 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
-from typing import Any
-
 from . import cases, drafts, inbox, jobs, machine, requests, reviews, slack, tasks
 from .config import COMP, OWNER, has_access, log, mode, requests_channel
+from .shapes import Json
 from .state import key, save, state
 
 _seen: list[str] = []
@@ -36,14 +35,14 @@ def _reviews_from(user: str | None) -> bool:
     return has_access(user) or (who == 'team' and user is not None and requests.team_member(user))
 
 
-def _bot_reads(ev: dict[str, Any]) -> bool:
+def _bot_reads(ev: Json) -> bool:
     """Can the bot read and post where this message is?"""
     if ev.get('channel_type') in ('im', 'mpim') or ev['channel'].startswith('D'):
         return requests.own_dm(ev['channel'])
     return slack.bot_in(ev['channel'])
 
 
-def tagged_by_edit(ev: dict[str, Any]) -> dict[str, Any] | None:
+def tagged_by_edit(ev: Json) -> Json | None:
     """An edit that adds the companion's tag to a message: the message as it is now, or None. Only the tag counts:
     other edits change nothing already asked."""
     if ev.get('subtype') != 'message_changed':
@@ -54,7 +53,7 @@ def tagged_by_edit(ev: dict[str, Any]) -> dict[str, Any] | None:
     return dict(new, channel=ev['channel'], channel_type=ev.get('channel_type'))
 
 
-def route(ev: dict[str, Any], mentioned: bool) -> None:
+def route(ev: Json, mentioned: bool) -> None:
     edited = tagged_by_edit(ev)
     if edited:
         log('tag added by an edit', ev['channel'], edited['ts'])
@@ -147,7 +146,7 @@ def route(ev: dict[str, Any], mentioned: bool) -> None:
 
 def replay(channel: str) -> None:
     """Handle a DM's messages since the companion's last reply, oldest first: ones it missed (it couldn't see them)."""
-    missed: list[dict[str, Any]] = []
+    missed: list[Json] = []
     for m in slack.app.client.conversations_history(channel=channel, limit=20)['messages']:  # newest first
         if m.get('bot_id') or m.get('user') == slack.bot_user():
             break
@@ -158,10 +157,10 @@ def replay(channel: str) -> None:
 
 
 @slack.app.event('app_mention')
-def on_mention(event: dict[str, Any]) -> None:
+def on_mention(event: Json) -> None:
     route(event, True)
 
 
 @slack.app.event('message')
-def on_message(event: dict[str, Any]) -> None:
+def on_message(event: Json) -> None:
     route(event, f'<@{slack.bot_user()}>' in (event.get('text') or ''))

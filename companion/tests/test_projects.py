@@ -1,7 +1,7 @@
 """Where a new chat starts: work projects only, every route saying why (bot/projects.py)."""
 
 import pytest
-from bot import projects, state
+from bot import projects
 from bot import t3db as t3db_module
 from bot.t3db import Project, Thread
 from conftest import set_settings
@@ -103,11 +103,3 @@ def test_unknown_routes_and_purposes_are_refused():
         projects.made('/workspace/x', 'guess', '')
     with pytest.raises(ValueError):
         projects.route('chat')
-
-
-def test_a_task_saved_before_routes_keeps_where_it_started():
-    old = {'project': '/workspace/companions/companion', 'title': 'x'}
-    state.state['tasks']['C1:1.1'] = old
-    state.prepare_for_start()
-    assert old['route'] == projects.made('/workspace/companions/companion', 'earlier', 'started before routes')
-    assert 'project' not in old

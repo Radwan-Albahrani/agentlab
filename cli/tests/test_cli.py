@@ -5,13 +5,15 @@ import io
 import json
 import os
 import re
-import sqlite3
 import stat
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest import mock
+
+from sqlalchemy import Column, Integer, MetaData, Table, create_engine, insert, select
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,11 +31,32 @@ from agentlab import (
     privileges,
     render,
     tomledit,
-    update,
     util,
     wslhost,
     yaml,
 )
+
+# A database for the backup tests (SQLAlchemy is a test-only dependency; agentctl itself is stdlib-only).
+ROWS = Table('t', MetaData(), Column('x', Integer))
+
+
+def sqlite_db(path, *xs):
+    engine = create_engine(f'sqlite:///{path}')
+    try:
+        ROWS.metadata.create_all(engine)
+        with engine.begin() as c:
+            c.execute(insert(ROWS), [{'x': x} for x in xs])
+    finally:
+        engine.dispose()
+
+
+def sqlite_rows(path):
+    engine = create_engine(f'sqlite:///{path}')
+    try:
+        with engine.connect() as c:
+            return list(c.scalars(select(ROWS.c.x)))
+    finally:
+        engine.dispose()
 
 
 def setUpModule():
@@ -485,7 +508,6 @@ class Migration(unittest.TestCase):
 
     def test_backups_keep_the_hub_state(self):
         import datetime  # noqa: PLC0415
-        import sqlite3  # noqa: PLC0415
 
         from agentlab import backup  # noqa: PLC0415
 
@@ -496,8 +518,7 @@ class Migration(unittest.TestCase):
                 f.write('{"device": "x"}')
             t3 = f'{cfg["agents"][0]["path"]}/home/.t3/userdata'
             os.makedirs(t3)
-            with contextlib.closing(sqlite3.connect(f'{t3}/statev2.sqlite')) as db:
-                db.execute('create table runs (id)')
+            sqlite_db(f'{t3}/statev2.sqlite', 1)
             toml = f'{d}/cluster.toml'
             with open(toml, 'w') as f:
                 f.write(self.ONE)
@@ -543,19 +564,29 @@ class Migration(unittest.TestCase):
         import sqlite3  # noqa: PLC0415
 
         from agentlab import backup  # noqa: PLC0415
+        from sqlalchemy.pool import NullPool  # noqa: PLC0415
 
         with tempfile.TemporaryDirectory() as d:
-            db = sqlite3.connect(f'{d}/a.db', isolation_level=None)
-            db.execute('create table t (x)')
-            db.execute('insert into t values (1)')
-            db.execute('begin exclusive')  # held, as by a process that never lets go
-            try:
-                with mock.patch.object(backup, 'BUSY_S', 0.2), self.assertRaises(sqlite3.OperationalError):
+            sqlite_db(f'{d}/a.db', 1)
+            # the driver itself opens a write with BEGIN EXCLUSIVE, held as by a process that never lets go
+            locker = create_engine(
+                'sqlite://',
+                creator=lambda: sqlite3.connect(f'{d}/a.db', isolation_level='EXCLUSIVE'),
+                poolclass=NullPool,
+            )
+            with locker.connect() as held:
+                held.execute(insert(ROWS).values(x=2))
+                started = time.monotonic()
+                with (
+                    mock.patch.object(backup, 'BUSY_S', 0.2),
+                    self.assertRaisesRegex(sqlite3.OperationalError, 'gave up after 0.2 s'),
+                ):
                     backup.copy_db(f'{d}/a.db', f'{d}/out/a.db')
-            finally:
-                db.execute('rollback')
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertEqual(os.listdir(f'{d}/out'), [])  # no half copy left behind
+                held.rollback()
             backup.copy_db(f'{d}/a.db', f'{d}/out/a.db')
-            self.assertEqual(sqlite3.connect(f'{d}/out/a.db').execute('select x from t').fetchall(), [(1,)])
+            self.assertEqual(sqlite_rows(f'{d}/out/a.db'), [1])
 
     def test_extra_stacks(self):
         cfg = resolve(hub__extra_stacks=['media-arr', 'media_jellyfin'])
@@ -1502,24 +1533,6 @@ class DiskSizes(unittest.TestCase):
         calls, size, _, _, warned = self.run_shrink(holder=True)
         self.assertEqual(calls[1:5], ['docker ps', 'docker inspect', 'docker stop', 'umount'])
         self.assertEqual((calls[-2:], size, warned), (['docker start', 'start'], 4 << 20, []))  # the hub first
-
-    def test_reading_an_agents_t3_database_leaves_nothing_open_on_its_disk(self):
-        tmp = self.enterContext(tempfile.TemporaryDirectory())
-        folder = f'{tmp}/home/.t3/userdata'
-        os.makedirs(folder)
-        db = sqlite3.connect(f'{folder}/statev2.sqlite')
-        db.execute('pragma journal_mode=wal')
-        db.execute('create table orchestration_v2_projection_runs (run_id, thread_id, status, completed_at)')
-        db.commit()
-        db.close()
-        self.assertFalse(deploy.agent_busy({'path': tmp}))
-        self.assertEqual(update.inflight({'path': tmp}), [])
-        held = [
-            os.readlink(f'/proc/self/fd/{fd}')
-            for fd in os.listdir('/proc/self/fd')
-            if os.path.exists(f'/proc/self/fd/{fd}')
-        ]
-        self.assertFalse([p for p in held if p.startswith(tmp)])  # an open one keeps the disk from unmounting
 
     def test_a_failed_remount_still_brings_back_the_hub_but_not_the_agent(self):
         calls, _, mounted, _, warned = self.run_shrink(holder=True, rcs={'mount': 32}, fail='resize2fs')

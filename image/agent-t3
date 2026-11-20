@@ -1,0 +1,9 @@
+#!/opt/agent-t3/bin/python3
+"""agent-t3 busy | inflight | worktrees: this agent's T3 chats as JSON, for the host (t3state.py)."""
+
+import sys
+
+from t3state import main
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

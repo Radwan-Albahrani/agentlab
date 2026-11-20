@@ -7,6 +7,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the script's folder off the path
@@ -21,7 +22,9 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send(self, code, body=b'', ctype='application/json', cache='no-store'):
+    def send(
+        self, code: int, body: bytes | str = b'', ctype: str = 'application/json', cache: str = 'no-store'
+    ) -> None:
         body = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
         self.send_header('Content-Type', ctype)
@@ -32,10 +35,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def json(self, obj, code=200):
+    def json(self, obj: Any, code: int = 200) -> None:
         self.send(code, json.dumps(obj, default=str))
 
-    def allowed(self, api):
+    def allowed(self, api: bool) -> bool:
         try:
             scope.use(access.viewer(self.headers))
             cluster.use_host(self.headers.get('Host', ''))
@@ -47,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def static(self, path):
+    def static(self, path: str) -> None:
         f = os.path.realpath(os.path.join(STATIC, path.lstrip('/')))
         if f.startswith(STATIC + os.sep) and os.path.isfile(f):
             cache = 'public, max-age=31536000, immutable' if path.startswith('/assets/') else 'no-cache'
@@ -57,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send(200, Path(STATIC, 'index.html').read_bytes(), 'text/html; charset=utf-8', 'no-cache')
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         u = urlparse(self.path)
         if u.path == '/health':
             return self.send(200, 'ok', 'text/plain')
@@ -78,7 +81,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json({'error': str(e)}, 400)
         return None
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         path = urlparse(self.path).path.rstrip('/')
         origin = self.headers.get('Origin')
         if origin and urlparse(origin).netloc != self.headers.get('Host'):
@@ -97,7 +100,7 @@ class Handler(BaseHTTPRequestHandler):
             self.json({'ok': False, 'error': str(e).strip("'")}, 400)
         return None
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         pass
 
 

@@ -1,18 +1,23 @@
-#!/usr/bin/env python3
+#!/opt/agent-t3/bin/python3
 """Supervisord program `updater`: re-runs tools.sh installers and restarts t3 (and the account pool) onto a new
 version only while idle."""
 
 import json
 import os
 import re
-import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
+from typing import Any, Literal
+
+from sqlalchemy.exc import SQLAlchemyError
+
+import t3state
 
 HOME = os.path.expanduser('~')
 HOURS = float(os.environ.get('AGENTLAB_UPDATE_HOURS') or 6)
 STAMP = os.path.join(HOME, '.config', 'agent', 'tools-updated')
-T3_DB = os.path.join(HOME, '.t3', 'userdata', 'statev2.sqlite')
+T3_DB = t3state.DB
 WAITING = os.path.join(HOME, '.config', 'agent', 't3-update.json')  # read by the hub (via /api/summary)
 POOL_VERSION = '/tmp/pool-version'  # written by the pool program as it starts
 SUPERVISOR = ['supervisorctl', '-c', '/etc/agent-supervisord.conf']
@@ -20,14 +25,18 @@ WAIT_HOURS = float(os.environ.get('AGENTLAB_UPDATE_WAIT_HOURS') or 4)
 ON_BUSY = os.environ.get('AGENTLAB_ON_BUSY') or 'defer'
 FIRST_CHECK_S = 120
 RETRY_S = 300
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
+
+Run = Callable[..., subprocess.CompletedProcess[Any]]
+# Where a new version stands: a restart only from busy -> idle, deferred until the next cycle after WAIT_HOURS busy.
+Aligned = Literal['current', 'restarted', 'busy', 'unknown']
+Step = Literal['current', 'restarted', 'busy', 'resumed', 'deferred', 'unknown']
 
 
-def log(msg):
+def log(msg: str) -> None:
     print(time.strftime('%Y-%m-%d %H:%M:%S'), msg, flush=True)
 
 
-def due(now=None):
+def due(now: float | None = None) -> bool:
     if HOURS <= 0:
         return False
     try:
@@ -36,7 +45,7 @@ def due(now=None):
         return True
 
 
-def update_tools(run=subprocess.run):
+def update_tools(run: Run = subprocess.run) -> None:
     log('updating tools')
     cmd = 'set -u; . /etc/agent/tools.sh; update_tools'
     run(['nice', '-n', '15', 'ionice', '-c3', 'bash', '-c', cmd], check=False)
@@ -45,37 +54,34 @@ def update_tools(run=subprocess.run):
         os.utime(STAMP)
 
 
-def version(text):
+def version(text: str | None) -> str:
     m = re.search(r'(\d+\.\d+\.\d+[\w.-]*)', text or '')
     return m.group(1) if m else ''
 
 
-def installed_t3(run=subprocess.run):
+def installed_t3(run: Run = subprocess.run) -> str:
     p = run(['bash', '-lc', 't3 --version'], capture_output=True, text=True, check=False)
     return version(p.stdout) if p.returncode == 0 else ''
 
 
-def running_t3(ps=None):
+def running_t3(ps: str | None = None) -> str:
     """The running T3 server's version, from its binary's path; '' when not running."""
     if ps is None:
         ps = subprocess.run(['ps', '-eo', 'args'], capture_output=True, text=True, check=False).stdout
-    found = sorted({m for m in re.findall(r'/\.t3/runtime/versions/(\d[\w.-]*)/', ps)})
+    found = sorted(set(re.findall(r'/\.t3/runtime/versions/(\d[\w.-]*)/', ps)))
     return found[-1] if found else ''
 
 
-def idle(db=T3_DB):
+def idle(db: str = T3_DB) -> bool:
     """No T3 run in progress; a run with an end time or a finished status is over. Unreadable counts as busy."""
     try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5) as c:
-            marks = ','.join('?' * len(SETTLED))
-            q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks}) and completed_at is null'
-            (n,) = c.execute(q, SETTLED).fetchone()
-        return n == 0
-    except sqlite3.Error:
+        with t3state.reading(db) as session:
+            return not t3state.busy(session)
+    except SQLAlchemyError:
         return False
 
 
-def note_waiting(have, want, path=None, now=None):
+def note_waiting(have: str, want: str, path: str | None = None, now: float | None = None) -> None:
     """Record since when `want` waits behind `have`; the hub warns when that gets long; no `want` clears it."""
     path = path or WAITING
     if not want:
@@ -93,7 +99,7 @@ def note_waiting(have, want, path=None, now=None):
         json.dump({'installed': want, 'running': have, 'since': since}, f)
 
 
-def align_t3(run=subprocess.run, ps=None, db=T3_DB, waiting=None):
+def align_t3(run: Run = subprocess.run, ps: str | None = None, db: str = T3_DB, waiting: str | None = None) -> Aligned:
     """-> 'current' | 'restarted' | 'busy' | 'unknown'"""
     have, want = running_t3(ps), installed_t3(run)
     if not have or not want:
@@ -111,14 +117,14 @@ def align_t3(run=subprocess.run, ps=None, db=T3_DB, waiting=None):
     return 'restarted'
 
 
-def resume_t3(run=subprocess.run):
+def resume_t3(run: Run = subprocess.run) -> None:
     """Restart t3 mid-turn; T3 resumes cut-off turns itself, so nothing is sent to them."""
     log('restarting T3 although a turn is running; T3 resumes it after the restart')
     run([*SUPERVISOR, 'restart', 't3'], check=False)
     note_waiting('', '')
 
 
-def align_pool(run=subprocess.run, db=T3_DB, started=POOL_VERSION):
+def align_pool(run: Run = subprocess.run, db: str = T3_DB, started: str = POOL_VERSION) -> Aligned:
     """Restart a running account pool onto a newer TeamClaude while idle (a restart cuts requests in flight)."""
     try:
         with open(started) as f:
@@ -137,10 +143,18 @@ def align_pool(run=subprocess.run, db=T3_DB, started=POOL_VERSION):
 
 
 class Waiter:
-    def __init__(self, clock=time.time):
-        self.clock, self.since, self.until = clock, None, 0
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        self.clock = clock
+        self.since: float | None = None
+        self.until = 0.0
 
-    def step(self, run=subprocess.run, ps=None, db=T3_DB, sleep=time.sleep):
+    def step(
+        self,
+        run: Run = subprocess.run,
+        ps: str | None = None,
+        db: str = T3_DB,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Step:
         """-> 'current' | 'restarted' | 'busy' | 'resumed' | 'deferred' | 'unknown'"""
         if self.clock() < self.until:
             return 'deferred'
@@ -160,7 +174,7 @@ class Waiter:
         return 'deferred'
 
 
-def main():
+def main() -> None:
     time.sleep(FIRST_CHECK_S)
     waiter = Waiter()
     while True:

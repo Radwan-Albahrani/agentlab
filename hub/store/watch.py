@@ -2,7 +2,9 @@
 
 import os
 import time
+from collections.abc import Collection
 from pathlib import Path
+from typing import Any
 
 from .files import read_json, read_jsonl
 
@@ -10,31 +12,31 @@ WATCH = os.environ.get('WATCH_DIR', '/watch')
 ALIVE_WITHIN = 120  # s
 
 
-def usage():
+def usage() -> dict[str, Any]:
     return read_json(os.path.join(WATCH, 'usage.json'), {})
 
 
-def containers():
+def containers() -> dict[str, Any]:
     return read_json(os.path.join(WATCH, 'containers.json'), {})
 
 
-def container_names():
+def container_names() -> set[str]:
     """Containers the page may restart or read logs of (domains.known)."""
     import domains  # noqa: PLC0415 - domains reads this module
 
     return {r['name'] for r in containers().get('items') or [] if domains.known(r.get('stack') or 'other')}
 
 
-def events(kinds=None, limit=200):
+def events(kinds: Collection[str] | None = None, limit: int = 200) -> list[dict[str, Any]]:
     ev = read_jsonl(os.path.join(WATCH, 'events.jsonl'), 1000)
     return [e for e in ev if not kinds or e.get('kind') in kinds][:limit]
 
 
-def alive():
+def alive() -> bool:
     return time.time() - usage().get('at', 0) < ALIVE_WITHIN
 
 
-def logs(container):
+def logs(container: str) -> tuple[str, float]:
     """(text, mtime) of the log tail the watcher wrote after a logs~<name> request."""
     p = Path(WATCH, 'logs', os.path.basename(container) + '.txt')
     try:
@@ -43,19 +45,19 @@ def logs(container):
         return '', 0
 
 
-def people():
+def people() -> dict[str, Any]:
     """{owner email: {size, used, avail} or None while not mounted}"""
     return {k.lower(): v for k, v in (usage().get('people') or {}).items()}
 
 
-def companion_container(name):
+def companion_container(name: str) -> str | None:
     for r in containers().get('items') or []:
         if r.get('stack') == f'agentlab-companion-{name}' or r['name'] == f'companion-{name}':
             return r['name']
     return None
 
 
-def request(name):
+def request(name: str) -> None:
     """Drop a request file for the host watcher."""
     folder = os.path.join(WATCH, 'requests')
     os.makedirs(folder, exist_ok=True)

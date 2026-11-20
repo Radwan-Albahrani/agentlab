@@ -3,9 +3,17 @@
 import json
 import os
 import shutil
-import sqlite3
 import sys
 import time
+from typing import Any
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # the hub's modules
+from notify.t3schema import Base as T3Base
+from notify.t3schema import Project, Request, Run, Thread
+from store.companion_tables import Base, Event, Item, Poll, Pull, TaskCard
 
 AGENTS = ('admin', 'sara', 'lab')
 OWNER = {'admin': 'admin@example.com', 'sara': 'sara@example.com', 'lab': 'sara@example.com'}
@@ -15,7 +23,7 @@ GB = 2**30
 NOW = time.time()
 
 
-def cluster(root):
+def cluster(root: str) -> dict[str, Any]:
     return {
         'name': 'example',
         'domain': 'agents.example.com',
@@ -58,23 +66,25 @@ def cluster(root):
     }
 
 
-def dump(path, data):
+def dump(path: str, data: Any) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1)
 
 
-def write(path, text):
+def write(path: str, text: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write(text)
 
 
-def container(name, service, stack, state='running', status='Up 2 hours (healthy)'):
+def container(
+    name: str, service: str, stack: str, state: str = 'running', status: str = 'Up 2 hours (healthy)'
+) -> dict[str, str]:
     return {'name': name, 'service': service, 'stack': stack, 'state': state, 'status': status, 'image': 'example'}
 
 
-def watch(root):
+def watch(root: str) -> None:
     disk = {'size': 60 * GB, 'used': 21 * GB, 'avail': 39 * GB}
     dump(
         f'{root}/watch/usage.json',
@@ -120,7 +130,7 @@ def watch(root):
     os.makedirs(f'{root}/watch/requests', exist_ok=True)
 
 
-def rendered(root):
+def rendered(root: str) -> None:
     dump(f'{root}/cluster.json', cluster(root))
     stacks = {'agentlab-core': 'edge', **{f'agentlab-agent-{a}': 'agent' for a in AGENTS}}
     stacks[f'agentlab-companion-{COMPANION}'] = 'companion'
@@ -133,7 +143,7 @@ def rendered(root):
         )
 
 
-def secrets(root):
+def secrets(root: str) -> None:
     for name, text in {
         'coolify.token': 'example-token\n',
         'cloudflare-api.token': 'example-token\n',
@@ -146,17 +156,16 @@ def secrets(root):
         write(f'{root}/secrets/{name}', text)
 
 
-def ledger_items(con):
-    """The companion's ledger (companion/bot/ledger.py): every message in and out of a task, with its state."""
-    con.execute(
-        'create table items (id text primary key, task text, seq integer, kind text, state text, at real, data text,'
-        ' updated real)'
-    )
+LedgerRow = tuple[str, str, int, dict[str, Any]]  # (kind, state, seconds ago, data)
 
-    def walk(*states, start):
+
+def ledger_items() -> list[Item]:
+    """The companion's ledger (companion/bot/ledger.py): every message in and out of a task, with its state."""
+
+    def walk(*states: str, start: float) -> list[list[str | float]]:
         return [[s, start + 5 * i, ''] for i, s in enumerate(states)]
 
-    t2 = [  # Sara's case: what she wrote, what went to her, the owner's private word, and what waits on them
+    t2: list[LedgerRow] = [  # Sara's case: what she wrote, what went to her, the owner's private word, and what waits on them
         ('in', 'received', 290, {'label': 'Sara', 'text': 'Can you summarise the incident thread for the postmortem?'}),
         ('message', 'sent', 240, {'to': 'colleague', 'label': 'Sara',
                                   'text': 'Here is the summary:\n- 09:12 alerts fired\n- 09:40 fixed'}),
@@ -171,11 +180,11 @@ def ledger_items(con):
         ('approval', 'awaiting_owner', 100, {'action': 'Post the summary in #incidents',
                                             'details': 'A new message in #incidents, from Leafy, for the postmortem.'}),
     ]  # fmt: skip
-    t1 = [
+    t1: list[LedgerRow] = [
         ('in', 'received', 900, {'label': 'Sara', 'text': 'Draft the release notes for 2.4'}),
         ('approval', 'awaiting_owner', 600, {'action': 'Publish the release notes draft to the docs site'}),
     ]
-    t3 = [  # an errand: the requester's ask, the reply the owner sent on with Send
+    t3: list[LedgerRow] = [  # an errand: the requester's ask, the reply the owner sent on with Send
         ('in', 'received', 7200, {'label': 'Omar', 'text': 'Can you book a room for the 10:00 sync?'}),
         ('message', 'sent', 7000, {'to': 'requester', 'label': 'Omar', 'text': 'Booked: Room 2 at 10:00.'}),
         ('final', 'sent', 6990, {'to': 'thread', 'text': 'Booked Room 2 and told Omar.'}),
@@ -192,89 +201,86 @@ def ledger_items(con):
         for seq, (kind, state, ago, data) in enumerate(items, 1):
             at = NOW - ago
             history = walk(*(('sent',) if kind == 'final' else paths[state]), start=at)
-            rows.append((f'{task}#{seq}', task, seq, kind, state, at, json.dumps({**data, 'history': history}), NOW))
-    con.executemany('insert into items values (?,?,?,?,?,?,?,?)', rows)
+            payload: dict[str, Any] = {**data, 'history': history}
+            rows.append(
+                Item(id=f'{task}#{seq}', task=task, seq=seq, kind=kind, state=state, at=at, data=payload, updated=NOW)
+            )
+    return rows
 
 
-def companion_db(path):
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-create table events (id integer primary key, at real not null, kind text, title text, task text, "to" text,
-                     detail text, ok integer not null default 1);
-create table tasks (id text primary key, title text, kind text, requester text, status text, waiting text,
-                    outcome text, started text, ended text, thread text, slack text, source text, updated real);
-create table polls (id text primary key, task text, open integer, closes real, data text, updated real);
-create table pulls (id text primary key, repo text, number integer, updated text, data text);
-"""
-    )
-    iso = lambda t: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))  # noqa: E731
-    slack = 'https://example.slack.com/archives/C0EXAMPLE/p1'
-    tasks = [
-        ('t1', 'Draft the release notes', 'task', 'Sara', 'waiting', 'approval', '', iso(NOW - 900), '', 'th1', slack),
-        ('t2', 'Summarise the incident thread', 'task', 'Sara', 'working', '', '', iso(NOW - 300), '', 'th2', slack),
-        (
-            't3',
-            'Book the meeting room',
-            'errand',
-            'Admin',
-            'done',
-            '',
-            'Booked.',
-            iso(NOW - 7200),
-            iso(NOW - 7000),
-            '',
-            slack,
+def iso(t: float) -> str:
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))
+
+
+def task_cards(slack: str) -> list[TaskCard]:
+    case_link = 'https://example.slack.com/archives/D0OWNER/p2'
+    # where each chat started and why (companion/bot/projects.py); t3 is from a companion too old to say
+    route = {'project': '/workspace/app/apps/api', 'route_by': 'named', 'route_why': 'the ask names "api"'}
+    common = {'requester': 'Sara', 'slack': slack, 'source': 'slack', 'updated': NOW}
+    return [
+        TaskCard(
+            **common,
+            **route,
+            id='t1',
+            title='Draft the release notes',
+            kind='task',
+            status='waiting',
+            waiting='approval',
+            started=iso(NOW - 900),
+            thread='th1',
+            party='colleague',
+            phase='waiting_owner',
+            case_link=case_link,
         ),
-        (
-            't4',
-            'Review example/app#12',
-            'review',
-            '',
-            'done',
-            '',
-            'Review posted on <https://github.com/example/app/pull/12#issuecomment-1|example/app#12> · 2 findings',
-            iso(NOW - 5000),
-            iso(NOW - 4000),
-            'th4',
-            '',
+        TaskCard(
+            **common,
+            **route,
+            id='t2',
+            title='Summarise the incident thread',
+            kind='task',
+            status='working',
+            started=iso(NOW - 300),
+            thread='th2',
+            started_by='Sara',
+            via='in the requests channel #asks',
+            approved_by='Admin',
+            party='colleague',
+            phase='waiting_owner',
+            case_link=case_link,
+        ),
+        TaskCard(
+            **(common | {'requester': 'Admin'}),
+            id='t3',
+            title='Book the meeting room',
+            kind='errand',
+            status='done',
+            outcome='Booked.',
+            started=iso(NOW - 7200),
+            ended=iso(NOW - 7000),
+            party='errand',
+            phase='answered',
+            case_link=case_link,
+        ),
+        TaskCard(
+            **(common | {'requester': '', 'slack': ''}),
+            **route,
+            id='t4',
+            title='Review example/app#12',
+            kind='review',
+            status='done',
+            outcome='Review posted on <https://github.com/example/app/pull/12#issuecomment-1|example/app#12> · 2 findings',
+            started=iso(NOW - 5000),
+            ended=iso(NOW - 4000),
+            thread='th4',
+            via='from the hub',
+            party='owner',
+            phase='answered',
         ),
     ]
-    con.executemany('insert into tasks values (?,?,?,?,?,?,?,?,?,?,?,"slack",?)', [(*t, NOW) for t in tasks])
-    # the audit columns, then who each task is with and where it stands (companion/bot/machine.py)
-    for column in (
-        'started_by',
-        'via',
-        'approved_by',
-        'party',
-        'phase',
-        'case_link',
-        'project',
-        'route_by',
-        'route_why',
-    ):
-        con.execute(f'alter table tasks add column {column} text')
-    # where each chat started and why (companion/bot/projects.py); t3 is from a companion too old to say
-    con.execute(
-        "update tasks set project = '/workspace/app/apps/api', route_by = 'named', route_why = 'the ask names \"api\"'"
-        " where id != 't3'"
-    )
-    con.execute(
-        "update tasks set started_by = 'Sara', via = 'in the requests channel #asks', approved_by = 'Admin' where id = 't2'"
-    )
-    con.execute("update tasks set via = 'from the hub' where id = 't4'")
-    case_link = 'https://example.slack.com/archives/D0OWNER/p2'
-    for tid, party, phase in (
-        ('t1', 'colleague', 'waiting_owner'),
-        ('t2', 'colleague', 'waiting_owner'),
-        ('t3', 'errand', 'answered'),
-        ('t4', 'owner', 'answered'),
-    ):
-        con.execute(
-            'update tasks set party = ?, phase = ?, case_link = ? where id = ?',
-            (party, phase, case_link if party != 'owner' else '', tid),
-        )
-    ledger_items(con)
+
+
+def companion_db(path: str) -> None:
+    slack = 'https://example.slack.com/archives/C0EXAMPLE/p1'
     events = [
         (NOW - 7000, 'sent', 'Booked the meeting room', 't3', '#general', 'Room 2, 10:00', 1),
         (NOW - 3000, 'files', 'Shared the report', 't2', 'Sara', 'report.pdf', 1),
@@ -305,7 +311,11 @@ create table pulls (id text primary key, repo text, number integer, updated text
         (NOW - 150, 'sent', 'Message to Sara (on your word)', 't2', 'Sara', 'One more step at 09:31, from on-call.', 1),
         (NOW - 100, 'approval', 'Asked you to approve: post the summary in #incidents', 't2', None, 'for Sara', 1),
     ]
-    con.executemany('insert into events (at, kind, title, task, "to", detail, ok) values (?,?,?,?,?,?,?)', events)
+    rows: list[object] = [*task_cards(slack), *ledger_items()]
+    rows += [
+        Event(at=at, kind=kind, title=title, task=task, to=to, detail=detail, ok=bool(ok))
+        for at, kind, title, task, to, detail, ok in events
+    ]
     poll = {
         'question': 'Lunch on Thursday?',
         'channel': 'general',
@@ -317,7 +327,7 @@ create table pulls (id text primary key, repo text, number integer, updated text
             {'label': 'Salad', 'votes': 0, 'voters': []},
         ],
     }
-    con.execute('insert into polls values (?,?,?,?,?,?)', ('p1', 't1', 1, NOW + 86400, json.dumps(poll), NOW))
+    rows.append(Poll(id='p1', task='t1', open=True, closes=NOW + 86400, data=poll, updated=NOW))
     pull = {
         'title': 'Add the export button',
         'url': 'https://github.com/example/app/pull/12',
@@ -403,15 +413,16 @@ create table pulls (id text primary key, repo text, number integer, updated text
             p['labels'] = [{'name': 'lane:red', 'color': 'd73a4a'}, {'name': 'agent', 'color': 'ededed'}]
             p.update(additions=3684, deletions=67853, head='new5678')
         p['updated'] = iso(NOW - hours * 3600)
-        con.execute(
-            'insert into pulls values (?,?,?,?,?)',
-            (f'example/app#{number}', 'example/app', number, p['updated'], json.dumps(p)),
-        )
-    con.commit()
-    con.close()
+        rows.append(Pull(id=f'example/app#{number}', repo='example/app', number=number, updated=p['updated'], data=p))
+    engine = create_engine(f'sqlite:///{path}')
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add_all(rows)
+        s.commit()
+    engine.dispose()
 
 
-def companion(root):
+def companion(root: str) -> None:
     helper = f'{root}/companions/{OTHER}'
     os.makedirs(helper, exist_ok=True)
     dump(f'{helper}/heartbeat.json', {'name': OTHER, 'agent': 'sara', 'at': time.time() + 10**6, 'connected': True})
@@ -484,17 +495,9 @@ def companion(root):
     dump(f'{folder}/settings.json', {})
 
 
-T3_SCHEMA = """
-create table projection_projects (project_id text primary key, title text, deleted_at text);
-create table orchestration_v2_projection_threads (thread_id text primary key, project_id text, title text,
-  updated_at text, deleted_at text, payload_json text);
-create table orchestration_v2_projection_runs (run_id text primary key, thread_id text, status text,
-  requested_at text, completed_at text);
-create table orchestration_v2_projection_runtime_requests (runtime_request_id text primary key, thread_id text,
-  kind text, status text, created_at text, payload_json text);
-"""
 # agent -> [(thread, title, project, source, parent, [(status, started s ago, done s ago or None)], pending request)]
-CHATS = {
+Chat = tuple[str, str, str, str, str, list[tuple[str, int, int | None]], str]
+CHATS: dict[str, list[Chat]] = {
     'admin': [
         ('t1', 'Migrate billing to the new API', 'platform', 'user', '', [('running', 1260, None)], ''),
         ('t1a', 'Trace the webhook retries', 'platform', 'mcp', 't1', [('running', 600, None)], ''),
@@ -511,42 +514,58 @@ CHATS = {
 }
 
 
-def _iso(seconds_ago):
+def _iso(seconds_ago: float) -> str:
     stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(NOW - seconds_ago))
     return f'{stamp}.000Z'
 
 
-def t3(root):
+def t3_rows(chats: list[Chat]) -> list[object]:
+    rows: list[object] = [Project(project_id=p, title=p) for p in dict.fromkeys(c[2] for c in chats)]
+    for tid, title, proj, source, parent, runs, request in chats:
+        lineage = {'relationshipToParent': 'subagent', 'parentThreadId': parent} if parent else {}
+        payload = {'creationSource': source, 'createdBy': source, 'lineage': lineage}
+        rows.append(Thread(thread_id=tid, project_id=proj, title=title, updated_at=_iso(0), payload=payload))
+        rows += [
+            Run(
+                run_id=f'{tid}-{n}',
+                thread_id=tid,
+                status=status,
+                requested_at=_iso(start),
+                completed_at=_iso(done) if done is not None else None,
+            )
+            for n, (status, start, done) in enumerate(runs)
+        ]
+        if request:
+            rows.append(
+                Request(
+                    runtime_request_id=f'{tid}-q',
+                    thread_id=tid,
+                    kind=request,
+                    status='pending',
+                    created_at=_iso(780),
+                    payload={},
+                )
+            )
+    return rows
+
+
+def t3(root: str) -> None:
     for a in AGENTS:
         folder = f'{root}/agents/{a}/home/.t3/userdata'
         os.makedirs(folder, exist_ok=True)
         if a not in CHATS:
             continue
-        con = sqlite3.connect(f'{folder}/statev2.sqlite')
-        con.executescript(T3_SCHEMA)
-        for tid, title, proj, source, parent, runs, request in CHATS[a]:
-            lineage = {'relationshipToParent': 'subagent', 'parentThreadId': parent} if parent else {}
-            payload = {'creationSource': source, 'createdBy': source, 'lineage': lineage}
-            con.execute('insert or ignore into projection_projects values (?, ?, null)', (proj, proj))
-            con.execute(
-                'insert into orchestration_v2_projection_threads values (?, ?, ?, ?, null, ?)',
-                (tid, proj, title, _iso(0), json.dumps(payload)),
-            )
-            for n, (status, start, done) in enumerate(runs):
-                con.execute(
-                    'insert into orchestration_v2_projection_runs values (?, ?, ?, ?, ?)',
-                    (f'{tid}-{n}', tid, status, _iso(start), _iso(done) if done is not None else None),
-                )
-            if request:
-                con.execute(
-                    "insert into orchestration_v2_projection_runtime_requests values (?, ?, ?, 'pending', ?, '{}')",
-                    (f'{tid}-q', tid, request, _iso(780)),
-                )
-        con.commit()
-        con.close()
+        engine = create_engine(f'sqlite:///{folder}/statev2.sqlite')
+        # the hub's own models first: they map columns t3schema leaves out (a message's run, a request's time)
+        Request.metadata.create_all(engine)
+        T3Base.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add_all(t3_rows(CHATS[a]))
+            s.commit()
+        engine.dispose()
 
 
-def main(root):
+def main(root: str) -> None:
     shutil.rmtree(root, ignore_errors=True)
     for step in (rendered, watch, secrets, companion, t3):
         step(root)

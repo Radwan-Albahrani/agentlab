@@ -3,15 +3,14 @@
 import re
 import threading
 import time
-from collections.abc import Mapping
-from typing import Any
 
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from tables import CardRow, TaskStatus
 
 from . import ledger, machine, polls, reviews, slack
 from .config import COMP, MODES, OWNER, mode
 from .fsm import POLL
-from .shapes import Task
+from .shapes import Phase, Task
 from .state import lock, review_of, state
 
 _last = 0.0
@@ -20,7 +19,7 @@ _mode: str | None = None
 handler: SocketModeHandler | None = None  # Socket Mode handler, set by main
 
 
-STATUS = {  # the hub's coarse status of each phase (machine.PHASES)
+STATUS: dict[Phase, TaskStatus] = {  # the hub's coarse status of each phase (machine.PHASES)
     'working': 'working',
     'waiting_owner': 'waiting',
     'waiting_answer': 'waiting',
@@ -44,17 +43,17 @@ def _waiting(t: Task) -> str:
     return 'answer' if t.get('phase') == 'waiting_answer' else ''
 
 
-def card(k: str, t: Task) -> dict[str, Any]:
+def card(k: str, t: Task) -> CardRow:
     phase = t.get('phase') or machine.phase_of(t)
     poll = state['polls'].get(t.get('poll') or '')
     status = STATUS[phase]
-    if status in ('done',) and poll and POLL.is_(poll, 'open'):
+    if status in ('done',) and poll and POLL.is_(poll.get('state'), 'open'):
         status = 'working'
     closed = re.sub(r':[a-z_]+:\s*', '', t.get('closed') or '')
     outcome = 'Paused for the usage limit' if phase == 'paused' else closed or machine.outcome(t).replace('_', ' ')
     p = machine.party(t)
-    a: Mapping[str, Any] = t.get('audit') or {}
-    by = a.get('by') or ''
+    a = t.get('audit')
+    by = a['by'] if a else ''
     asked_by = review_of(t).get('asked_by') or []
     if asked_by:
         requester = ', '.join(slack.name(u) for u in asked_by)
@@ -69,7 +68,7 @@ def card(k: str, t: Task) -> dict[str, Any]:
         'requester': requester,
         'status': status,
         'waiting': _waiting(t) if status == 'waiting' else '',
-        'outcome': polls.summary(poll) if poll and POLL.is_(poll, 'open') else outcome,
+        'outcome': polls.summary(poll) if poll and POLL.is_(poll.get('state'), 'open') else outcome,
         'started': t.get('start') or '',
         'ended': t.get('ended') or '',
         'thread': t.get('thread') or '',
@@ -77,8 +76,8 @@ def card(k: str, t: Task) -> dict[str, Any]:
         'source': t.get('source') or '',
         'resumes_at': (pause.get('resumes_at') if pause else None) or '' if phase == 'paused' else '',
         'started_by': slack.name(by) if by and by != OWNER else '',
-        'via': a.get('via') or '',
-        'approved_by': slack.name(a['approved_by']) if a.get('approved_by') else '',
+        'via': a['via'] if a else '',
+        'approved_by': slack.name(a['approved_by']) if a and a['approved_by'] else '',
         'party': p['kind'],
         'phase': phase,
         'case_link': slack.link(c['ch'], c['ts']) if c else '',

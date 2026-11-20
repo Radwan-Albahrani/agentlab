@@ -7,10 +7,10 @@ from .settings import DEFAULTS, load, save, update
 from .t3 import T3, live, newest_chat_link, thread_link
 from .watcher import Watcher
 
-watcher = None  # set by hub.py
+watcher: Watcher | None = None  # set by hub.py
 
 
-def enabled():
+def enabled() -> bool:
     return bool(BARK) and os.environ.get('HUB_PUSHES', '1') == '1'
 
 

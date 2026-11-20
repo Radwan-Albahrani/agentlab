@@ -21,7 +21,7 @@ from typing import Any
 
 from . import cases, errands, gate, ledger, machine, polls, posts, reviews, slack
 from .config import FILES, OWNER, log
-from .shapes import Item, Task
+from .shapes import Item, ItemFields, Task
 from .state import review_of
 
 OUTBOX = os.path.join(FILES, 'outbox')
@@ -111,9 +111,12 @@ def take(task: Task, box: str, raw: object) -> None:
     files = [os.path.basename(str(f)) for f in raw.get('files') or [] if str(f).strip()]
     if kind == 'message':
         target, label, problem = resolve(task, raw.get('to'))
-        it = ledger.add(
-            task, 'message', to=target, label=label, poll=raw.get('poll'), raw_to=raw.get('to'), text=text, files=files
-        )
+        fields: ItemFields = {'to': target, 'label': label, 'text': text, 'files': files}
+        if isinstance(poll := raw.get('poll'), dict):
+            fields['poll'] = poll
+        if (to := raw.get('to')) is not None:
+            fields['raw_to'] = to
+        it = ledger.add(task, 'message', **fields)
         if problem or (not text and not files and not raw.get('poll')):
             ledger.move(task, it, 'refused', note=problem or 'it has no text and no files')
             return

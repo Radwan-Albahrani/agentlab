@@ -10,11 +10,10 @@ colleague's thread is public and answered there (machine turn place)."""
 import os
 import time
 from collections.abc import Iterable, Sequence
-from typing import Any
 
 from . import ledger, machine, prompts, slack, t3
 from .config import COMP, NAME, OWNER, log
-from .shapes import Item, ItemFields, Queued, Task
+from .shapes import Item, ItemFields, Json, Queued, Task
 from .state import key_of, lock, now_iso, save, state
 from .text import first_sentence, no_emoji, quote
 from .when import say
@@ -47,9 +46,7 @@ def _head_md(task: Task, ask: str, where: str) -> str:
     )
 
 
-def open_case(
-    task: Task, ask: str, where: str, card: str | None = None, earlier: Iterable[dict[str, Any]] = ()
-) -> None:
+def open_case(task: Task, ask: str, where: str, card: str | None = None, earlier: Iterable[Json] = ()) -> None:
     """The owner's case for a colleague's new task: a head message in their DM, or the requests channel's card.
     earlier: the thread's messages before the ask, synced into the case too."""
     dm = slack.dm_owner()
@@ -68,7 +65,7 @@ def open_case(
     save()
 
 
-def _earlier(task: Task, msgs: Iterable[dict[str, Any]]) -> None:
+def _earlier(task: Task, msgs: Iterable[Json]) -> None:
     """The thread before the case opened, into the case: it is synced whole, not from the tag on."""
     me = slack.bot_user()
     said: list[str] = []
@@ -83,7 +80,7 @@ def _earlier(task: Task, msgs: Iterable[dict[str, Any]]) -> None:
         note(task, '**Earlier in the thread:**\n' + '\n'.join(said), 'Earlier in the thread')
 
 
-def in_thread(task: Task, ev: dict[str, Any]) -> None:
+def in_thread(task: Task, ev: Json) -> None:
     """Anyone's message in a case's thread, tagged or not: the case follows the whole thread."""
     if task.get('case') and ev.get('user') and ev.get('user') != slack.bot_user():
         heard(task, ev['user'], ev.get('text') or '', ev.get('files') or (), ts=ev['ts'])
@@ -94,7 +91,6 @@ def open_late(task: Task, by: str, text: str) -> None:
     """A colleague talks in a task started without a case (a review they asked for): a shared case, from now on."""
     chan = slack.channel_name(task['channel'])
     machine.set_party(task, 'colleague', by)
-    task['colleague'] = by
     dm = slack.dm_owner()
     md = _head_md(task, text, f'in #{chan}' if chan else 'in a DM')
     ts = slack.post(dm, None, f'{who(task)} wrote to {NAME}: {first_sentence(text, 120)}', md=md)
@@ -143,7 +139,7 @@ def at(ch: str, thread_ts: str) -> Task | None:
         if c and c.get('ts') == thread_ts and c.get('ch') == ch and c.get('head') != 'errand':
             return task
         it = ledger.on_card(task, thread_ts)
-        if it and (it.get('card') or {}).get('ch') == ch and task.get('case'):
+        if it and 'card' in it and it['card']['ch'] == ch and task.get('case'):
             return task
     return None
 
@@ -152,7 +148,7 @@ def heard(
     task: Task,
     by: str,
     text: str,
-    files: Iterable[dict[str, Any] | str] | None = (),
+    files: Iterable[Json | str] | None = (),
     private: bool = False,
     first: bool = False,
     ts: str | None = None,
@@ -203,7 +199,7 @@ def _render(task: Task, it: Item, old: str | None) -> None:
         note(task, f'**{NAME} → {who(task)}:**\n{it["text"]}', f'{NAME} replied to {who(task)}')
 
 
-def ask(task: Task, text: str, files: list[dict[str, Any]] | None, ts: str) -> None:
+def ask(task: Task, text: str, files: list[Json] | None, ts: str) -> None:
     """The owner talks to the companion about a case: privately, answered in the case thread only."""
     c = of(task)
     if not c:

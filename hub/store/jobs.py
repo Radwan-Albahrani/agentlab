@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import time
+from typing import Any
 
 from .files import read_json
 from .watch import WATCH
@@ -12,11 +13,11 @@ from .watch import WATCH
 LOG_TAIL = 64 * 1024
 
 
-def _dir(*parts):
+def _dir(*parts: str) -> str:
     return os.path.join(WATCH, 'jobs', *parts)
 
 
-def submit(op, args, by):
+def submit(op: str, args: dict[str, Any], by: str) -> str:
     """Queue a job; -> its id. The watcher validates it again before anything runs."""
     job_id = f'{int(time.time())}-{secrets.token_hex(4)}'
     os.makedirs(_dir('queue'), exist_ok=True)
@@ -27,7 +28,7 @@ def submit(op, args, by):
     return job_id
 
 
-def queued():
+def queued() -> list[dict[str, Any]]:
     out = []
     folder = _dir('queue')
     for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
@@ -38,7 +39,7 @@ def queued():
     return out
 
 
-def recent(limit=15):
+def recent(limit: int = 15) -> list[dict[str, Any]]:
     """Newest first: queued, then running and finished."""
     folder = _dir()
     done = []
@@ -50,7 +51,7 @@ def recent(limit=15):
     return (queued()[::-1] + sorted(done, key=lambda j: j['id'], reverse=True))[:limit]
 
 
-def log(job_id):
+def log(job_id: str) -> str:
     if not job_id.replace('-', '').isalnum():
         return ''
     try:

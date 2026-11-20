@@ -5,11 +5,9 @@ import contextlib
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
-import sys
 import time
-from datetime import datetime
+from typing import Any
 
 import cluster
 
@@ -88,48 +86,42 @@ CLEAR_MORE = """rm -rf ~/.cache/huggingface ~/.cache/dotslash ~/.cache/ms-playwr
 command -v cargo >/dev/null && rm -rf ~/.cargo/registry/cache; true"""
 
 
-def _epoch(iso):
-    return datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp() if iso else 0
+ASK_T3_S = 120
 
 
-def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
-    """Worktrees (agent-side paths) whose chats have all been done long enough, per the agent's T3 database."""
-    now = now or time.time()
-    db = f'{root}/home/.t3/userdata/statev2.sqlite'
-    if not os.path.exists(db):
-        return []
-    con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+def chats_done(cid: str) -> dict[str, float | None] | None:
+    """Per worktree path when its last chat finished (None while one is live), from the agent itself (agent-t3 in its
+    image reads its T3 database); None when it couldn't answer or has no database yet."""
     try:
-        running = {
-            r[0]
-            for r in con.execute(
-                'select distinct thread_id from orchestration_v2_projection_runs where completed_at is null'
-            )
-        }
-        last_turn = dict(
-            con.execute('select thread_id, max(completed_at) from orchestration_v2_projection_runs group by thread_id')
+        p = subprocess.run(
+            ['docker', 'exec', '-u', 'agent', cid, 'agent-t3', 'worktrees'],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=ASK_T3_S,
         )
-        threads = con.execute('select thread_id, payload_json, deleted_at from orchestration_v2_projection_threads')
-        done_since = {}  # worktree -> when its last chat finished; None while one is still live
-        for tid, payload, deleted in threads:
-            d = json.loads(payload)
-            wt = d.get('worktreePath')
-            if not wt:
-                continue
-            settled, unsettled = _epoch(d.get('settledAt')), _epoch(d.get('unsettledAt'))
-            # chats T3 never settles (delegate_task children) count from their last finished turn
-            ended = (
-                _epoch(deleted or d.get('deletedAt'))
-                or _epoch(d.get('archivedAt'))
-                or (settled if settled > unsettled else 0)
-                or (_epoch(last_turn.get(tid) or d.get('updatedAt')) if not settled and not unsettled else 0)
-            )
-            if tid in running or not ended:
-                done_since[wt] = None
-            elif done_since.get(wt, 0) is not None:
-                done_since[wt] = max(done_since.get(wt, 0), ended)
-    finally:
-        con.close()
+        got = json.loads(p.stdout) if p.returncode == 0 else None
+    except (subprocess.TimeoutExpired, ValueError):
+        return None
+    if not isinstance(got, dict):
+        return None
+    out: dict[str, float | None] = {}
+    for wt, since in got.items():
+        if since is not None and (isinstance(since, bool) or not isinstance(since, int | float)):
+            return None  # garbage
+        out[wt] = since
+    return out
+
+
+def idle_worktrees(
+    cid: str, root: str, now: float | None = None, hours: float = SETTLED_HOURS, days: float = ORPHAN_DAYS
+) -> list[str]:
+    """Worktrees (agent-side paths) whose chats have all been done long enough, per the agent's T3 database; none
+    while the agent can't say."""
+    now = now or time.time()
+    done_since = chats_done(cid)
+    if done_since is None:
+        return []
     out = []
     base = f'{root}/workspace/worktrees'
     for repo in sorted(os.listdir(base)) if os.path.isdir(base) else []:
@@ -140,16 +132,15 @@ def idle_worktrees(root, now=None, hours=SETTLED_HOURS, days=ORPHAN_DAYS):
             if not os.path.isfile(f'{on_host}/.git'):
                 continue
             wt = f'/workspace/worktrees/{repo}/{name}'
-            since = done_since.get(wt, 'orphan')
-            if since == 'orphan':
+            if wt not in done_since:  # orphan: no chat knows it
                 if now - os.path.getmtime(on_host) > days * 86400:
                     out.append(wt)
-            elif since is not None and now - since > hours * 3600:
+            elif (since := done_since[wt]) is not None and now - since > hours * 3600:
                 out.append(wt)
     return out
 
 
-def _newest(top, skip=REBUILDABLE):
+def _newest(top: str, skip: tuple[str, ...] = REBUILDABLE) -> float:
     """The newest modification time under `top`, not looking inside rebuildable folders."""
     newest = os.path.getmtime(top)
     for d, dirs, files in os.walk(top):
@@ -160,7 +151,7 @@ def _newest(top, skip=REBUILDABLE):
     return newest
 
 
-def _size(path):
+def _size(path: str) -> int:
     """Space removing `path` gives back: files linked elsewhere too (bun's store) free nothing."""
     total = 0
     for d, _, files in os.walk(path):
@@ -171,7 +162,7 @@ def _size(path):
     return total
 
 
-def stale_builds(root, now=None, days=SCRATCH_DAYS, depth=4):
+def stale_builds(root: str, now: float | None = None, days: float = SCRATCH_DAYS, depth: int = 4) -> list[str]:
     """Rebuildable folders (node_modules, venv) in the agent's home scratch projects nobody touched for `days`."""
     now = now or time.time()
     home, out = f'{root}/home', []
@@ -191,7 +182,7 @@ def stale_builds(root, now=None, days=SCRATCH_DAYS, depth=4):
     return out
 
 
-def clear_builds(root):
+def clear_builds(root: str) -> tuple[list[str], int]:
     """(removed, bytes) for stale_builds; DRY only counts."""
     paths, freed = stale_builds(root), 0
     for p in paths:
@@ -201,12 +192,12 @@ def clear_builds(root):
     return paths, freed
 
 
-def _run(cmd, stdin=None):
+def _run(cmd: list[str], stdin: str | None = None) -> str:
     p = subprocess.run(cmd, capture_output=True, text=True, input=stdin, check=False, timeout=1800)
     return (p.stdout + p.stderr).strip()
 
 
-def container(data, agent_id):
+def container(data: str, agent_id: str) -> str | None:
     """The running agent container; under Coolify its project label is the service uuid."""
     stack = f'agentlab-agent-{agent_id}'
     try:
@@ -228,12 +219,12 @@ def container(data, agent_id):
     return ids[0] if ids else None
 
 
-def used(path):
+def used(path: str) -> tuple[int, int]:
     s = os.statvfs(path)
     return (s.f_blocks - s.f_bfree) * s.f_frsize, s.f_blocks * s.f_frsize
 
 
-def tidy(data, agent):
+def tidy(data: str, agent: dict[str, Any]) -> tuple[list[str], int]:
     agent_id, root = agent['id'], agent['path']
     unit = agent.get('storage_unit') or root
     cid = container(data, agent_id)
@@ -246,7 +237,7 @@ def tidy(data, agent):
         age = ['-e', 'IMAGES_AGE=1h'] if full else []
         pruned = _run(['docker', 'exec', *age, '-u', 'agent', cid, 'sh', '-c', DOCKER_PRUNE])
         lines += [f'{agent_id}: {line}' for line in pruned.splitlines() if line.strip()]
-    trees = '\n'.join(idle_worktrees(root)) + '\n'
+    trees = '\n'.join(idle_worktrees(cid, root)) + '\n'
     out = _run(
         [
             'docker',
@@ -287,7 +278,7 @@ def tidy(data, agent):
     return lines, max(0, before - used(unit)[0])
 
 
-def trim(cfg):
+def trim(cfg: dict[str, Any]) -> list[str]:
     """Hand the blocks freed inside each disk image back to the host disk (the images are sparse files)."""
     units = sorted({a['storage_unit'] for a in cfg.get('agents') or [] if a.get('storage_unit')})
     out = []
@@ -299,7 +290,7 @@ def trim(cfg):
     return out
 
 
-def main():
+def main() -> None:
     cfg = cluster.load()
     data = cluster.data_dir(cfg)
     report, freed = [], 0
@@ -324,4 +315,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()

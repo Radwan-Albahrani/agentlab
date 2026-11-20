@@ -1,7 +1,7 @@
 #!/bin/bash
 # Check, build and click through the hub, all in pinned containers (only Docker is needed on the machine).
 # Usage: hub/test.sh <command>
-#   check            backend: ruff + unit tests; web app: types, lint, format, unit tests, production build
+#   check            backend: ruff, mypy, unit tests; web app: types, lint, format, unit tests, production build
 #                    (FIX=1: autofix first)
 #   build [tag]      check, then build agentlab/hub:<tag> (default: test)
 #   instance start|stop   a throwaway hub on 127.0.0.1:7189 over the example data (tests/fixtures.py), with fake
@@ -16,6 +16,7 @@ AGENTS_PORT=7188
 DATA=/tmp/agentlab-hub-test
 PY=python:3.13.1-alpine
 RUFF=ruff==0.15.22
+MYPY=mypy==2.4.1
 BUN=oven/bun:1.4.4-alpine
 BUN_GLIBC=oven/bun:1.4.4         # the same Bun for the Playwright image (glibc, not musl)
 PLAYWRIGHT=mcr.microsoft.com/playwright:v1.64.1-noble
@@ -24,10 +25,12 @@ die() { echo "error: $*" >&2; exit 1; }
 
 cmd_check() {
   docker run --rm -e FIX="${FIX:-}" -v "${HUB}/..:/repo:ro" -v "${HUB}:/repo/hub" -w /repo/hub "${PY}" sh -c "
-    set -e
-    pip install --quiet --disable-pip-version-check --root-user-action=ignore ${RUFF} >/dev/null
+    set -eo pipefail
+    pip install --quiet --disable-pip-version-check --root-user-action=ignore --only-binary=:all: \
+      ${RUFF} ${MYPY} -r requirements.txt >/dev/null
     if [ -n \"\$FIX\" ]; then ruff check --fix -q . ; ruff format -q . ; fi
     ruff check --output-format concise . && ruff format --check -q . && echo 'backend: ruff ok'
+    mypy --cache-dir /tmp/mypy
     PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests 2>&1 | tail -3" || return 1
   # Bun installs (always from the frozen bun.lock: FIX fixes code, never moves dependencies) and runs every tool.
   docker run --rm -e FIX="${FIX:-}" -v "${HUB}/web:/web" -v agentlab-hub-web-modules:/web/node_modules -w /web "${BUN}" sh -c '
@@ -55,7 +58,8 @@ cmd_instance() {
   case "${1:-}" in
     start)
       cmd_instance stop >/dev/null
-      docker run --rm -v "${HUB}/tests:/tests:ro" -v "${DATA%/*}:${DATA%/*}" "${PY}" python3 /tests/fixtures.py "${DATA}"
+      # the example databases are built with the hub's own models, so in its image
+      docker run --rm -v "${HUB}:/hub:ro" -v "${DATA%/*}:${DATA%/*}" "${TAG}:test" python3 /hub/tests/fixtures.py "${DATA}"
       docker run -d --name agentlab-hub-agents --network host -v "${HUB}/tests:/tests:ro" -v "${DATA}:/data" "${PY}" \
         python3 /tests/fake_agent.py "${AGENTS_PORT}" /data/watch >/dev/null
       docker run -d --name agentlab-hub-test --network host -e HUB_PORT=${TEST_PORT} -e HUB_ALLOW_NONE=1 \
@@ -63,7 +67,17 @@ cmd_instance() {
         -e WATCH_DIR=/data/watch -e RENDERED_DIR=/data/rendered -e COMPANIONS_DIR=/data/companions \
         -e SECRETS_DIR=/data/secrets -e NOTIFY_DATA=/data/data -e AGENTS_DIR=/data/agents -e NOTIFY_T3='/data/agents/{id}/home/.t3/userdata' \
         -v "${DATA}:/data" "${TAG}:test" >/dev/null || return 1
-      for _ in $(seq 20); do curl -sf -o /dev/null "http://127.0.0.1:${TEST_PORT}/health" && break; sleep 0.5; done
+      local up=''
+      for _ in $(seq 20); do
+        curl -sf --max-time 2 -o /dev/null "http://127.0.0.1:${TEST_PORT}/health" && { up=1; break; }
+        [ "$(docker inspect -f '{{.State.Running}}' agentlab-hub-test 2>/dev/null)" = true ] || break   # it exited
+        sleep 0.5
+      done
+      if [ -z "${up}" ]; then
+        echo "error: the throwaway hub is not answering; its last log lines:" >&2
+        docker logs --tail 30 agentlab-hub-test >&2
+        return 1
+      fi
       echo "throwaway hub on http://127.0.0.1:${TEST_PORT}" ;;
     stop)
       docker rm -f agentlab-hub-test agentlab-hub-agents >/dev/null 2>&1

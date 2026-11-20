@@ -20,23 +20,23 @@ ADMIN_ONLY = {
 class Viewer:
     email: str
     admin: bool
-    agents: frozenset
+    agents: frozenset[str]
 
-    def sees_agent(self, agent_id):
+    def sees_agent(self, agent_id: str) -> bool:
         return self.admin or agent_id in self.agents
 
-    def owns(self, agent_id):
+    def owns(self, agent_id: str) -> bool:
         """Their own agent (an admin sees others' agents, but not what those agents are working on)."""
         return agent_id in self.agents or self is ADMIN
 
-    def sees_companion(self, name):
+    def sees_companion(self, name: str) -> bool:
         owner = cluster.companions().get(name)
         return owner is not None and self.sees_agent(owner)
 
-    def sees_person(self, email):
+    def sees_person(self, email: str | None) -> bool:
         return self.admin or (email or '').lower() == self.email
 
-    def sees(self, key):
+    def sees(self, key: str) -> bool:
         """Whether a display key ('page.services', 'profile.<id>', 'companion.<name>', ...) is in scope."""
         if key in ADMIN_ONLY:
             return self.admin
@@ -51,19 +51,21 @@ class Viewer:
 
 
 ADMIN = Viewer('local', True, frozenset())
-_current = contextvars.ContextVar('viewer', default=ADMIN)  # outside a request (watcher, tests): everything
+_current: contextvars.ContextVar[Viewer] = contextvars.ContextVar(
+    'viewer', default=ADMIN
+)  # outside a request (watcher, tests): everything
 
 
-def of(email, admin=None):
+def of(email: str | None, admin: bool | None = None) -> Viewer:
     email = (email or '').strip().lower()
     admins = {a.lower() for a in cluster.auth().get('admins') or []}
     owned = frozenset(a['id'] for a in cluster.agents().values() if (a.get('owner') or '').lower() == email)
     return Viewer(email, email in admins if admin is None else admin, owned)
 
 
-def use(viewer):
+def use(viewer: Viewer) -> None:
     _current.set(viewer)
 
 
-def current():
+def current() -> Viewer:
     return _current.get()

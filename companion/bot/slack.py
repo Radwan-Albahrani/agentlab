@@ -13,10 +13,9 @@ from slack_sdk import WebClient
 from slack_sdk.web import SlackResponse
 
 from .config import AGENT_FILES, DM_LINES, FILES, OWNER, RECENT, RECENT_DM, log, secret
+from .shapes import Json  # a Slack API record (message, user, channel, block) is JSON from outside
 from .text import to_slack, without_mention
 from .when import say
-
-Json = dict[str, Any]  # a Slack API record (message, user, channel, block)
 
 
 class _People(TypedDict):
@@ -25,9 +24,17 @@ class _People(TypedDict):
     by_id: dict[str, Json]
 
 
+class Channel(TypedDict):
+    """A channel the hub can pick and the agent can name (channels)."""
+
+    id: str
+    name: str
+    member: bool  # the bot is in it, so it can post
+
+
 class _Channels(TypedDict):
     at: float
-    list: list[Json]
+    list: list[Channel]
 
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
@@ -199,10 +206,10 @@ def channel_name(channel: str) -> str:
 _channels: _Channels = {'at': 0.0, 'list': []}
 
 
-def channels() -> list[Json]:
+def channels() -> list[Channel]:
     """[{id, name, member}] of public channels and private ones the bot is in (member: bot can post), cached."""
     if time.time() - _channels['at'] > 300:
-        found: list[Json] = []
+        found: list[Channel] = []
         cursor: str | None = None
         try:
             while True:

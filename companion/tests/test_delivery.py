@@ -103,7 +103,7 @@ def test_a_sent_message_can_be_edited_after_a_preview(fresh_bot):
     assert fresh_bot.messages[-1]['text'] == 'Edit this?' and 'Edit it' in json.dumps(fresh_bot.messages[-1])
     click(fresh_bot, 'post_send')
     edited = next(u for u in fresh_bot.updates if u['channel'] == 'C_TECH')
-    assert [edited['channel'], edited['ts']] == posted and "today's outage" in json.dumps(edited)
+    assert (edited['channel'], edited['ts']) == posted and "today's outage" in json.dumps(edited)
     assert sent['text'] == "Post-mortem for today's outage" and ledger.items(t)[-1]['state'] == 'sent'
 
 

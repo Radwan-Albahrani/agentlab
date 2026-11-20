@@ -6,10 +6,13 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 from urllib.parse import urlparse
 
+Json = dict[str, Any]
 
-def flow(key, name, signed_in=True):
+
+def flow(key: str, name: str, signed_in: bool = True) -> Json:
     return {
         'key': key,
         'name': name,
@@ -44,7 +47,7 @@ DEVICES = {
 }
 
 
-def onboarding(agent):
+def onboarding(agent: str) -> Json:
     signed = {'claude': True, 'codex': agent == 'admin'}
     ready = any(signed.values())
     steps = [
@@ -56,10 +59,10 @@ def onboarding(agent):
     return {'done': ready and agent in ONBOARDED, 'ready': ready, 'steps': steps}
 
 
-PAIR_BODIES = []
+PAIR_BODIES: list[Json] = []
 
 
-def pair(agent, kind):
+def pair(agent: str, kind: str | None) -> Json:
     if kind == 'app' and agent != 'admin':
         return {
             'available': False,
@@ -76,7 +79,7 @@ def pair(agent, kind):
     }
 
 
-def summary(agent):
+def summary(agent: str) -> Json:
     browser = agent == 'admin'
     return {
         'agent': agent,
@@ -97,7 +100,7 @@ def summary(agent):
     }
 
 
-def pool(agent):
+def pool(agent: str) -> Json:
     """admin: two Claude accounts (one in use, one near its limit) and a Codex one needing a new sign-in."""
     soon = time.time() + 2 * 3600
     accounts = [
@@ -143,7 +146,7 @@ def pool(agent):
     }
 
 
-def page(agent):
+def page(agent: str) -> Json:
     github = flow('github', 'GitHub', agent == 'admin')
     github['mcpReady'] = True
     return {
@@ -166,7 +169,7 @@ def page(agent):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def reply(self, obj, code=200):
+    def reply(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
@@ -174,11 +177,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def split(self):
+    def split(self) -> tuple[str, str]:
         _, agent, path = urlparse(self.path).path.split('/', 2)
         return agent, '/' + path
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         agent, path = self.split()
         if path == '/api/summary':
             return self.reply(summary(agent))
@@ -192,10 +195,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'devices': DEVICES.get(agent, [])})
         return self.reply({'error': 'not found'}, 404)
 
-    def body(self):
+    def body(self) -> Json:
         return json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0) or 0)) or b'{}')
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         agent, path = self.split()
         body = self.body()
         if path == '/api/onboarding/finish':
@@ -211,11 +214,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'ok': True, 'errors': [], 'count': 1})
         return self.reply({'ok': True, 'error': None})
 
-    def log_message(self, fmt, *args):
+    def log_message(self, fmt: str, *args: Any) -> None:
         pass
 
 
-def answer_logs(watch):
+def answer_logs(watch: str) -> None:
     """Answer logs~<container> requests like the host watcher."""
     folder = os.path.join(watch, 'requests')
     while True:

@@ -1,13 +1,14 @@
 """Networks and stack deploys (plain Compose or Coolify)."""
 
-import contextlib
 import datetime
+import enum
 import hashlib
 import json
 import os
 import re
 import subprocess
 import time
+from typing import Any
 
 from . import coolify, render
 from .util import Failed, run, say, warn
@@ -128,24 +129,42 @@ def _when(stamp):
     return datetime.datetime.fromisoformat(f'{head}.{(frac or "0")[:6].ljust(6, "0")}{zone}')
 
 
-SETTLED = ('completed', 'cancelled', 'failed', 'interrupted', 'rolled_back')
+class T3(enum.Enum):
+    """Why an agent gave no answer about its T3 chats."""
+
+    STOPPED = 'its container is not running'
+    UNREADABLE = 'agent-t3 failed or answered garbage'
 
 
-def agent_busy(agent):
-    """Whether a T3 turn is in progress (no end time and no finished status); an unreadable database counts as busy."""
-    import sqlite3  # noqa: PLC0415 - only apply needs it
+ASK_T3_S = 60
 
-    db = os.path.join(agent['path'], 'home', '.t3', 'userdata', 'statev2.sqlite')
-    if not os.path.exists(db):
-        return False
+
+def ask_t3(cfg: dict[str, Any], agent: dict[str, Any], question: str) -> object:
+    """The agent's own answer about its T3 chats (`agent-t3 <question>` in its container, JSON), or why there is none.
+    The host never opens the database itself: the agent's image carries the typed reader."""
+    ids = containers(cfg, f'agentlab-agent-{agent["id"]}', 'agent')
+    if not ids:
+        return T3.STOPPED
     try:
-        # closing(): `with` alone only commits, and an open connection (its -shm mapped) keeps the disk from unmounting
-        with contextlib.closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=5)) as c:
-            marks = ','.join('?' * len(SETTLED))
-            q = f'select count(*) from orchestration_v2_projection_runs where status not in ({marks}) and completed_at is null'
-            return c.execute(q, SETTLED).fetchone()[0] > 0
-    except sqlite3.Error:
-        return True
+        rc, out = run(['docker', 'exec', '-u', 'agent', ids[0], 'agent-t3', question], check=False, timeout=ASK_T3_S)
+    except subprocess.TimeoutExpired:
+        return T3.UNREADABLE
+    if rc:
+        return T3.UNREADABLE
+    try:
+        got: object = json.loads(out)
+    except ValueError:
+        return T3.UNREADABLE
+    return got
+
+
+def agent_busy(cfg: dict[str, Any], agent: dict[str, Any]) -> bool:
+    """Whether a T3 turn is in progress (no end time and no finished status); a stopped agent is idle, one that
+    can't answer counts as busy."""
+    got = ask_t3(cfg, agent, 'busy')
+    if got is T3.STOPPED:
+        return False
+    return got if isinstance(got, bool) else True
 
 
 def agent_of(cfg, stack):
@@ -165,7 +184,7 @@ def why_deploy(cfg, stack, text, force=False):
     if not stale:
         return '', ''
     agent = agent_of(cfg, stack)
-    if agent and agent_busy(agent):
+    if agent and agent_busy(cfg, agent):
         return '', f'{agent["id"]} busy (a T3 turn is running); its new image goes live on the next apply'
     return f'newer image: {", ".join(stale)}', ''
 
@@ -208,7 +227,7 @@ def deploy(cfg, stack, kind, key, plan, force=False):
 
 
 # Stacks deployed this run: a second Coolify deploy while the first still runs would race it.
-DEPLOYED = set()
+DEPLOYED: set[str] = set()
 SETTLE_S = 15 * 60
 STUCK_S = 3 * 60  # no container of the new render while an old one still stands: Coolify couldn't replace it
 LEFTOVER = re.compile(r'^[0-9a-f]{12}_')

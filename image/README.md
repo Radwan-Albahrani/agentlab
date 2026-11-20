@@ -29,6 +29,14 @@ Commands for the agents: `android-emulator` (start/stop/status/wipe) and `compan
 stop/start the companions whose code lives in `/workspace/companions/<name>`; start/stop/restart are requests the
 host's watcher answers through `~/.agentlab/requests/` and `~/.agentlab/results/`).
 
+`agent-t3 busy | inflight | worktrees` answers questions about this agent's T3 chats as JSON: whether a turn is in
+progress, the runs not yet finished (`[[run id, thread id]]`), and per worktree when its last chat finished (`null`
+while one is live). The host asks it through `docker exec -u agent` (agentctl before redeploying, shrinking a disk or
+resuming chats, the janitor before removing worktrees) instead of opening the database itself. It reads
+`~/.t3/userdata/statev2.sqlite` read-only through the typed models in `t3schema.py` (`t3state.py`, SQLAlchemy in the
+`/opt/agent-t3` venv, which `agent-updater` uses too). The host counts a stopped agent as idle and an agent that
+can't answer as busy (no worktrees removed).
+
 Accounts API (the hub draws the UI): sign-ins and connectors (`/api/page`, `/api/state`, `/api/act`), env vars,
 `GET /api/onboarding` + `POST /api/onboarding/finish` (needs one AI sign-in; writes `~/.config/agent/onboarded`),
 `POST /api/pair {kind: browser|app, label}` (one-time T3 pairing link), `GET /api/devices`, `POST /api/devices/revoke

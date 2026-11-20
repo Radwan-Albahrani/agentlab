@@ -22,13 +22,15 @@ import os
 import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator
-from typing import Any, Literal, Unpack, cast, get_args
+from typing import Literal, Unpack, get_args
+
+from tables import ItemRow
 
 from .config import COMP, FILES, log
-from .shapes import Item, ItemData, ItemFields, Task
+from .shapes import Item, ItemData, ItemFields, ItemKind, ItemState, Task
 from .state import key_of, save
 
-STATES: dict[str, tuple[str, ...]] = {
+STATES: dict[ItemKind, tuple[ItemState, ...]] = {
     'in': ('received',),
     'final': ('sent', 'silent'),
     'message': (
@@ -47,13 +49,13 @@ STATES: dict[str, tuple[str, ...]] = {
     'credential': ('received', 'awaiting_owner', 'sent', 'rejected', 'refused', 'failed', 'lost'),
     'poll_change': ('received', 'applied', 'refused'),
 }
-MOVES: dict[str, set[str]] = {
+MOVES: dict[ItemState, set[ItemState]] = {
     'received': {'awaiting_owner', 'approved', 'sent', 'applied', 'refused', 'failed', 'dry_run'},
     'awaiting_owner': {'approved', 'sent', 'rejected', 'replaced', 'withdrawn', 'failed', 'lost'},
     'approved': {'sent', 'failed'},
 }
-OPEN = ('received', 'awaiting_owner', 'approved')  # not settled yet
-LABELS = {  # how a state reads to people (receipts, case thread, hub)
+OPEN: tuple[ItemState, ...] = ('received', 'awaiting_owner', 'approved')  # not settled yet
+LABELS: dict[ItemState, str] = {  # how a state reads to people (receipts, case thread, hub)
     'received': 'received',
     'awaiting_owner': 'waiting for the owner',
     'approved': 'approved',
@@ -98,7 +100,7 @@ def items(task: Task) -> list[Item]:
     return task.setdefault('items', [])
 
 
-def add(task: Task, kind: str, state: str | None = None, **fields: Unpack[ItemFields]) -> Item:
+def add(task: Task, kind: ItemKind, state: ItemState | None = None, **fields: Unpack[ItemFields]) -> Item:
     """A new item in its kind's first state (or `state`, one of its kind's states)."""
     if kind not in STATES:
         raise IllegalMoveError(f'unknown kind {kind!r}')
@@ -112,15 +114,15 @@ def add(task: Task, kind: str, state: str | None = None, **fields: Unpack[ItemFi
         'state': state,
         'at': now,
         'updated': now,
-        'history': [[state, now, fields.get('note', '')]],
+        'history': [(state, now, fields.get('note', ''))],
     }
-    it.update(cast(ItemFields, {k: v for k, v in fields.items() if v is not None}))  # the fields given, less the None
+    it.update(fields)
     items(task).append(it)
     _changed(task, it, None)
     return it
 
 
-def move(task: Task, it: Item, state: str, note: str = '', **fields: Unpack[ItemData]) -> Item:
+def move(task: Task, it: Item, state: ItemState, note: str = '', **fields: Unpack[ItemData]) -> Item:
     """Move `it` to `state` along MOVES; anything else raises IllegalMoveError."""
     old = it['state']
     if state not in STATES[it['kind']] or state not in MOVES.get(old, ()):
@@ -130,7 +132,7 @@ def move(task: Task, it: Item, state: str, note: str = '', **fields: Unpack[Item
     it.update(fields)
     if note:
         it['note'] = note
-    it['history'].append([state, now, note])
+    it['history'].append((state, now, note))
     _changed(task, it, old)
     return it
 
@@ -141,15 +143,15 @@ def get(task: Task, item_id: str | int) -> Item | None:
 
 def on_card(task: Task, ts: str) -> Item | None:
     """The item whose decision card is the message `ts`."""
-    return next((i for i in items(task) if (i.get('card') or {}).get('ts') == ts), None)
+    return next((i for i in items(task) if 'card' in i and i['card']['ts'] == ts), None)
 
 
-def pending(task: Task, kind: str | None = None) -> list[Item]:
+def pending(task: Task, kind: ItemKind | None = None) -> list[Item]:
     """Items waiting for the owner, oldest first."""
     return [i for i in items(task) if i['state'] == 'awaiting_owner' and (kind is None or i['kind'] == kind)]
 
 
-def latest(task: Task, kind: str, states: Collection[str] = OPEN) -> Item | None:
+def latest(task: Task, kind: ItemKind, states: Collection[ItemState] = OPEN) -> Item | None:
     return next((i for i in reversed(items(task)) if i['kind'] == kind and i['state'] in states), None)
 
 
@@ -205,7 +207,7 @@ Shown = Literal[  # what the hub gets of an item; never cards, drafts' markup or
 SHOWN: tuple[Shown, ...] = get_args(Shown)
 
 
-def rows(task: Task) -> list[dict[str, Any]]:
+def rows(task: Task) -> list[ItemRow]:
     """The items as the hub stores them (companion.py `items` table)."""
     k = key_of(task)
     return [

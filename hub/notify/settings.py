@@ -3,10 +3,12 @@ import os
 import secrets
 import string
 import threading
+from typing import Any
 
 DATA = os.environ.get('NOTIFY_DATA', '/data')
 SETTINGS = os.path.join(DATA, 'notify.json')
-DEFAULTS = {
+Settings = dict[str, Any]  # DEFAULTS' keys, as notify.json has them
+DEFAULTS: Settings = {
     'device_key': '',
     'sound': 'multiwayinvitation',
     'muted': False,
@@ -18,12 +20,12 @@ DEFAULTS = {
 lock = threading.Lock()
 
 
-def random_text(n=16):
+def random_text(n: int = 16) -> str:
     abc = string.ascii_letters + string.digits
     return ''.join(secrets.choice(abc) for _ in range(n))
 
 
-def load():
+def load() -> Settings:
     try:
         with open(SETTINGS) as f:
             s = {**DEFAULTS, **json.load(f)}
@@ -35,14 +37,14 @@ def load():
     return s
 
 
-def save(s):
+def save(s: Settings) -> None:
     os.makedirs(DATA, exist_ok=True)
     with open(SETTINGS + '.tmp', 'w') as f:
         json.dump(s, f, indent=1)
     os.replace(SETTINGS + '.tmp', SETTINGS)
 
 
-def update(**kw):
+def update(**kw: Any) -> Settings:
     with lock:
         s = load()
         s.update(kw)

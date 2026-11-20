@@ -277,37 +277,6 @@ def test_moves_the_state_machine_does_not_allow_are_bugs_not_states(case):
         machine.open_case(t, 'D_OWNER', '1.0', 'own')  # it has one
 
 
-def test_a_task_saved_before_these_states_is_converted_once(fresh_bot):
-    old = {
-        'thread': 'T_OLD', 'title': 'logs', 'channel': SALAH_DM, 'thread_ts': '61.1', 'outbox': 'old-box',
-        'trigger_ts': '61.1', 'status_ts': 's', 'active': False, 'outcome': 'asked you', 'guest': 'U_SALAH',
-        'case': {'ch': 'D_OWNER', 'ts': '70.1', 'own': True, 'md': 'head'}, 'told': 1,
-        'approval': {'action': 'Merge', 'ts': '71.1', 'ch': 'D_OWNER', 'md': 'x', 'decided': ''},
-        'sent': [{'id': '1', 'where': 'in #random', 'msgs': [['C_RANDOM', '5.0']], 'text': 'Lunch?'}],
-    }  # fmt: skip
-    state.state['tasks'][state.key(SALAH_DM, '61.1')] = old
-    machine.prepare_all([old])
-    assert old['party'] == {'kind': 'colleague', 'user': 'U_SALAH'}
-    assert old['case'] == {'ch': 'D_OWNER', 'ts': '70.1', 'head': 'own', 'mode': 'private', 'md': 'head'}
-    assert old['turn']['state'] == 'ended' and old['turn']['outcome'] == 'asked'
-    assert kinds(old) == [('message', 'channel', 'sent'), ('approval', '', 'awaiting_owner')]
-    assert old['phase'] == 'waiting_owner' and old['line'] is None
-    assert not any(k in old for k in machine.OLD)
-    assert not fresh_bot.messages  # converted, not shown again
-    click_on = ledger.on_card(old, '71.1')
-    assert click_on['kind'] == 'approval'
-
-
-def test_an_old_record_the_conversion_does_not_understand_keeps_its_task(fresh_bot):
-    odd = {
-        'thread': 'T_ODD', 'title': 'x', 'channel': 'C1', 'thread_ts': '62.1', 'outbox': 'odd', 'trigger_ts': '62.1',
-        'active': True, 'post_draft': {'text': 'no ts'},
-    }  # fmt: skip
-    machine.prepare_all([odd])
-    assert odd['party']['kind'] == 'owner' and machine.running(odd) and odd['items'] == []
-    assert 'post_draft' not in odd and 'active' not in odd
-
-
 def test_the_owner_asking_in_the_colleagues_thread_is_answered_in_that_thread(case, fresh_bot):
     """Each message is answered where it was written: the owner's word in Salah's thread is answered there, not in
     the owner's DM, and is in the case like everyone's."""
@@ -343,15 +312,6 @@ def test_the_thinking_line_is_edited_where_it_was_posted_and_follows_the_turn(ca
     monkeypatch.setattr(tasks, 'STATUS_EVERY', 0)
     tasks.tick(t)
     assert fresh_bot.updates and all(u['channel'] == 'D_OWNER' for u in fresh_bot.updates)
-
-
-def test_a_running_line_saved_before_lines_knew_their_place_is_found_in_slack(case, fresh_bot, monkeypatch):
-    t, _ = case
-    line = t.pop('line')
-    t['status_ts'] = line['ts']
-    monkeypatch.setattr(tasks, '_has', lambda ch, tts, ts: ch == SALAH_DM)
-    tasks.adopt_lines([t])
-    assert t['line']['ch'] == SALAH_DM and t['line']['ts'] == line['ts'] and 'status_ts' not in t
 
 
 @pytest.mark.usefixtures('case')

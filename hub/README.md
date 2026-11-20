@@ -1,7 +1,7 @@
 # hub
 
-The cluster's dashboard at `hub_domain`: a stdlib Python backend (`hub.py`, JSON API in `routes.py`) serving a React
-app (`web/`, StyleX + Base UI, built with Bun). Everyone with an agent uses it, scoped to their own agents and those
+The cluster's dashboard at `hub_domain`: a Python backend (`hub.py`, JSON API in `routes.py`; stdlib plus SQLAlchemy
+for the companions' and T3's databases) serving a React app (`web/`, StyleX + Base UI, built with Bun). Everyone with an agent uses it, scoped to their own agents and those
 agents' companions; admins see everything plus the cluster screens (Services, Configs, Secrets, Notifications,
 Display). See [docs/architecture.md](../docs/architecture.md) → "Your hub".
 
@@ -33,7 +33,7 @@ answers when started with `HUB_ALLOW_NONE=1` (local testing).
 Everything runs in pinned containers; only Docker is needed.
 
 ```
-hub/test.sh check            backend ruff + unit tests; web types, lint, format, unit tests, build (FIX=1 autofixes)
+hub/test.sh check            backend ruff, mypy, unit tests; web types, lint, format, unit tests, build (FIX=1 autofixes)
 hub/test.sh build [tag]      check, then build agentlab/hub:<tag> (default: test)
 hub/test.sh instance start   a throwaway hub on 127.0.0.1:7189 over example data (tests/fixtures.py) and fake agents
 hub/test.sh e2e [url] [args] Playwright click-through (SHOTS=<dir> saves screenshots; extra args go to playwright)

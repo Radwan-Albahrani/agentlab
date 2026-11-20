@@ -6,13 +6,14 @@ import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy import func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from . import t3db
 from .config import BRIDGE, log, secret
+from .shapes import Json
 from .state import parse_iso
 from .t3db import Message, Request, Run, Thread, TurnItem, answered_by_message, parent_of, text_of
 from .when import say
@@ -20,7 +21,30 @@ from .when import say
 BRIDGE_KEY = secret('agent-key.txt')
 
 
-def bridge(path: str, body: dict[str, Any]) -> dict[str, Any]:
+class Reply(TypedDict, total=False):
+    """The Accounts bridge's answer: ok, and the result (T3's own JSON) or what went wrong."""
+
+    ok: bool
+    result: Any
+    error: str
+    stderr: str
+
+
+class Snapshot(TypedDict):
+    """A chat's state at a glance (snapshot): its runs, new answers, open questions, workers and pull requests."""
+
+    running: bool
+    last_status: str | None
+    last_done: str | None
+    messages: list[tuple[str, str | None, str | None]]  # (id, created_at, text) of new answers
+    requests: list[tuple[str, str | None, Json]]  # (id, kind, its turn item) of questions the chat waits on
+    asked: list[Json]  # questions answered by any message (the turn ended on them)
+    workers: list[tuple[str, str | None, bool]]  # (thread id, title, running)
+    prs: list[Json]
+    interrupted_at: str | None
+
+
+def bridge(path: str, body: Json) -> Reply:
     req = urllib.request.Request(
         BRIDGE + path,
         data=json.dumps(body).encode(),
@@ -48,7 +72,7 @@ def agent_up() -> bool:
         return False
 
 
-def error_text(res: dict[str, Any]) -> str:
+def error_text(res: Reply) -> str:
     return str(res.get('stderr') or res.get('error') or res.get('result') or '')[:300]
 
 
@@ -75,20 +99,20 @@ def start_thread(project: str, title: str, message: str) -> tuple[str | None, st
     return None, error_text(res) or 'no answer from T3'
 
 
-def send(thread: str, message: str) -> dict[str, Any]:
+def send(thread: str, message: str) -> Reply:
     return bridge('/api/t3/send', {'thread': thread, 'message': message})
 
 
-def answer(thread: str, message: str) -> dict[str, Any]:
+def answer(thread: str, message: str) -> Reply:
     """Answer the chat's open question box."""
     return bridge('/api/t3/respond', {'thread': thread, 'message': message})
 
 
-def stop(thread: str) -> dict[str, Any]:
+def stop(thread: str) -> Reply:
     return bridge('/api/t3/stop', {'thread': thread})
 
 
-def triage(prompt: str) -> dict[str, Any]:
+def triage(prompt: str) -> Reply:
     """One quick model call on the agent's own provider."""
     return bridge('/api/t3/triage', {'message': prompt})
 
@@ -106,11 +130,11 @@ def _last_runs(s: Session, tids: list[str]) -> dict[str, tuple[str | None, str |
     return {t: (status, done) for t, status, done in rows}
 
 
-def _payloads(s: Session, tids: list[str]) -> dict[str, dict[str, Any]]:
+def _payloads(s: Session, tids: list[str]) -> dict[str, Json]:
     return dict(s.execute(select(Thread.thread_id, Thread.payload).where(Thread.thread_id.in_(tids))).all())
 
 
-def snapshot(tid: str, since_iso: str) -> dict[str, Any]:
+def snapshot(tid: str, since_iso: str) -> Snapshot:
     """A chat's current state: runs, new answers, pending questions, workers, PRs."""
     with t3db.session() as s:
         open_run = s.scalar(select(Run.run_id).where(Run.thread_id == tid, Run.completed_at.is_(None)).limit(1))
@@ -136,7 +160,7 @@ def snapshot(tid: str, since_iso: str) -> dict[str, Any]:
             )
         ]
         reqs = [(rid, kind) for rid, kind, by_message in pending if not by_message]
-        items: dict[str, dict[str, Any]] = {}
+        items: dict[str, Json] = {}
         if pending:
             recent = s.scalars(
                 select(TurnItem.payload)

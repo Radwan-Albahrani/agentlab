@@ -3,31 +3,47 @@
 import json
 import threading
 from datetime import UTC, datetime
-from typing import Any, Unpack, cast
+from typing import Unpack
 
-from .config import COMP, default_project
-from .shapes import Line, Review, Route, State, Task
+from pydantic import TypeAdapter
+
+from .config import COMP
+from .shapes import Json, Line, Review, Route, State, Task
 
 lock = threading.RLock()
 _written: dict[str, str] = {}  # store key -> JSON last written
 
 
-def _rows(s: State) -> dict[str, Any]:
+def _rows(s: State) -> Json:
     """Store rows: task:<key> per task, other top-level keys as themselves."""
-    rows: dict[str, Any] = {f'task:{k}': t for k, t in s['tasks'].items()}
+    rows: Json = {f'task:{k}': t for k, t in s['tasks'].items()}
     rows.update((k, v) for k, v in s.items() if k != 'tasks')
     return rows
 
 
+RETIRED = ('first', 'last_summary_at', 'posted')  # task keys nothing writes any more: dropped as they load
+
+
+def _retire(task: Json) -> Json:
+    out = {k: v for k, v in task.items() if k not in RETIRED}
+    if isinstance(out.get('review'), bool):  # the hub ask's preview flag, now `preview`
+        out['preview'] = out.pop('review')
+    if isinstance(out.get('review'), dict):
+        out['review'] = {k: v for k, v in out['review'].items() if k != 'card'}
+    return out
+
+
+SHAPE: TypeAdapter[State] = TypeAdapter(State)
+
+
 def _load() -> State:
+    """The stored records, checked against shapes.State: one that doesn't fit stops the companion here."""
     rows = COMP.store_all()
-    raw: dict[str, Any] = {'tasks': {k[5:]: v for k, v in rows.items() if k.startswith('task:')}}
+    raw: Json = {'refused': [], 'drafts': {}, 'polls': {}}
     raw.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
-    s = cast(State, raw)  # the stored JSON, in the shapes it was saved in
-    s.setdefault('refused', [])
-    s.setdefault('drafts', {})
-    s.setdefault('polls', {})
-    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in _rows(s).items())
+    raw['tasks'] = {k[5:]: _retire(v) for k, v in rows.items() if k.startswith('task:')}
+    s = SHAPE.validate_python(raw)
+    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())
     return s
 
 
@@ -66,9 +82,8 @@ def task_of(channel: str, thread_ts: str) -> Task | None:
 
 
 def review_of(task: Task) -> Review:
-    """The PR review a task runs, or {} (a hub ask's `review` is its approve-before-posting flag)."""
-    r = task.get('review')
-    return r if isinstance(r, dict) else {}
+    """The PR review a task runs, or {}."""
+    return task.get('review') or {}
 
 
 def now_iso() -> str:
@@ -120,28 +135,3 @@ def new_task(
         state['tasks'][key_of(t)] = t
     save()
     return t
-
-
-def prepare_for_start() -> None:
-    """Normalise loaded tasks after a restart (their states: machine.prepare_all)."""
-    for t in state['tasks'].values():
-        if 'route' not in t:  # saved before routes were recorded (projects.BY 'earlier'): its chat stays where it is
-            t['route'] = {
-                'project': t.get('project') or default_project(),
-                'by': 'earlier',
-                'why': 'started before routes',
-            }
-        t.pop('project', None)
-        if {'retries', 'retry_at', 'retry_sent'} & t.keys():  # saved before retries had a state machine (fsm.RETRY)
-            due, sent = t.pop('retry_at', None), t.pop('retry_sent', 0)
-            t['retry'] = {
-                'state': 'waiting' if due else 'idle',
-                'count': t.pop('retries', 0) or 0,
-                'at': due or sent or 0,
-            }
-    for p in state['polls'].values():  # saved before polls had a state machine (fsm.POLL)
-        if 'state' not in p:
-            p['state'] = 'open' if p.pop('open', False) else 'closed'
-    for d in state['drafts'].values():  # saved before drafts had a revising state (fsm.DRAFT)
-        if d.pop('revising', False) and d.get('status') == 'posted':
-            d['status'] = 'revising'

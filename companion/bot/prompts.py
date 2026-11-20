@@ -1,13 +1,13 @@
 """Every message the companion writes for the agent or the triage model."""
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import Any
 
 from . import when
 from .config import AGENT_FILES, NAME, RECENT, RECENT_DM, org, work_tools
+from .slack import Channel
 
-Channels = Sequence[Mapping[str, Any]]  # slack.channels(): {id, name, member}
+Channels = Sequence[Channel]
 
 
 def outbox(folder: str) -> str:

@@ -1,8 +1,10 @@
 """Pull requests via the App: the open list, a review's starting facts, and publishing the result."""
 
 import base64
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, TypedDict
+
+from tables import OpenPull
 
 from .github import App, GitHubError, User
 from .report import Inline
@@ -79,9 +81,9 @@ class Facts(TypedDict):
     bot: str
 
 
-def open_pulls(app: App) -> list[dict[str, Any]]:
+def open_pulls(app: App) -> list[OpenPull]:
     """Every open PR the App can see, newest activity first."""
-    out: list[dict[str, Any]] = []
+    out: list[OpenPull] = []
     for inst in app.installations():
         q = f'is:pr is:open archived:false sort:updated-desc user:{inst["account"]}'
         for n in app.graphql(LIST, inst['id'], q=q)['search']['nodes']:
@@ -112,7 +114,7 @@ def open_pulls(app: App) -> list[dict[str, Any]]:
     return out
 
 
-def people(app: App, pulls: Sequence[Mapping[str, Any]], repos: int = 20, cap: int = 300) -> list[User]:
+def people(app: App, pulls: Sequence[OpenPull], repos: int = 20, cap: int = 300) -> list[User]:
     """[{login, avatar}] sorted: who can work on the repos with open PRs, and the PRs' authors; once per login."""
     found: dict[str, User] = {}
     for p in pulls:

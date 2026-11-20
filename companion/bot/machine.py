@@ -27,12 +27,26 @@ phase  derived from the three above plus the ledger and a usage-limit pause, sto
 
 import time
 from collections.abc import Callable, Iterable
-from typing import Any, Literal, get_args
+from typing import Literal, get_args
 
 from . import ledger
 from .config import OWNER, log
 from .fsm import IllegalStateError
-from .shapes import Case, Head, Item, Mode, Outcome, Party, PartyKind, Pause, Phase, Place, Task, Turn, TurnBy
+from .shapes import (
+    Case,
+    Head,
+    Item,
+    Mode,
+    Outcome,
+    Party,
+    PartyKind,
+    Pause,
+    Phase,
+    Place,
+    Task,
+    Turn,
+    TurnBy,
+)
 from .state import save
 
 PARTIES: tuple[PartyKind, ...] = get_args(PartyKind)
@@ -225,7 +239,7 @@ def settle(task: Task) -> bool:
     if task.get('phase') == p:
         return False
     task['phase'] = p
-    task.setdefault('phases', []).append([p, time.time()])
+    task.setdefault('phases', []).append((p, time.time()))
     del task['phases'][:-30]
     for fn in _phase_listeners:
         try:
@@ -243,133 +257,8 @@ def _items_changed(task: Task, it: Item, old: str | None) -> None:
 
 
 def prepare_all(tasks: Iterable[Task]) -> None:
-    """After a restart: tasks saved before these states are converted once; a turn that is not running has no live
-    thinking line."""
+    """After a restart: a turn that is not running has no live thinking line, and each phase is recomputed."""
     for t in tasks:
-        if 'turn' not in t:
-            migrate(t)
-        if 'place' not in t['turn']:  # saved before turns had a place: where it was being answered then
-            t['turn']['place'] = 'case' if t['turn']['by'] in ('owner', 't3') and t.get('case') else 'thread'
         if not running(t):
             t['line'] = None
-            t.pop('status_ts', None), t.pop('line_start', None)  # an old line of a turn that ended: nothing live
         settle(t)
-
-
-Old = Literal[
-    'guest', 'colleague', 'requester', 'approved', 'approval', 'post_draft', 'reply_draft', 'reply_pending',
-    'cred_ask', 'told', 'posted', 'answer_to', 'active', 'outcome', 'sent', 'limit_checked',
-]  # fmt: skip
-OLD: tuple[Old, ...] = get_args(Old)
-OLD_OUTCOMES: dict[str, Outcome] = {
-    'answered': 'answered',
-    'asked you': 'asked',
-    'posted': 'answered',
-    'nothing new to post': 'silent',
-    'nothing needed': 'nothing_to_do',
-    'failed': 'failed',
-    'stopped': 'stopped',
-}
-
-
-def migrate(task: Task) -> None:
-    """One task saved before these states, converted: every old flag becomes the state it meant, then is gone."""
-    task['party'] = party_of(task.get('guest') or task.get('colleague'), task.get('requester'))
-    if task.get('colleague') and not task.get('guest'):
-        task['party'] = {'kind': 'colleague', 'user': task['colleague']}
-    old = task.pop('case', None)
-    approved = task.get('approved')
-    if task['party']['kind'] == 'errand':
-        task['case'] = {'ch': task['channel'], 'ts': task['thread_ts'], 'head': 'errand', 'mode': 'private'}
-    elif old:
-        case: Case = {
-            'ch': old['ch'],
-            'ts': old['ts'],
-            'head': 'own' if old.get('own') else 'card',
-            'mode': 'shared' if task.get('colleague') and not task.get('guest') else 'private',
-        }
-        if old.get('md'):
-            case['md'] = old['md']
-        task['case'] = case
-    elif task['party']['kind'] == 'colleague' and isinstance(approved, str) and approved:
-        ch = (task.get('approval') or {}).get('ch') or ''
-        task['case'] = {'ch': ch, 'ts': approved, 'head': 'card', 'mode': 'private'}
-    by: TurnBy = 'owner' if task.get('answer_to') else 'colleague' if task['party']['kind'] != 'owner' else 'owner'
-    live = bool(task.get('active'))
-    task['turn'] = {
-        'n': 1,
-        'by': by,
-        'place': 'case' if by == 'owner' and task.get('case') else 'thread',
-        'state': 'running' if live else 'ended',
-        'outcome': '' if live else OLD_OUTCOMES.get(task.get('outcome') or '', 'answered'),
-        'at': 0,
-        'ended': 0,
-    }
-    with ledger.muted():  # these happened already: recorded, not shown again
-        try:
-            _migrate_items(task)
-        except (KeyError, TypeError, IndexError, IllegalStateError, ledger.IllegalMoveError) as e:
-            # a record this conversion does not understand: its old cards are dropped, the task itself is kept
-            log('migrate: old cards of', task.get('thread'), 'dropped:', type(e).__name__, e)
-            task['items'] = []
-    for k in OLD:
-        task.pop(k, None)
-
-
-def _migrate_items(task: Task) -> None:
-    """The old waiting slots and sent posts, as ledger items in the state they were in."""
-    for m in task.get('sent') or []:  # posts to channels and DMs: kept so they can still be edited
-        ledger.add(
-            task, 'message', 'sent', to='channel', label=m['where'], text=m['text'], where=m['where'], msgs=m['msgs']
-        )
-    a = task.get('approval')
-    if a:
-        it = ledger.add(
-            task,
-            'approval',
-            action=a.get('action', ''),
-            reply=a.get('reply', ''),
-            files=a.get('files') or [],
-            card={'ch': a.get('ch') or task['channel'], 'ts': a.get('ts')},
-            md=a.get('md', ''),
-        )
-        ledger.move(task, it, 'awaiting_owner')
-        decided = {'approved': 'approved', 'rejected': 'rejected', 'replaced': 'replaced'}.get(a.get('decided') or '')
-        if decided:
-            ledger.move(task, it, decided)
-        elif a.get('decided'):
-            ledger.move(task, it, 'replaced', note=f'was {a["decided"]}')
-    d = task.get('post_draft')
-    if d:
-        post: dict[str, Any] = {k: d[k] for k in ('channel', 'to', 'poll', 'edit', 'where', 'msgs', 'text') if k in d}
-        it = ledger.add(
-            task,
-            'edit' if d.get('edit') else 'message',
-            to='people' if d.get('to') else 'channel',
-            label=d.get('where') or '',
-            text=d.get('text', ''),
-            post=post,
-            card={'ch': d.get('at') or task['channel'], 'ts': d['ts']},
-            md=d.get('md', ''),
-        )
-        ledger.move(task, it, 'awaiting_owner')
-    r = task.get('reply_draft')
-    if r:
-        it = ledger.add(
-            task,
-            'message',
-            to='requester',
-            text=r.get('text', ''),
-            paths=r.get('files') or [],
-            card={'ch': task['channel'], 'ts': r['ts']},
-            md=r.get('md', ''),
-        )
-        ledger.move(task, it, 'awaiting_owner')
-    if task.get('reply_pending'):
-        it = ledger.add(task, 'message', to='requester', text=task['reply_pending'], after='turn')
-        ledger.move(task, it, 'approved')
-    c = task.get('cred_ask')
-    if c:  # the password lived in memory only: it is gone
-        it = ledger.add(task, 'credential', to='person', card={'ch': task['channel'], 'ts': c['ts']}, md=c['md'])
-        ledger.move(task, it, 'awaiting_owner')
-        ledger.move(task, it, 'lost', note='the companion restarted, so the password is gone')

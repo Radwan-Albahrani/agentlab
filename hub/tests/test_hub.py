@@ -15,15 +15,14 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = tempfile.mkdtemp(prefix='hub-test-')
 sys.path[:0] = [os.path.dirname(HERE), HERE]
 import fake_agent  # noqa: E402
-import fixtures  # noqa: E402
 
-fixtures.main(ROOT)
 AGENTS = ThreadingHTTPServer(('127.0.0.1', 0), fake_agent.Handler)
 threading.Thread(target=AGENTS.serve_forever, daemon=True).start()
 os.environ.update(
@@ -38,6 +37,13 @@ os.environ.update(
     NOTIFY_T3=f'{ROOT}/agents/{{id}}/home/.t3/userdata',
     AGENTS_DIR=f'{ROOT}/agents',
 )
+# after the environment: fixtures imports the hub's models, whose modules read it
+import fixtures  # noqa: E402
+
+fixtures.main(ROOT)
+from sqlalchemy import Column, Float, MetaData, Table, Text, create_engine, insert  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
 import access  # noqa: E402
 import actions  # noqa: E402
 import cluster  # noqa: E402
@@ -48,16 +54,19 @@ import routes  # noqa: E402
 import scope  # noqa: E402
 import screens  # noqa: E402
 import store  # noqa: E402
+from notify.t3schema import Base as T3Base  # noqa: E402
+from notify.t3schema import Message, Project, Request, Run, Thread, TurnItem  # noqa: E402
+from store.companion_tables import CARD  # noqa: E402
 
 
-def _prime(bits):
+def _prime(bits: int) -> int:
     while True:
         n = secrets.randbits(bits) | (1 << (bits - 1)) | 1
         if all(pow(a, n - 1, n) == 1 for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)):
             return n
 
 
-def _key():
+def _key() -> tuple[int, int, int]:
     e = 65537
     while True:
         p, q = _prime(512), _prime(512)
@@ -70,11 +79,13 @@ N, E, D = _key()
 SIZE = (N.bit_length() + 7) // 8
 
 
-def b64(raw):
+def b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
 
 
-def token(claims=None, head=None, key=(N, D)):
+def token(
+    claims: dict[str, Any] | None = None, head: dict[str, Any] | None = None, key: tuple[int, int] = (N, D)
+) -> str:
     head = {'alg': 'RS256', 'kid': 'k1', **(head or {})}
     body = {
         'aud': ['aud-example'],
@@ -90,7 +101,7 @@ def token(claims=None, head=None, key=(N, D)):
     return f'{signed}.{b64(sig)}'
 
 
-def use_access(mode='cloudflare-access'):
+def use_access(mode: str = 'cloudflare-access') -> None:
     path = f'{ROOT}/cluster.json'
     conf = json.loads(Path(path).read_text())
     conf['auth'].update(mode=mode, cloudflare={'team': 'example', 'audience': 'aud-example'})
@@ -99,7 +110,7 @@ def use_access(mode='cloudflare-access'):
     cluster.load()
 
 
-def signed(email='admin@example.com', **claims):
+def signed(email: str = 'admin@example.com', **claims: Any) -> dict[str, str]:
     return {'X-Agentlab-User': email, 'Cf-Access-Jwt-Assertion': token({'email': email, **claims})}
 
 
@@ -108,28 +119,28 @@ Path(f'{ROOT}/certs-example.json').write_text(json.dumps(jwks))
 
 
 class Access(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         use_access()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         use_access('none')
 
-    def test_admin(self):
+    def test_admin(self) -> None:
         who = access.viewer(signed())
         self.assertEqual((who.email, who.admin, who.agents), ('admin@example.com', True, {'admin'}))
 
-    def test_owner(self):
+    def test_owner(self) -> None:
         who = access.viewer(signed('Sara@example.com'))
         self.assertEqual((who.email, who.admin, who.agents), ('sara@example.com', False, {'sara', 'lab'}))
 
-    def test_cookie(self):
+    def test_cookie(self) -> None:
         headers = {'X-Agentlab-User': 'admin@example.com', 'Cookie': f'a=b; CF_Authorization={token()}'}
         self.assertTrue(access.viewer(headers).admin)
 
-    def test_refused(self):
+    def test_refused(self) -> None:
         other = (N + 2, D)
 
-        def tok(claims=None, **kw):
+        def tok(claims: dict[str, Any] | None = None, **kw: Any) -> dict[str, str]:
             return {'X-Agentlab-User': 'admin@example.com', 'Cf-Access-Jwt-Assertion': token(claims, **kw)}
 
         cases = {
@@ -155,7 +166,7 @@ class Access(unittest.TestCase):
             with self.subTest(why), self.assertRaises(access.DeniedError):
                 access.viewer(headers)
 
-    def test_https_takes_the_gates_proof_instead_of_a_token(self):
+    def test_https_takes_the_gates_proof_instead_of_a_token(self) -> None:
         path = f'{ROOT}/cluster.json'
         conf = json.loads(Path(path).read_text())
         conf['auth']['cloudflare']['https'] = True
@@ -166,7 +177,13 @@ class Access(unittest.TestCase):
         key.write_text('ab' * 32)
         sub = hmac.new(bytes.fromhex('ab' * 32), b'agentlab proof v1', hashlib.sha256).digest()
 
-        def proved(user='sara@example.com', admin='0', agent='sara', exp=None, mac_user=None):
+        def proved(
+            user: str = 'sara@example.com',
+            admin: str = '0',
+            agent: str = 'sara',
+            exp: int | None = None,
+            mac_user: str | None = None,
+        ) -> dict[str, str]:
             exp = int(time.time()) + 60 if exp is None else exp
             msg = f'{mac_user or user}\n{admin}\n{agent}\n{exp}'.encode()
             mac = base64.urlsafe_b64encode(hmac.new(sub, msg, hashlib.sha256).digest()).rstrip(b'=').decode()
@@ -191,7 +208,7 @@ class Access(unittest.TestCase):
         with mock.patch.object(access, 'GATE_KEY', f'{ROOT}/missing.key'), self.assertRaises(access.DeniedError):
             access.viewer(proved())
 
-    def test_published_port_one_owner(self):
+    def test_published_port_one_owner(self) -> None:
         os.environ['HUB_PUBLISHED_OWNER'] = 'Sara@example.com'
         try:
             who = access.viewer({})
@@ -203,7 +220,7 @@ class Access(unittest.TestCase):
         with self.assertRaises(access.DeniedError):
             access.viewer({})
 
-    def test_none_needs_the_switch(self):
+    def test_none_needs_the_switch(self) -> None:
         use_access('none')
         os.environ.pop('HUB_ALLOW_NONE', None)
         with self.assertRaises(access.DeniedError):
@@ -212,12 +229,12 @@ class Access(unittest.TestCase):
         self.assertTrue(access.viewer({}).admin)
         self.assertEqual(access.viewer({'X-Agentlab-User': 'sara@example.com'}).agents, {'sara', 'lab'})
 
-    def test_http(self):
+    def test_http(self) -> None:
         server = ThreadingHTTPServer(('127.0.0.1', 0), hub.Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f'http://127.0.0.1:{server.server_port}'
 
-        def status(path, headers=None):
+        def status(path: str, headers: dict[str, str] | None = None) -> tuple[int, Any]:
             try:
                 with urllib.request.urlopen(urllib.request.Request(base + path, headers=headers or {})) as r:
                     return r.status, json.loads(r.read()) if path.startswith('/api/') else None
@@ -242,15 +259,15 @@ class Access(unittest.TestCase):
             server.server_close()
 
 
-def as_person(email):
+def as_person(email: str) -> None:
     scope.use(scope.of(email))
 
 
 class Scope(unittest.TestCase):
-    def tearDown(self):
+    def tearDown(self) -> None:
         scope.use(scope.ADMIN)
 
-    def test_screens_leave_others_out(self):
+    def test_screens_leave_others_out(self) -> None:
         as_person('sara@example.com')
         nav = screens.nav()
         self.assertEqual([a['name'] for a in nav['agents']], ['sara', 'lab'])
@@ -268,7 +285,7 @@ class Scope(unittest.TestCase):
         self.assertFalse(storage['manage'])
         self.assertEqual(screens.overview()['tiles']['diskLabel'], 'Your disk')
 
-    def test_routes_refuse_others(self):
+    def test_routes_refuse_others(self) -> None:
         as_person('sara@example.com')
         for table, path in (
             (routes.GET, '/api/agents/admin'),
@@ -301,7 +318,7 @@ class Scope(unittest.TestCase):
             with self.subTest(path), self.assertRaises(routes.ForbiddenError):
                 routes.resolve(table, path)
 
-    def test_extra_secrets_are_their_own_group_for_admins_only(self):
+    def test_extra_secrets_are_their_own_group_for_admins_only(self) -> None:
         sec = store.secrets
         with tempfile.TemporaryDirectory() as d:
             Path(d, 'jellyfin-api-key.txt').write_text('k1')
@@ -328,7 +345,7 @@ class Scope(unittest.TestCase):
                 with self.assertRaises((ValueError, routes.ForbiddenError)):
                     actions.companion('helper', 'secret', {'file': '../../extra/jellyfin-api-key.txt', 'value': 'x'})
 
-    def test_own_things_work(self):
+    def test_own_things_work(self) -> None:
         as_person('sara@example.com')
         for path in (
             '/api/agents/sara',
@@ -347,10 +364,10 @@ class Scope(unittest.TestCase):
         self.assertTrue(files['owner.txt'])
         self.assertFalse(files['bot-token.txt'])
 
-    def test_onboarding_and_pairing(self):
+    def test_onboarding_and_pairing(self) -> None:
         as_person('sara@example.com')
 
-        def post(path, body):
+        def post(path: str, body: dict[str, Any]) -> Any:
             handler, groups = routes.resolve(routes.POST, path)
             return handler(groups, body, '')
 
@@ -368,7 +385,7 @@ class Scope(unittest.TestCase):
             cluster.use_host('')
         self.assertEqual(fake_agent.PAIR_BODIES[-1], {'kind': 'browser', 'label': 'x', 'host': 'homebox'})
 
-    def test_companion_secret_and_logs(self):
+    def test_companion_secret_and_logs(self) -> None:
         as_person('admin@example.com')
         self.assertIn('connected to Slack', screens.companion_logs('scout')['text'])
         actions.companion('scout', 'secret', {'file': 'app-token.txt', 'value': 'xapp-example'})
@@ -380,10 +397,10 @@ class Scope(unittest.TestCase):
 
 
 class Screens(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         os.environ['HUB_ALLOW_NONE'] = '1'
 
-    def test_every_screen_renders(self):
+    def test_every_screen_renders(self) -> None:
         for name, render in {
             'nav': screens.nav,
             'overview': screens.overview,
@@ -403,7 +420,7 @@ class Screens(unittest.TestCase):
             with self.subTest(name):
                 json.dumps(render(), default=str)
 
-    def test_now_counts_chats_without_saying_what_they_are(self):
+    def test_now_counts_chats_without_saying_what_they_are(self) -> None:
         admin = {a['name']: a for a in screens.now()['agents']}['admin']
         # one owner chat (its two subagents fold into it) and one background review
         self.assertEqual(
@@ -412,7 +429,7 @@ class Screens(unittest.TestCase):
         )
         self.assertNotIn('Migrate billing', json.dumps(screens.now()))
 
-    def test_now_shows_only_the_viewers_own_agents_even_to_an_admin(self):
+    def test_now_shows_only_the_viewers_own_agents_even_to_an_admin(self) -> None:
         scope.use(scope.of('admin@example.com', admin=True))
         try:
             self.assertTrue(scope.current().sees_agent('sara'))
@@ -420,12 +437,12 @@ class Screens(unittest.TestCase):
         finally:
             scope.use(scope.ADMIN)
 
-    def test_a_review_paused_by_a_usage_limit_counts_as_in_review(self):
+    def test_a_review_paused_by_a_usage_limit_counts_as_in_review(self) -> None:
         paused = {'review': {'status': 'paused', 'resumes_at': 1794783000.0, 'counts': None}}
         self.assertEqual(screens.outcome(paused), 'reviewing')
         self.assertEqual(screens.outcome({'review': {'status': 'failed'}}), 'failed')
 
-    def test_overview_sums_up_each_companions_reviews(self):
+    def test_overview_sums_up_each_companions_reviews(self) -> None:
         [r] = screens.overview()['reviews']
         self.assertEqual(r['name'], 'scout')
         self.assertEqual(r['counts'], {'findings': 1, 'reviewing': 2, 'blocking': 1})
@@ -433,7 +450,7 @@ class Screens(unittest.TestCase):
             r['batch'], {'of': 3, 'done': 1, 'now': {'number': 13, 'title': 'Fix the date picker on Safari'}}
         )
 
-    def test_github_people_are_checked_pairs_one_per_login(self):
+    def test_github_people_are_checked_pairs_one_per_login(self) -> None:
         from store import companions  # noqa: PLC0415
 
         field = {'key': 'github_people', 'type': 'links'}
@@ -443,12 +460,12 @@ class Screens(unittest.TestCase):
             with self.assertRaises(ValueError):
                 companions._checked(field, bad)
 
-    def test_agents_come_from_the_config(self):
+    def test_agents_come_from_the_config(self) -> None:
         nav = screens.nav()
         self.assertEqual([a['name'] for a in nav['agents']], ['admin', 'sara', 'lab'])
         self.assertEqual(nav['agents'][0]['companions'][0]['name'], 'scout')
 
-    def test_links_go_through_the_view_switch(self):
+    def test_links_go_through_the_view_switch(self) -> None:
         card = screens.agents('')['agents'][0]
         self.assertEqual(card['links']['chat'], 'https://agents.example.com/_agentlab/view/admin?next=/')
         self.assertEqual(
@@ -457,7 +474,7 @@ class Screens(unittest.TestCase):
         self.assertIn('/_agentlab/view/admin?next=/_agentlab/accounts/browser', card['links']['browser'])
         self.assertIsNone(screens.agents('')['agents'][1]['links']['browser'])
 
-    def test_chat_opens_the_t3_app_at_your_newest_chat_once_paired(self):
+    def test_chat_opens_the_t3_app_at_your_newest_chat_once_paired(self) -> None:
         env = f'{notify.t3.userdata("admin")}/environment-id'
         with open(env, 'w') as f:
             f.write('env-1')
@@ -468,7 +485,7 @@ class Screens(unittest.TestCase):
         finally:
             os.remove(env)
 
-    def test_published_tools_link_straight_to_their_ports(self):
+    def test_published_tools_link_straight_to_their_ports(self) -> None:
         ports = {'t3': 7101, 'terminal': 7104, 'files': 7105, 'browser': 7103}
         with mock.patch.object(cluster, 'published', lambda agent_id: ports if agent_id == 'admin' else {}):
             cluster.use_host('HomeBox.tail.ts.net:7190')
@@ -488,7 +505,7 @@ class Screens(unittest.TestCase):
             self.assertEqual(cluster.request_host(), '')
         cluster.use_host('')
 
-    def test_stacks_group_by_agent(self):
+    def test_stacks_group_by_agent(self) -> None:
         self.assertEqual(domains.domain_of('agentlab-agent-sara'), ('sara', 'agent'))
         self.assertEqual(domains.domain_of('agentlab-companion-scout'), ('admin', 'scout'))
         self.assertEqual(domains.domain_of('agentlab-agent-nobody'), (None, None))
@@ -499,14 +516,14 @@ class Screens(unittest.TestCase):
         self.assertNotIn('stray-1', store.watch.container_names())
         self.assertNotIn('media', [s['id'] for s in store.stacks.stacks()])
 
-    def test_storage_per_person_disk(self):
+    def test_storage_per_person_disk(self) -> None:
         people = {p['email']: p for p in screens.storage()['people']}
         self.assertEqual(people['sara@example.com']['used'], 50 * fixtures.GB)
         self.assertEqual(people['sara@example.com']['agents'], ['sara', 'lab'])
         titles = [n['title'] for n in screens.overview()['needs']]
         self.assertIn("sara@example.com's disk 83% full", titles)
 
-    def test_storage_names_what_fills_a_folder_and_explains_the_pool(self):
+    def test_storage_names_what_fills_a_folder_and_explains_the_pool(self) -> None:
         gb = fixtures.GB
         rows = [
             {'path': '', 'bytes': 30 * gb},
@@ -524,17 +541,18 @@ class Screens(unittest.TestCase):
         self.assertEqual(top[2]['hint'], 'A repository the agent works in')
         scan = {'units': {'/pool': 80 * gb}, 'items': [{'agent': 'a', 'path': '', 'bytes': 78 * gb}]}
         r = screens.reconcile({'used': 84 * gb}, scan)
+        assert r is not None
         self.assertEqual((r['overhead'], r['since'], r['now']), (2 * gb, 4 * gb, 84 * gb))
         self.assertIsNone(screens.reconcile({'used': 84 * gb}, {'items': scan['items']}))  # a scan from before
 
-    def test_secrets_map_spells_out_companions(self):
+    def test_secrets_map_spells_out_companions(self) -> None:
         items = {s['name']: s for s in screens.secrets()['items']}
         token = items['companions/scout/bot-token.txt']
         self.assertEqual(token['label'], 'Scout · Slack bot token')
         self.assertEqual(token['effect'], 'On change: restarts companion-scout.')
         self.assertEqual(items['unmapped-note.txt']['kinds'], ['unmapped'])
 
-    def test_secret_names_stay_in_their_folders(self):
+    def test_secret_names_stay_in_their_folders(self) -> None:
         self.assertEqual(store.secrets.value('companions/scout/owner.txt'), 'U0EXAMPLE\n')
         for name in (
             '../cluster.json',
@@ -546,26 +564,26 @@ class Screens(unittest.TestCase):
             with self.subTest(name), self.assertRaises(ValueError):
                 store.secrets.value(name)
 
-    def test_a_t3_update_stuck_for_hours_is_flagged(self):
+    def test_a_t3_update_stuck_for_hours_is_flagged(self) -> None:
         needs = {n['title']: n for n in screens.overview()['needs']}
         stuck = needs['lab: T3 0.1.10 is waiting to start']
         self.assertEqual(stuck['tone'], 'warn')
         self.assertIn('still runs 0.1.9 after 7 h', stuck['detail'])
         self.assertFalse([t for t in needs if t.startswith(('admin:', 'sara:'))])
 
-    def test_companion_not_set_up(self):
+    def test_companion_not_set_up(self) -> None:
         c = screens.companion('helper')
         self.assertEqual(c['state'], 'unconfigured')
         needs = {n['title']: n['tone'] for n in screens.overview()['needs']}
         self.assertEqual(needs['Helper is not set up yet'], 'info')
 
-    def test_template_update_state_comes_from_agentctl(self):
+    def test_template_update_state_comes_from_agentctl(self) -> None:
         t = screens.companion('scout')['templateUpdate']
         self.assertEqual((t['state'], t['from'], t['to']), ('conflict', 'a1b2c3d', 'e4f5a6b'))
         self.assertIn('bot/prompts.py', t['detail'])
         self.assertEqual(screens.companion('helper')['templateUpdate'], {})
 
-    def test_each_case_carries_its_party_phase_and_ledger(self):
+    def test_each_case_carries_its_party_phase_and_ledger(self) -> None:
         tasks = {t['id']: t for t in screens.companion('scout')['tasks']}
         sara = tasks['t2']
         self.assertEqual((sara['party'], sara['phase']), ('colleague', 'waiting_owner'))
@@ -578,7 +596,7 @@ class Screens(unittest.TestCase):
         self.assertTrue(all('by' not in i for t in tasks.values() for i in t['items']))  # no Slack ids on the page
         self.assertEqual((tasks['t3']['party'], tasks['t4']['party'], tasks['t4']['items']), ('errand', 'owner', []))
 
-    def test_each_task_says_where_its_chat_started_and_why(self):
+    def test_each_task_says_where_its_chat_started_and_why(self) -> None:
         tasks = {t['id']: t for t in screens.companion('scout')['tasks']}
         self.assertEqual(
             tasks['t2']['route'], {'project': '/workspace/app/apps/api', 'by': 'named', 'why': 'the ask names "api"'}
@@ -586,13 +604,13 @@ class Screens(unittest.TestCase):
         self.assertIsNone(tasks['t3']['route'])  # a companion too old to say
         self.assertTrue(all(k not in t for t in tasks.values() for k in ('project', 'route_by', 'route_why')))
 
-    def test_pulls_and_polls(self):
+    def test_pulls_and_polls(self) -> None:
         c = screens.companion('scout')
         self.assertEqual(c['pulls']['items'][0]['id'], 'example/app#12')
         self.assertEqual(c['pulls']['me'], 'example-admin')
         self.assertEqual(c['polls'][0]['question'], 'Lunch on Thursday?')
 
-    def test_people_setting_offers_the_workspace_and_takes_ids(self):
+    def test_people_setting_offers_the_workspace_and_takes_ids(self) -> None:
         field = next(f for f in screens.companion('scout')['settings'] if f['key'] == 'access')
         self.assertEqual(field['options'][0], {'value': 'U0ALI', 'label': 'Ali', 'avatar': ''})
         self.assertEqual(field['when'], {'mode': ['review']})
@@ -603,29 +621,125 @@ class Screens(unittest.TestCase):
         store.companions.set_setting('scout', 'access', [])
 
 
+class CompanionDb(unittest.TestCase):
+    def test_a_task_carries_every_card_column(self) -> None:
+        self.assertEqual(set(store.companions.Task.__annotations__) - {'items'}, set(CARD))
+
+    def test_an_older_bot_db_reads_what_it_has(self) -> None:
+        folder = f'{ROOT}/companions/old'
+        os.makedirs(folder, exist_ok=True)
+        engine = create_engine(f'sqlite:///{folder}/companion.db')
+        tasks = Table(
+            'tasks',
+            MetaData(),
+            Column('id', Text, primary_key=True),
+            Column('title', Text),
+            Column('status', Text),
+            Column('started', Text),
+            Column('updated', Float),
+        )
+        tasks.create(engine)
+        with engine.begin() as con:
+            con.execute(insert(tasks).values(id='t1', title='An old task', status='done', started='2026-01-01'))
+        engine.dispose()
+        try:
+            board = store.companions._read_db('old')
+        finally:
+            os.remove(f'{folder}/companion.db')
+        (task,) = board.tasks
+        self.assertEqual((task['title'], task['status'], task['party'], task['items']), ('An old task', 'done', '', []))
+        self.assertNotIn('updated', task)
+        self.assertEqual((board.events, board.polls, board.pulls), ([], [], []))
+
+
+class Pings(unittest.TestCase):
+    """The watcher on a T3 database of its own: agent lab's, which has none otherwise."""
+
+    def setUp(self) -> None:
+        self.path = f'{notify.t3.userdata("lab")}/statev2.sqlite'
+        self.engine = create_engine(f'sqlite:///{self.path}')
+        Message.metadata.create_all(self.engine)
+        T3Base.metadata.create_all(self.engine)
+
+    def tearDown(self) -> None:
+        self.engine.dispose()
+        os.remove(self.path)
+
+    def add(self, *rows: object) -> None:
+        with Session(self.engine) as s:
+            s.add_all(rows)
+            s.commit()
+
+    def test_finished_chats_and_new_requests_ping_once(self) -> None:
+        ago = fixtures._iso
+        question = {'requestId': 'q1', 'questions': [{'question': 'Which region?', 'options': [{'label': 'eu'}]}]}
+        watcher = notify.Watcher(lambda: ['lab'])
+        with mock.patch.object(notify.bark, 'send') as send:
+            watcher.check('lab')  # starts from now: no backlog
+            self.add(
+                Project(project_id='p', title='web'),
+                *(
+                    Thread(thread_id=tid, project_id='p', title=tid, payload={'creationSource': source})
+                    for tid, source in (('asks', 'user'), ('done', 'user'), ('worker', 'mcp'))
+                ),
+                Run(run_id='r1', thread_id='asks', status='completed', requested_at=ago(120), completed_at=ago(5)),
+                Run(run_id='r2', thread_id='done', status='completed', requested_at=ago(1200), completed_at=ago(600)),
+                Run(run_id='r3', thread_id='worker', status='completed', requested_at=ago(1100), completed_at=ago(700)),
+                Message(
+                    message_id='m1',
+                    thread_id='asks',
+                    run_id='r1',
+                    role='assistant',
+                    created_at=ago(5),
+                    payload={'text': 'Ship it?'},
+                ),
+                Message(
+                    message_id='m2',
+                    thread_id='done',
+                    run_id='r2',
+                    role='assistant',
+                    created_at=ago(600),
+                    payload={'text': 'Done.'},
+                ),
+                Request(
+                    runtime_request_id='q1',
+                    thread_id='asks',
+                    kind='user_input',
+                    status='pending',
+                    created_at=ago(1),
+                    payload={},
+                ),
+                TurnItem(turn_item_id='i1', thread_id='asks', ordinal=1, type='user_input_request', payload=question),
+            )
+            watcher.check('lab')
+            watcher.check('lab')  # nothing new since
+        pings = [(c.kwargs['kind'], c.args[1]) for c in send.call_args_list]
+        self.assertEqual(pings, [('reply', 'Ship it?'), ('done', 'Done.'), ('question', 'Which region?\n1️⃣ eu')])
+
+
 class Routes(unittest.TestCase):
-    def test_unknown_agent_or_companion_is_404(self):
+    def test_unknown_agent_or_companion_is_404(self) -> None:
         for path in ('/api/agents/nobody', '/api/agents/nobody/accounts', '/api/companions/nobody'):
             with self.subTest(path), self.assertRaises(routes.NotFoundError):
                 routes.resolve(routes.GET, path)
 
-    def test_accounts_page_from_the_agent(self):
+    def test_accounts_page_from_the_agent(self) -> None:
         handler, groups = routes.resolve(routes.GET, '/api/agents/admin/accounts')
         page = handler(groups, {}, '')
         self.assertEqual(page['agent'], 'admin')
         self.assertTrue(page['browserUrl'].startswith('https://agents.example.com/_agentlab/view/admin'))
 
-    def test_deploy_is_a_watcher_request(self):
+    def test_deploy_is_a_watcher_request(self) -> None:
         self.assertIn('Deploying', actions.config_deploy({'id': 'agentlab-agent-sara'}))
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/deploy~agentlab-agent-sara'))
         with self.assertRaises(ValueError):
             actions.config_deploy({'id': '../etc'})
 
-    def test_companion_remove_is_a_watcher_request(self):
+    def test_companion_remove_is_a_watcher_request(self) -> None:
         actions.companion('scout', 'remove', {})
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/remove~companion~scout'))
 
-    def test_a_channel_search_that_misses_asks_the_companion_to_reread_its_channels(self):
+    def test_a_channel_search_that_misses_asks_the_companion_to_reread_its_channels(self) -> None:
         self.assertIn('Refreshing', actions.companion('scout', 'channels', {}))
         folder = os.path.join(store.companions._folder('scout'), 'asks')
         kinds = []
@@ -634,11 +748,11 @@ class Routes(unittest.TestCase):
                 kinds.append(json.load(fh)['type'])
         self.assertIn('channels', kinds)
 
-    def test_companion_restart_finds_its_container(self):
+    def test_companion_restart_finds_its_container(self) -> None:
         actions.companion('scout', 'restart', {})
         self.assertTrue(os.path.exists(f'{ROOT}/watch/requests/restart~companion-scout'))
 
-    def test_manage_queues_checked_jobs_for_the_watcher(self):
+    def test_manage_queues_checked_jobs_for_the_watcher(self) -> None:
         queue = f'{ROOT}/watch/jobs/queue'
         self.assertIn('Adding lina', actions.manage('add', {'id': 'lina', 'email': 'Lina@Example.com', 'memory': '8g'}))
         jobs = [json.loads(Path(queue, n).read_text()) for n in os.listdir(queue)]
@@ -663,7 +777,7 @@ class Routes(unittest.TestCase):
         with self.assertRaises(ValueError):
             actions.disk_sizes({'personSize': 'huge'})
 
-    def test_a_published_setup_adds_agents_for_its_one_person(self):
+    def test_a_published_setup_adds_agents_for_its_one_person(self) -> None:
         published = {
             **cluster.load(),
             'agents': [{**a, 'owner': 'admin@example.com', 'publish': {'t3': 7101}} for a in cluster.load()['agents']],
@@ -678,7 +792,7 @@ class Routes(unittest.TestCase):
         self.assertEqual(json.loads(Path(queue, newest).read_text())['args']['email'], 'admin@example.com')
         self.assertEqual(screens.access_setup(cluster.load())['fixedOwner'], '')
 
-    def test_manage_is_admin_only(self):
+    def test_manage_is_admin_only(self) -> None:
         scope.use(scope.Viewer('sara@example.com', False, frozenset({'sara', 'lab'})))
         try:
             with self.assertRaises(routes.ForbiddenError):
@@ -688,7 +802,7 @@ class Routes(unittest.TestCase):
         finally:
             scope.use(scope.ADMIN)
 
-    def test_stacks_are_read_only(self):
+    def test_stacks_are_read_only(self) -> None:
         self.assertEqual(store.stacks.stacks()[0]['id'], 'agentlab-agent-admin')
         with self.assertRaises(ValueError):
             store.stacks.read('../../cluster.json')

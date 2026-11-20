@@ -1,6 +1,8 @@
 """What needs the owner's decision or a fix, most urgent first."""
 
 import time
+from collections.abc import Iterable, Iterator
+from typing import Any, Literal
 
 import cluster
 import display
@@ -8,10 +10,15 @@ import domains
 import scope
 import store
 from shapes import epoch, link, post
+from store.companions import Companion
+
+Json = dict[str, Any]
+Need = tuple[str, Json]  # (the display key it is about, the item)
 
 DAY = 86400
 T3_WAIT_WARN_H = 6  # past the updater's own wait (wait_hours, 4 by default), after which it restarts T3 anyway
-TONE_ORDER = {'bad': 0, 'warn': 1, 'info': 2}
+Tone = Literal['bad', 'warn', 'info']
+TONE_ORDER: dict[Tone, int] = {'bad': 0, 'warn': 1, 'info': 2}
 WAITING_LABEL = {
     'approval': 'Approve a change',
     'send': 'Send the reply',
@@ -21,7 +28,15 @@ WAITING_LABEL = {
 WAITING_ICON = {'approval': 'alert', 'send': 'send', 'login': 'key', 'answer': 'chat'}
 
 
-def _item(about, tone, icon, title, detail, actions=(), since=None):
+def _item(
+    about: str,
+    tone: Tone,
+    icon: str,
+    title: str,
+    detail: str,
+    actions: Iterable[Json] = (),
+    since: float | None = None,
+) -> Need:
     """`about` is the display key the item concerns; it is dropped when that key is hidden."""
     return about, {
         'tone': tone,
@@ -33,7 +48,7 @@ def _item(about, tone, icon, title, detail, actions=(), since=None):
     }
 
 
-def _companions(comps):
+def _companions(comps: list[Companion]) -> Iterator[Need]:
     for c in comps:
         nice, about = c['display'], f'companion.{c["name"]}'
         if c['state'] == 'unconfigured':
@@ -70,7 +85,7 @@ def _companions(comps):
             )
 
 
-def _full(pool, about, title):
+def _full(pool: Json, about: str, title: str) -> Iterator[Need]:
     pct = 100 * pool['used'] / pool['size']
     if pct >= 80:
         free = f'{pool["avail"] / 2**30:.1f} GB left of {pool["size"] / 2**30:.0f} GB.'
@@ -78,7 +93,7 @@ def _full(pool, about, title):
         yield _item(about, 'bad' if pct >= 90 else 'warn', 'disk', f'{title} {pct:.0f}% full', free, actions)
 
 
-def _storage():
+def _storage() -> Iterator[Need]:
     usage = store.watch.usage()
     if not usage:
         return
@@ -97,13 +112,13 @@ def _storage():
             yield _item(about, 'bad', 'disk', f'{whose} is not mounted', why)
 
 
-def _watcher():
+def _watcher() -> Iterator[Need]:
     if not store.watch.alive():
         why = 'Storage numbers, secret changes and restarts wait for it (systemd agentlab-watch).'
         yield _item('page.services', 'bad', 'clock', 'The host watcher is not running', why)
 
 
-def _secrets():
+def _secrets() -> Iterator[Need]:
     for e in store.watch.events({'secret'}, 20):
         if not e.get('ok', True) and time.time() - e['at'] < DAY:
             open_secrets = [link('Secrets', '/secrets', 'arrow')]
@@ -117,7 +132,7 @@ def _secrets():
             )
 
 
-def _containers():
+def _containers() -> Iterator[Need]:
     for r in store.watch.containers().get('items') or []:
         if not domains.healthy(r):
             title = f'{r["service"]} is {r["status"] or r["state"]}'
@@ -125,7 +140,7 @@ def _containers():
             yield _item('page.services', 'bad', 'power', title, where, [link('Services', '/services', 'arrow')])
 
 
-def _accounts(summaries):
+def _accounts(summaries: dict[str, Any]) -> Iterator[Need]:
     for name, s in summaries.items():
         if s is None:
             continue
@@ -139,7 +154,7 @@ def _accounts(summaries):
             yield _item(f'profile.{name}', 'info', 'github', f'{name} is not signed in to GitHub', why, open_accounts)
 
 
-def _t3_updates(summaries):
+def _t3_updates(summaries: dict[str, Any]) -> Iterator[Need]:
     for name, s in summaries.items():
         w = (s or {}).get('t3Update')
         if not w or time.time() - w['since'] < T3_WAIT_WARN_H * 3600:
@@ -155,11 +170,11 @@ def _t3_updates(summaries):
         )
 
 
-def _shown(about):
+def _shown(about: str) -> bool:
     return display.visible(about) and scope.current().sees(about)
 
 
-def needs(summaries, comps):
+def needs(summaries: dict[str, Any], comps: list[Companion]) -> list[Json]:
     items = [
         *_companions(comps),
         *_storage(),
@@ -172,7 +187,7 @@ def needs(summaries, comps):
     return sorted((i for about, i in items if _shown(about)), key=lambda i: TONE_ORDER[i['tone']])
 
 
-def count(comps):
+def count(comps: list[Companion]) -> int:
     """Menu badge count from the cheap sources only (no calls to the agents)."""
     waiting = sum(1 for c in comps for t in c['tasks'] if t['status'] == 'waiting')
     down = sum(1 for c in comps if c['state'] not in ('live', 'unconfigured'))

@@ -3,7 +3,7 @@ import re
 FULL = 1500  # characters of detail kept
 
 
-def plain(text, limit=FULL):
+def plain(text: str | None, limit: int = FULL) -> str:
     """Markdown -> readable notification text."""
     t = re.sub(r'```.*?```', '[code]', text or '', flags=re.S)
     t = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', t)  # links -> their text
@@ -17,21 +17,21 @@ def plain(text, limit=FULL):
     return t if len(t) <= limit else t[: limit - 1].rsplit(' ', 1)[0] + '…'
 
 
-def short(text, limit=120):
+def short(text: str | None, limit: int = 120) -> str:
     t = re.sub(r'\s+', ' ', text or '').strip()
     return t if len(t) <= limit else t[: limit - 1].rsplit(' ', 1)[0] + '…'
 
 
-def first_sentence(text):
+def first_sentence(text: str | None) -> str:
     t = re.sub(r'\s+', ' ', text or '').strip()
     m = re.match(r'(.+?[.!?])(\s|$)', t)
     return short(m.group(1) if m else t)
 
 
-def last_question(text):
+def last_question(text: str | None) -> str:
     qs = re.findall(r'[^.!?\n]*\?', text or '')
     return short(qs[-1].strip()) if qs else first_sentence(text)
 
 
-def ends_with_question(text):
+def ends_with_question(text: str | None) -> bool:
     return re.sub(r'[\s*_`)]+$', '', text or '').endswith('?')
