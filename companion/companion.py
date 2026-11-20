@@ -1,6 +1,6 @@
 """Bot <-> hub contract. Folder <data>/companions/<name>/ (COMPANION_DATA), mounted into the hub:
 
-companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed.
+companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed. The tables as models: tables.py.
   events(id, at, kind, title, task, "to", detail, ok)   append-only
   tasks(id, title, kind, requester, status, waiting, outcome, started, ended, thread, slack, source, updated,
         resumes_at, started_by, via, approved_by, party, phase, case_link, project, route_by, route_why) upserted,
@@ -39,77 +39,78 @@ asks/<id>.json        written by the hub, removed by take_asks:
 
 import json
 import os
-import sqlite3
 import threading
 import time
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from typing import Any
 
-CARD = (
-    'id',
-    'title',
-    'kind',
-    'requester',
-    'status',
-    'waiting',
-    'outcome',
-    'started',
-    'ended',
-    'thread',
-    'slack',
-    'source',
-    'resumes_at',
-    'started_by',
-    'via',
-    'approved_by',
-    'party',
-    'phase',
-    'case_link',
-    'project',
-    'route_by',
-    'route_why',
-)
-ITEM = ('id', 'task', 'seq', 'kind', 'state', 'at', 'data')
-SCHEMA_SQL = f"""
-create table if not exists events (id integer primary key, at real not null, kind text, title text, task text, "to" text,
-                                   detail text, ok integer not null default 1);
-create index if not exists events_at on events (at);
-create index if not exists events_kind on events (kind, at);
-create table if not exists tasks ({', '.join(c + (' text primary key' if c == 'id' else ' text') for c in CARD)}, updated real);
-create index if not exists tasks_started on tasks (started);
-create table if not exists store (key text primary key, value text not null, updated real);
-create table if not exists items (id text primary key, task text, seq integer, kind text, state text, at real,
-                                  data text, updated real);
-create index if not exists items_task on items (task, seq);
-create table if not exists polls (id text primary key, task text, open integer, closes real, data text, updated real);
-create table if not exists pulls (id text primary key, repo text, number integer, updated text, data text);
-"""
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import Column, Engine, create_engine, delete, event, select
+from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.orm import Session, sessionmaker
+from tables import CARD, Base, Event, Item, Poll, Pull, Stored, TaskCard
+
+Row = Mapping[str, Any]
+
+
+def engine_for(path: str) -> Engine:
+    """companion.db in WAL mode, shared by the bot's threads; JSON kept readable (no \\u escapes)."""
+    engine = create_engine(
+        f'sqlite:///{path}',
+        connect_args={'check_same_thread': False},
+        json_serializer=lambda v: json.dumps(v, ensure_ascii=False),
+    )
+
+    @event.listens_for(engine, 'connect')
+    def _wal(dbapi_conn: Any, _record: Any) -> None:
+        dbapi_conn.execute('pragma journal_mode=wal')  # SQLAlchemy has no API for the journal mode
+
+    return engine
+
+
+def migrate(engine: Engine) -> None:
+    """Create what is missing: new tables, and columns added since an older db was made (never drops anything)."""
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        ops = Operations(MigrationContext.configure(conn))
+        for diff in compare_metadata(ops.migration_context, Base.metadata):
+            if isinstance(diff, tuple) and diff[0] == 'add_column':
+                _, _schema, table, column = diff
+                ops.add_column(table, Column(column.name, column.type, server_default=column.server_default))
 
 
 class Companion:
-    def __init__(self, name, agent, folder, schema=()):
+    def __init__(self, name: str, agent: str, folder: str, schema: Iterable[dict[str, Any]] = ()) -> None:
         self.name, self.agent, self.dir = name, agent, folder
         self.since = time.time()
         self.schema = list(schema)
-        self._settings, self._mtime = {}, None
-        self._cards = {}  # id -> last card written
+        self._settings: dict[str, Any] = {}
+        self._mtime: float | None = None
+        self._cards: dict[str, Any] = {}  # id -> last card written
         self._lock = threading.Lock()
         self.asks_dir = os.path.join(folder, 'asks')
         os.makedirs(self.asks_dir, exist_ok=True)
-        self.db = sqlite3.connect(os.path.join(folder, 'companion.db'), check_same_thread=False, isolation_level=None)
-        self.db.execute('pragma journal_mode=wal')
-        self.db.executescript(SCHEMA_SQL)
-        have = {r[1] for r in self.db.execute('pragma table_info(tasks)')}
-        for column in CARD[CARD.index('resumes_at') :]:  # older db
-            if column not in have:
-                self.db.execute(f'alter table tasks add column {column} text')
+        self.engine = engine_for(os.path.join(folder, 'companion.db'))
+        migrate(self.engine)
+        self._sessions = sessionmaker(self.engine, expire_on_commit=False)
         self._write('settings-schema.json', self.schema)
 
-    def _write(self, fname, data):
+    @contextmanager
+    def session(self) -> Iterator[Session]:
+        """One transaction, committed on success (writes are serialised: SQLite has one writer)."""
+        with self._lock, self._sessions.begin() as s:
+            yield s
+
+    def _write(self, fname: str, data: Any) -> None:
         tmp = os.path.join(self.dir, fname + '.tmp')
         with open(tmp, 'w') as f:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, os.path.join(self.dir, fname))
 
-    def setting(self, key):
+    def setting(self, key: str) -> Any:
         """settings.json value if valid, else the schema default."""
         p = os.path.join(self.dir, 'settings.json')
         try:
@@ -138,7 +139,7 @@ class Companion:
             ]
         return value
 
-    def take_asks(self):
+    def take_asks(self) -> list[dict[str, Any]]:
         """The hub's asks, oldest first; each file is removed as taken."""
         out = []
         for name in sorted(os.listdir(self.asks_dir)):
@@ -153,108 +154,111 @@ class Companion:
             os.remove(path)
         return out
 
-    def heartbeat(self, **extra):
+    def heartbeat(self, **extra: Any) -> None:
         self._write(
             'heartbeat.json',
             {'name': self.name, 'agent': self.agent, 'at': time.time(), 'since': self.since, **extra},
         )
 
-    def tasks(self, cards):
+    def _changed(self, prefix: str, rows: Sequence[Row]) -> list[Row]:
+        return [r for r in rows if self._cards.get(prefix + r['id']) != r]
+
+    def _remember(self, prefix: str, rows: Sequence[Row]) -> None:
+        self._cards.update({prefix + r['id']: dict(r) for r in rows})
+
+    def tasks(self, cards: Sequence[Row]) -> None:
         """Upsert changed task cards."""
-        changed = [c for c in cards if self._cards.get(c['id']) != c]
+        changed = self._changed('', cards)
         if not changed:
             return
         now = time.time()
-        with self._lock:
-            self.db.execute('begin')
-            self.db.executemany(
-                f'insert or replace into tasks ({", ".join(CARD)}, updated) values ({", ".join("?" * len(CARD))}, ?)',
-                [(*(str(c.get(k) or '') for k in CARD), now) for c in changed],
-            )
-            self.db.execute('commit')
-        self._cards.update({c['id']: dict(c) for c in changed})
+        with self.session() as s:
+            _upsert(s, TaskCard, [{**{k: str(c.get(k) or '') for k in CARD}, 'updated': now} for c in changed])
+        self._remember('', changed)
 
-    def items(self, rows):
+    def items(self, rows: Sequence[Row]) -> None:
         """Upsert changed ledger items ({id, task, seq, kind, state, at, data})."""
-        changed = [r for r in rows if self._cards.get('item:' + r['id']) != r]
+        changed = self._changed('item:', rows)
         if not changed:
             return
         now = time.time()
-        with self._lock:
-            self.db.execute('begin')
-            self.db.executemany(
-                f'insert or replace into items ({", ".join(ITEM)}, updated) values ({", ".join("?" * len(ITEM))}, ?)',
-                [(*(json.dumps(r[k]) if k == 'data' else r[k] for k in ITEM), now) for r in changed],
-            )
-            self.db.execute('commit')
-        self._cards.update({'item:' + r['id']: dict(r) for r in changed})
+        keys = ('id', 'task', 'seq', 'kind', 'state', 'at', 'data')
+        with self.session() as s:
+            _upsert(s, Item, [{**{k: r[k] for k in keys}, 'updated': now} for r in changed])
+        self._remember('item:', changed)
 
-    def polls(self, polls):
+    def polls(self, polls: Sequence[Row]) -> None:
         """Upsert changed poll cards ({id, task, open, closes, ...rest as data})."""
-        changed = [p for p in polls if self._cards.get('poll:' + p['id']) != p]
+        changed = self._changed('poll:', polls)
         if not changed:
             return
         now = time.time()
+        own = ('id', 'task', 'open', 'closes')
         rows = [
-            (
-                p['id'],
-                p['task'],
-                int(p['open']),
-                p['closes'],
-                json.dumps({k: v for k, v in p.items() if k not in ('id', 'task', 'open', 'closes')}),
-                now,
-            )
+            {
+                'id': p['id'],
+                'task': p['task'],
+                'open': bool(p['open']),
+                'closes': p['closes'],
+                'data': {k: v for k, v in p.items() if k not in own},
+                'updated': now,
+            }
             for p in changed
         ]
-        with self._lock:
-            self.db.execute('begin')
-            self.db.executemany('insert or replace into polls values (?, ?, ?, ?, ?, ?)', rows)
-            self.db.execute('commit')
-        self._cards.update({'poll:' + p['id']: dict(p) for p in changed})
+        with self.session() as s:
+            _upsert(s, Poll, rows)
+        self._remember('poll:', changed)
 
-    def pulls(self, pulls):
+    def pulls(self, pulls: Sequence[Row]) -> None:
         """Replace the pull request list ({id, repo, number, updated, ...rest as data}) if anything changed."""
         if self._cards.get('pulls') == pulls:
             return
-        rows = [
-            (
-                p['id'],
-                p['repo'],
-                p['number'],
-                p['updated'],
-                json.dumps({k: v for k, v in p.items() if k not in ('id', 'repo', 'number', 'updated')}),
-            )
-            for p in pulls
-        ]
-        with self._lock:
-            self.db.execute('begin')
-            self.db.execute('delete from pulls')
-            self.db.executemany('insert into pulls values (?, ?, ?, ?, ?)', rows)
-            self.db.execute('commit')
+        own = ('id', 'repo', 'number', 'updated')
+        with self.session() as s:
+            s.execute(delete(Pull))
+            s.add_all(Pull(**{k: p[k] for k in own}, data={k: v for k, v in p.items() if k not in own}) for p in pulls)
         self._cards['pulls'] = [dict(p) for p in pulls]
 
-    def event(self, kind, title, task=None, to=None, detail='', ok=True):
-        with self._lock:
-            self.db.execute(
-                'insert into events (at, kind, title, task, "to", detail, ok) values (?,?,?,?,?,?,?)',
-                (time.time(), kind, str(title)[:200], task, to, str(detail or '')[:4000], int(bool(ok))),
+    def event(
+        self, kind: str, title: str, task: str | None = None, to: str | None = None, detail: Any = '', ok: bool = True
+    ) -> None:
+        with self.session() as s:
+            s.add(
+                Event(
+                    at=time.time(),
+                    kind=kind,
+                    title=str(title)[:200],
+                    task=task,
+                    to=to,
+                    detail=str(detail or '')[:4000],
+                    ok=bool(ok),
+                )
             )
 
-    def store_all(self):
-        return {k: json.loads(v) for k, v in self.db.execute('select key, value from store')}
+    def store_all(self) -> dict[str, Any]:
+        with self.session() as s:
+            return {r.key: r.value for r in s.scalars(select(Stored))}
 
-    def store_put(self, items):
+    def store_put(self, items: Mapping[str, Any]) -> None:
         if not items:
             return
         now = time.time()
-        with self._lock:
-            self.db.execute('begin')
-            self.db.executemany(
-                'insert or replace into store (key, value, updated) values (?, ?, ?)',
-                [(k, json.dumps(v, ensure_ascii=False), now) for k, v in items.items()],
-            )
-            self.db.execute('commit')
+        with self.session() as s:
+            _upsert(s, Stored, [{'key': k, 'value': v, 'updated': now} for k, v in items.items()])
 
-    def store_delete(self, keys):
-        with self._lock:
-            self.db.executemany('delete from store where key = ?', [(k,) for k in keys])
+    def store_delete(self, keys: Iterable[str]) -> None:
+        with self.session() as s:
+            s.execute(delete(Stored).where(Stored.key.in_(list(keys))))
+
+
+def _upsert(s: Session, model: type[Base], rows: list[dict[str, Any]]) -> None:
+    """Insert rows, replacing any with the same primary key."""
+    stmt = insert(model)
+    table = model.__table__
+    keys = [c.name for c in table.primary_key]
+    s.execute(
+        stmt.on_conflict_do_update(
+            index_elements=keys, set_={c.name: stmt.excluded[c.name] for c in table.columns if c.name not in keys}
+        ),
+        rows,
+    )

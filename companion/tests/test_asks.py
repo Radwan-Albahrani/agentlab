@@ -7,6 +7,7 @@ import pytest
 from bot import asks, config, ledger, machine, outbox, polls, posts, projects, publish, state, t3, tasks
 from bot.when import say
 from conftest import OWNER, agent_sends, click, ended, receipts
+from tables import Poll
 
 IN_AN_HOUR = (datetime.now().astimezone() + timedelta(hours=1)).isoformat()
 
@@ -363,9 +364,10 @@ def test_polls_are_published_for_the_page_with_their_voters(poll):
     vote(p, 'U_SALAH', 'Sushi')
     publish._last = 0.0
     publish.tick()
-    row = config.COMP.db.execute('select open, data from polls where id = ?', (p['id'],)).fetchone()
-    data = json.loads(row[1])
-    assert row[0] == 1 and data['question'] == 'Where?'
+    with config.COMP.session() as s:
+        row = s.get_one(Poll, p['id'])
+    data = row.data
+    assert row.open and data['question'] == 'Where?'
     assert data['options'][2] == {
         'label': 'Sushi',
         'votes': 1,

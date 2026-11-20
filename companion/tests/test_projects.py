@@ -1,11 +1,11 @@
 """Where a new chat starts: work projects only, every route saying why (bot/projects.py)."""
 
-import json
-import sqlite3
-
 import pytest
-from bot import projects, state, t3
+from bot import projects, state
+from bot import t3db as t3db_module
+from bot.t3db import Project, Thread
 from conftest import set_settings
+from sqlalchemy.exc import OperationalError
 
 PROJECTS = [
     ('p1', 'Netzero Platform', '/workspace/netzero-platform'),
@@ -29,20 +29,15 @@ THREADS = [
 
 
 @pytest.fixture
-def t3db(monkeypatch):
-    con = sqlite3.connect(':memory:', check_same_thread=False)
-    con.executescript("""
-        create table projection_projects (project_id, title, workspace_root, deleted_at);
-        create table orchestration_v2_projection_threads (project_id, title, payload_json, created_at, deleted_at);
-    """)
-    con.executemany('insert into projection_projects values (?, ?, ?, null)', PROJECTS)
-    con.executemany(
-        'insert into orchestration_v2_projection_threads values (?, ?, ?, 0, null)',
-        [(p, t, json.dumps({'pullRequests': [{'repository': r} for r in rs]})) for p, t, rs in THREADS],
+def t3db(t3_rows):
+    t3_rows.add_all(Project(project_id=p, title=t, workspace_root=root) for p, t, root in PROJECTS)
+    t3_rows.add_all(
+        Thread(thread_id=f't{n}', project_id=p, title=t, payload={'pullRequests': [{'repository': r} for r in rs]})
+        for n, (p, t, rs) in enumerate(THREADS)
     )
-    monkeypatch.setattr(t3, 'db', lambda: con)
+    t3_rows.commit()
     set_settings({'default_project': '/workspace/netzero-platform'})
-    return con
+    return t3_rows
 
 
 def test_each_project_has_a_kind():
@@ -96,9 +91,9 @@ def test_a_review_goes_to_its_repositorys_project_or_a_checkout(t3db):
 
 def test_an_unreadable_t3_still_routes_to_the_default(monkeypatch):
     def broken():
-        raise sqlite3.OperationalError('locked')
+        raise OperationalError('select', {}, Exception('database is locked'))
 
-    monkeypatch.setattr(t3, 'db', broken)
+    monkeypatch.setattr(t3db_module, 'engine', broken)
     r = projects.route('task', 'node-api')
     assert (r['by'], r['why']) == ('default', 'T3 unreadable (OperationalError)')
 
