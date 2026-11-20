@@ -369,3 +369,37 @@ def test_an_edit_that_adds_the_tag_is_a_message_to_the_companion(monkeypatch):
     routing.route(tagged, False)
     routing.route(tagged, False)  # Slack may send it twice
     assert calls == [('60.7', 'U_SALAH')]
+
+
+def test_a_case_in_a_thread_syncs_the_whole_thread_and_an_ask_written_before_the_tag(monkeypatch, t3_quiet, fresh_bot):
+    """Ali's case from #engineering-core: the thread so far, his ask in a message of its own, then "@leafy" alone."""
+    set_settings({'access': ['U_SALAH']})
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
+    monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: [])
+    thread = [
+        {'ts': '70.1', 'user': 'U_ALI', 'text': 'Vercel Board looks neat'},
+        {'ts': '70.2', 'user': 'U_SALAH', 'text': 'compare it with the rust one'},
+        {'ts': '70.3', 'user': 'U_SALAH', 'text': 'its readme is too long, please read it all'},
+        {'ts': '70.4', 'user': 'U_SALAH', 'text': '<@BCOMPANION>'},
+    ]
+    monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, trigger: thread)
+    tasks.start('C_TECH', '70.1', '70.4', '<@BCOMPANION>', guest='U_SALAH')
+    t = state.state['tasks'][state.key('C_TECH', '70.1')]
+    said = [(i['label'], i['text']) for i in ledger.items(t) if i['kind'] == 'in']
+    assert said == [
+        ('Ali', 'Vercel Board looks neat'),
+        ('Salah', 'compare it with the rust one\nits readme is too long, please read it all'),
+    ]
+    assert t['title'].startswith('compare it with the rust one')
+    case = in_case(fresh_bot, t)
+    assert 'Earlier in the thread' in case and 'Vercel Board looks neat' in case
+
+    fresh_bot.messages.clear()
+    routing.route({'channel': 'C_TECH', 'ts': '70.6', 'thread_ts': '70.1', 'user': 'U_ALI', 'text': 'nice'}, False)
+    later = {'channel': 'C_TECH', 'ts': '70.7', 'thread_ts': '70.1', 'user': 'U_SALAH', 'text': '<@BCOMPANION>'}
+    routing.route(later, True)
+    routing.route(dict(later), True)  # Slack sends a tag as app_mention and as message
+    news = [(i['label'], i['text']) for i in ledger.items(t) if i['kind'] == 'in'][2:]
+    assert news == [('Ali', 'nice'), ('Salah', '(tagged Companion)')]
+    case = in_case(fresh_bot, t)
+    assert 'nice' in case and '(tagged Companion)' in case

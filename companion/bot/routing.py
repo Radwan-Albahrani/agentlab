@@ -66,6 +66,9 @@ def route(ev, mentioned):
     tts = thr or ts
     if not _once(once):
         return
+    followed = thr and state['tasks'].get(key(ch, thr))
+    if followed:  # a case follows its whole thread, whoever writes and whether or not they tag the companion
+        cases.in_thread(followed, ev)
     if ch == requests_channel() and inbox.route(ev, mentioned):
         return
     owner_tag = mentioned and user == OWNER and slack.USER

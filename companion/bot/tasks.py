@@ -91,7 +91,9 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
     folder = f'{channel}-{thread_ts.replace(".", "")}'
     msgs = elsewhere[1] if elsewhere else slack.thread_messages(channel, thread_ts, trigger_ts)
     lines, files = slack.transcript(msgs, folder)
-    ask = slack.ask(text).strip() or 'Look at this thread and handle it.'
+    lead = [] if elsewhere else slack.lead_up(msgs, guest or OWNER, trigger_ts)
+    parts = (slack.ask(t).strip() for t in [*(m.get('text') or '' for m in lead), text])
+    ask = '\n'.join(p for p in parts if p) or 'Look at this thread and handle it.'
     if elsewhere:
         where = elsewhere[0]
     else:
@@ -140,7 +142,9 @@ def start(channel, thread_ts, trigger_ts, text, elsewhere=None, guest=None, appr
     )
     machine.begin_turn(task, 'colleague' if machine.is_colleague(task) else 'owner', 'thread')
     if machine.is_colleague(task):
-        cases.open_case(task, ask, f'in {elsewhere[0]}' if elsewhere else how['via'], card=approved or None)
+        threaded = not elsewhere and thread_ts != trigger_ts
+        before = [m for m in msgs if float(m['ts']) < float(trigger_ts) and m not in lead] if threaded else []
+        cases.open_case(task, ask, f'in {elsewhere[0]}' if elsewhere else how['via'], approved or None, before)
     save()
     log('started', k, tid, 'for', guest or 'owner')
     COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))
@@ -239,7 +243,7 @@ def follow_up(task, text, files, ts, place, by=None, decision=False):
         if started_by and started_by != OWNER:  # e.g. a review a colleague asked for: they talk to the companion now
             cases.open_late(task, by, text)
     if task.get('case') and place == 'thread' and not decision:  # everyone's words in the thread, the owner's too
-        cases.heard(task, by, text, files or ())
+        cases.heard(task, by, text, files or (), ts=ts)
     if is_side_question(msg) and not files and not decision and not picked:
         side_reply(task, msg, ts, place)
         return

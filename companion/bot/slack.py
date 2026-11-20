@@ -352,6 +352,18 @@ def transcript(msgs, folder=None):
     return lines, files
 
 
+def lead_up(msgs, user, before):
+    """`user`'s own untagged messages just before `before`, with no one else's between: an ask written in parts with
+    the tag last ("readme is too long, compare them", then "@leafy")."""
+    tag, run = f'<@{bot_user()}>', []
+    for m in sorted((m for m in msgs if float(m['ts']) < float(before)), key=lambda m: float(m['ts']), reverse=True):
+        typed = m.get('subtype') in (None, 'thread_broadcast', 'file_share')
+        if m.get('user') != user or m.get('bot_id') or not typed or tag in (m.get('text') or ''):
+            break
+        run.insert(0, m)
+    return run
+
+
 def thread_messages(channel, thread_ts, trigger_ts):
     """The whole thread, or for a new message the ones before it: in a channel the last minutes (older ones are other
     conversations), in a DM the last days, since "I fixed them" there usually answers what was said hours ago."""
