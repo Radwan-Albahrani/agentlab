@@ -10,6 +10,8 @@ from bot.when import say
 from conftest import OWNER, ended, set_settings
 from reviewer import report
 from reviewer.github import GitHubError
+from sqlalchemy import select
+from tables import Event, Pull
 
 RUNNING = {'n': 1, 'by': 'system', 'state': 'running', 'outcome': '', 'at': 0, 'ended': 0}
 
@@ -192,7 +194,8 @@ def test_a_refresh_from_the_page_is_published_at_once(gh):
     with open(os.path.join(config.COMP.asks_dir, 'refresh.json'), 'w') as f:
         json.dump({'type': 'pulls'}, f)
     asks.tick()
-    shown = [r[0] for r in config.COMP.db.execute('select number from pulls order by number')]
+    with config.COMP.session() as s:
+        shown = list(s.scalars(select(Pull.number).order_by(Pull.number)))
     assert shown == [5922, 5923]
     with open(os.path.join(config.COMP.dir, 'heartbeat.json')) as f:
         assert json.load(f)['github']['ready']
@@ -814,10 +817,11 @@ def test_a_linked_author_hears_the_result_once(gh, told, fresh_bot, linked, mode
     finish(task, {'head': 'a' * 40, 'findings': FINDINGS})  # published again for the same commit
     sent = [m for m in fresh_bot.messages if m['channel'] == 'D_U_ALI']
     assert len(sent) == dms
-    logged = config.COMP.db.execute(
-        "select title, ok from events where title like 'Review result for%' and at >= ?", (t0,)
-    ).fetchall()
-    assert logged == [('Review result for app#5922', 1)] * dms  # the hub's Delivered list shows each DM
+    with config.COMP.session() as s:
+        logged = s.execute(
+            select(Event.title, Event.ok).where(Event.title.startswith('Review result for'), Event.at >= t0)
+        ).all()
+    assert logged == [('Review result for app#5922', True)] * dms  # the hub's Delivered list shows each DM
     if dms:
         assert sent[0]['blocks'][0]['text'] == (
             f':mag: Companion reviewed your pull request <https://github.com/{REPO}/pull/5922|app#5922>: '

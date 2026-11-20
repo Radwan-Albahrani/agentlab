@@ -20,12 +20,14 @@ Every route says BY what it was chosen (strongest first):
 PURPOSES: what each kind of chat may be routed by. A Slack task or hub ask is read for its project; an errand or
 a draft is the owner's paperwork and goes to the default project."""
 
-import json
 import os
 import re
 
-from . import t3
+from sqlalchemy import select
+
+from . import t3db
 from .config import NAME, default_project
+from .t3db import Project, Thread
 
 KINDS = ('work', 'home', 'none')
 BY = ('repo', 'named', 'channel', 'thread', 'topic', 'default', 'checkout', 'earlier')
@@ -101,23 +103,25 @@ def _words(text):
 
 def _profiles():
     """Per work project: identifying names/paths/repos and distinctive words from its chat titles."""
-    with t3.db() as con:
+    with t3db.session() as s:
         projs = {
             pid: (title, root)
-            for pid, title, root in con.execute(
-                'select project_id, title, workspace_root from projection_projects where deleted_at is null'
+            for pid, title, root in s.execute(
+                select(Project.project_id, Project.title, Project.workspace_root).where(Project.deleted_at.is_(None))
             )
             if kind_of(title, root) == 'work'
         }
         titles, repos = {}, {}
-        for pid, title, pl in con.execute(
-            """select project_id, title, payload_json from orchestration_v2_projection_threads
-                   where deleted_at is null order by created_at desc limit 1500"""
+        for pid, title, pl in s.execute(
+            select(Thread.project_id, Thread.title, Thread.payload)
+            .where(Thread.deleted_at.is_(None))
+            .order_by(Thread.created_at.desc())
+            .limit(1500)
         ):
             if pid not in projs:
                 continue
             titles.setdefault(pid, []).append(title)
-            for pr in json.loads(pl).get('pullRequests') or []:
+            for pr in pl.get('pullRequests') or []:
                 if pr.get('repository'):
                     repos.setdefault(pid, set()).add(pr['repository'].lower())
     counts = {pid: {} for pid in projs}

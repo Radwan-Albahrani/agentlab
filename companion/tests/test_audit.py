@@ -1,13 +1,13 @@
 """Every task says who started it, how, and who approved it: the hub's audit (publish.card)."""
 
-import sqlite3
-
 import pytest
 from bot import errands, inbox, projects, publish, routing, slack, state, t3, tasks
 from bot.state import key
 from conftest import OWNER, ROUTE, set_settings
+from sqlalchemy import Column, Float, MetaData, Table, Text
+from tables import TaskCard
 
-from companion import Companion
+from companion import Companion, engine_for
 
 
 @pytest.fixture
@@ -66,16 +66,29 @@ def test_an_errand_is_for_the_colleague_and_started_by_whoever_triggered_it(chat
 
 
 def test_an_older_database_gets_the_audit_columns(tmp_path):
-    con = sqlite3.connect(tmp_path / 'companion.db')
-    con.execute(
-        'create table tasks (id text primary key, title text, kind text, requester text, status text, '
-        'waiting text, outcome text, started text, ended text, thread text, slack text, source text, '
-        'updated real)'
+    old = (
+        'title',
+        'kind',
+        'requester',
+        'status',
+        'waiting',
+        'outcome',
+        'started',
+        'ended',
+        'thread',
+        'slack',
+        'source',
     )
-    con.commit()
-    con.close()
+    Table(
+        'tasks',
+        MetaData(),
+        Column('id', Text, primary_key=True),
+        *(Column(c, Text) for c in old),
+        Column('updated', Float),
+    ).create(engine_for(str(tmp_path / 'companion.db')))
     comp = Companion('x', 'agent', str(tmp_path))
     comp.tasks([{'id': 't', 'title': 'x', 'started_by': 'Salah', 'via': 'in a DM', 'approved_by': 'Sam'}])
-    row = comp.db.execute('select started_by, via, approved_by from tasks').fetchone()
-    assert row == ('Salah', 'in a DM', 'Sam')
+    with comp.session() as s:
+        row = s.get_one(TaskCard, 't')
+    assert (row.started_by, row.via, row.approved_by) == ('Salah', 'in a DM', 'Sam')
     assert OWNER  # the owner's own work has started_by ''

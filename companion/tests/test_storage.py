@@ -4,18 +4,21 @@ import time
 
 from bot import config, ledger, machine, projects, prompts, publish, state
 from conftest import COMPANION_DIR, ROUTE, set_settings
+from sqlalchemy import func, select
+from tables import Event, Item, Stored, TaskCard
 
 
 def test_save_writes_only_the_task_that_changed():
     a = state.new_task('C1', '1.1', 'T1', 'First', 'f1', '1.1', None, ROUTE)
     state.new_task('C1', '2.1', 'T2', 'Second', 'f2', '2.1', None, ROUTE)
-    db = config.COMP.db
-    before = db.execute('select max(updated) from store').fetchone()[0]
+    with config.COMP.session() as s:
+        before = s.scalar(select(func.max(Stored.updated)))
     time.sleep(0.01)
     a['title'] = 'First (edited)'
     state.save()
-    changed = db.execute('select key from store where updated > ?', (before,)).fetchall()
-    assert changed == [('task:C1:1.1',)]
+    with config.COMP.session() as s:
+        changed = list(s.scalars(select(Stored.key).where(Stored.updated > before)))
+    assert changed == ['task:C1:1.1']
 
 
 def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
@@ -43,14 +46,26 @@ def test_the_page_gets_a_heartbeat_settings_schema_and_task_cards():
         'publish_channel',
         'requests_channel',
     ]
-    row = config.COMP.db.execute("select title, status, kind, party, phase from tasks where id = 'C1:3.1'").fetchone()
-    assert row == ('Check the queue', 'working', 'task', 'owner', 'working')
+    with config.COMP.session() as s:
+        row = s.get_one(TaskCard, 'C1:3.1')
+    assert (row.title, row.status, row.kind, row.party, row.phase) == (
+        'Check the queue',
+        'working',
+        'task',
+        'owner',
+        'working',
+    )
+
+
+def events():
+    with config.COMP.session() as s:
+        return s.scalar(select(func.count()).select_from(Event))
 
 
 def test_events_are_appended():
-    before = config.COMP.db.execute('select count(*) from events').fetchone()[0]
+    before = events()
     config.COMP.event('sent', 'Message to Salah', to='Salah', detail='Here you go')
-    assert config.COMP.db.execute('select count(*) from events').fetchone()[0] == before + 1
+    assert events() == before + 1
 
 
 def test_a_card_reflects_the_phase_and_what_the_task_waits_for():
@@ -73,9 +88,10 @@ def test_the_ledger_is_published_for_the_hub():
     ledger.move(t, it, 'sent')
     publish._last = 0.0
     publish.tick()
-    row = config.COMP.db.execute("select kind, state, seq, data from items where task = 'C1:5.1'").fetchone()
-    assert row[:3] == ('message', 'sent', 1)
-    data = json.loads(row[3])
+    with config.COMP.session() as s:
+        row = s.scalars(select(Item).where(Item.task == 'C1:5.1')).one()
+    assert (row.kind, row.state, row.seq) == ('message', 'sent', 1)
+    data = row.data
     assert data['label'] == 'Salah' and [h[0] for h in data['history']] == ['received', 'sent']
 
 

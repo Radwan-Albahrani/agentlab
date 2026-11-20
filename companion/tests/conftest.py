@@ -6,6 +6,8 @@ import tempfile
 import time
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 ROOT = tempfile.mkdtemp(prefix='companion-test-')
 OWNER = 'U_OWNER'
@@ -48,6 +50,7 @@ from bot import (  # noqa: E402
     slack,
     state,
     t3,
+    t3db,
 )
 
 COMPANION_DIR = os.path.join(ROOT, 'data')
@@ -245,3 +248,13 @@ def t3_quiet(monkeypatch):
     monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
     monkeypatch.setattr(t3, 'start_thread', lambda project, title, message: ('T_NEW', ''))
     return t3
+
+
+@pytest.fixture
+def t3_rows(tmp_path, monkeypatch):
+    """T3's database as the companion reads it (bot/t3db.py), empty: a session to add rows with."""
+    engine = create_engine(f'sqlite:///{tmp_path}/statev2.sqlite')
+    t3db.Base.metadata.create_all(engine)
+    monkeypatch.setattr(t3db, 'engine', lambda: engine)
+    with Session(engine) as s:
+        yield s
