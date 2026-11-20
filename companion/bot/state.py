@@ -21,18 +21,6 @@ def _rows(s: State) -> Json:
     return rows
 
 
-RETIRED = ('first', 'last_summary_at', 'posted')  # task keys nothing writes any more: dropped as they load
-
-
-def _retire(task: Json) -> Json:
-    out = {k: v for k, v in task.items() if k not in RETIRED}
-    if isinstance(out.get('review'), bool):  # the hub ask's preview flag, now `preview`
-        out['preview'] = out.pop('review')
-    if isinstance(out.get('review'), dict):
-        out['review'] = {k: v for k, v in out['review'].items() if k != 'card'}
-    return out
-
-
 SHAPE: TypeAdapter[State] = TypeAdapter(State)
 
 
@@ -41,7 +29,7 @@ def _load() -> State:
     rows = COMP.store_all()
     raw: Json = {'refused': [], 'drafts': {}, 'polls': {}}
     raw.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
-    raw['tasks'] = {k[5:]: _retire(v) for k, v in rows.items() if k.startswith('task:')}
+    raw['tasks'] = {k[5:]: v for k, v in rows.items() if k.startswith('task:')}
     s = SHAPE.validate_python(raw)
     _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())
     return s
