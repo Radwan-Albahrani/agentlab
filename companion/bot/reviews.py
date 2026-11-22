@@ -38,6 +38,8 @@ PR_LINK = re.compile(r'github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)')
 ASKED = re.compile(r'^\W*(review|qa|test|check)\b', re.I)
 PR_REF = re.compile(r'github\.com/[\w.-]+/[\w.-]+/pull/(\d+)|#(\d+)\b')
 LEADING_REF = re.compile(r'^\s*(?:<?https?://\S*github\.com/\S+/pull/\d+\S*|[\w./-]*#\d+\b)\s*[:,.-]?\s*')
+# A PR link as readable() leaves it, with or without its scheme: "github.com/o/r/pull/1 (https://github.com/o/r/pull/1)".
+LINK_TEXT = re.compile(r'\(?<?(?:https?://)?(?:www\.)?github\.com/[\w.-]+/[\w.-]+/pull/\d+[^\s)>]*>?\)?')
 
 
 # The cached App and the secrets it was built with.
@@ -196,25 +198,24 @@ def from_slack(
     approved_by: str | None = None,
     via: str | None = None,
 ) -> bool:
-    """Start a review if this Slack message asks for one; False means it doesn't (an ordinary task, or a refusal).
+    """Start a review of each PR this Slack message asks for; False means it asks for none (an ordinary task).
 
-    by: a colleague asking (questions go to the owner, the result back to them); any_words: one PR link is enough."""
+    by: a colleague asking (questions go to the owner, the result back to them); any_words: PR links are enough."""
     msg = slack.ask(text).strip()
-    rest = re.sub(r'<?https?://\S*github\.com/\S+/pull/\d+\S*', '', msg).strip()
+    rest = LINK_TEXT.sub(' ', msg).strip()
     asked = bool(ASKED.search(rest)) or (any_words and bool(re.search(r'\breview', rest, re.I)))
     if not asked and not any_words and re.search(r'[a-z]{3,}', rest, re.I):
         return False
-    pr = _linked(msg)
-    if not pr and asked and thread_ts != trigger_ts:
+    prs = _links(msg)
+    if not prs and asked and thread_ts != trigger_ts:
         root = slack.thread_messages(channel, thread_ts, trigger_ts)[:1]
-        pr = _linked(slack.readable(root[0].get('text', ''))) if root else None
-    if not pr and asked:
+        prs = _links(slack.readable(root[0].get('text', ''))) if root else []
+    if not prs and asked:
         n = re.search(r'#(\d+)\b', rest)
         hits = [(p['repo'], p['number']) for p in state.get('pulls') or [] if n and p['number'] == int(n.group(1))]
-        pr = hits[0] if len(hits) == 1 else None
-    if not pr:
+        prs = hits if len(hits) == 1 else []
+    if not prs:
         return False
-    repo, number = pr
     via = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
     origin: Origin = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts, 'via': via}
     if by:
@@ -222,21 +223,32 @@ def from_slack(
     if approved_by:
         origin['approved_by'] = approved_by
     with lock:
-        going = _going(f'{repo}#{number}') if by else None
-        if by and _asked_by(by) >= MAX_ASKED:
-            problem = f'you already have {MAX_ASKED} reviews going; ask again once one is done'
-        elif going and by:  # already queued or running: follow that review
-            problem = ''
-            _follow(going, origin, by, new=False)
-            _show()
-            save()
-        else:
-            problem = request(repo, number, origin)
-    if problem:
-        slack.post(channel, thread_ts, problem, md=f':warning: Not reviewing: {problem}.')
-    else:
+        problems = [(f'{repo}#{n}', _ask_one(repo, n, origin, by)) for repo, n in prs]
+    refused = [(pr, p) for pr, p in problems if p]
+    if len(refused) == 1 and len(prs) == 1:
+        slack.post(channel, thread_ts, refused[0][1], md=f':warning: Not reviewing: {refused[0][1]}.')
+    elif refused:
+        why: dict[str, list[str]] = {}
+        for pr, p in refused:
+            why.setdefault(p, []).append(_short(pr))
+        lines = '\n'.join(f'- {", ".join(names)}: {p}' for p, names in why.items())
+        slack.post(channel, thread_ts, f'Not reviewing {len(refused)} PRs', md=f':warning: Not reviewing:\n{lines}')
+    if len(refused) < len(prs):
         slack.react(channel, trigger_ts, 'eyes')
     return True
+
+
+def _ask_one(repo: str, number: int, origin: Origin, by: str | None) -> str:
+    """Queue (or follow) one asked-for review; returns a problem or ''. Holds the lock."""
+    going = _going(f'{repo}#{number}') if by else None
+    if by and _asked_by(by) >= MAX_ASKED:
+        return f'you already have {MAX_ASKED} reviews going; ask again once one is done'
+    if going and by:  # already queued or running: follow that review
+        _follow(going, origin, by, new=False)
+        _show()
+        save()
+        return ''
+    return request(repo, number, origin)
 
 
 def _going(pr_id: str) -> ReviewEntry | None:
@@ -322,6 +334,11 @@ def _keep_posted() -> None:
     changed = [_status(e, a) for e in _run() for a in _askers(e)]  # every line, not just up to the first change
     if True in changed:
         save()
+
+
+def _links(text: str | None) -> list[tuple[str, int]]:
+    """Every pull request the text links, once each, in the order written."""
+    return list(dict.fromkeys((m.group(1), int(m.group(2))) for m in PR_LINK.finditer(text or '')))
 
 
 def _linked(text: str | None) -> tuple[str, int] | None:

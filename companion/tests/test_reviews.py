@@ -952,6 +952,34 @@ def test_someone_with_access_still_gives_tasks_that_mention_a_pr(gh, told, fresh
     assert calls and not state.state.get('review_queue')
 
 
+def slack_links(*numbers):
+    """PR links the way Slack sends a pasted list: <url|label>, one per line."""
+    return '\n'.join(f'<https://github.com/{REPO}/pull/{n}|github.com/{REPO}/pull/{n}>' for n in numbers)
+
+
+def test_someone_with_access_pasting_pr_links_gets_a_review_of_each(gh, told, fresh_bot, their_dm, monkeypatch):
+    set_settings({'access': ['U_SALAH']})
+    calls = []
+    monkeypatch.setattr(tasks, 'start', lambda *a, **kw: calls.append(a))
+    routing.route(colleague_dm('79.1', slack_links(5922, 5923, 5922)), False)
+    assert not calls and [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+    ours = [m['text'] for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
+    assert ours == ['Reviewing app#5922', 'Reviewing app#5923']
+
+
+def test_a_pasted_list_past_the_cap_names_the_prs_to_ask_again(gh, told, fresh_bot, their_dm):
+    routing.route(colleague_dm('79.2', slack_links(5922, 5923, 5924, 5925, 5926)), False)
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923, 5924]
+    said = fresh_bot.messages[-1]['blocks'][0]['text']
+    full = 'you already have 3 reviews going; ask again once one is done'
+    assert said == f':warning: Not reviewing:\n- app#5925, app#5926: {full}'
+
+
+def test_the_owner_tagging_several_pr_links_reviews_them_all(gh, told):
+    assert reviews.from_slack('C1', '79.3', '79.3', '<@BCOMPANION> ' + slack_links(5922, 5923))
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+
+
 def status_line(bot, msg):
     """The grey status line of a colleague's "On it" message, as last posted or edited."""
     ts = bot.messages.index(msg) + 1
