@@ -923,11 +923,11 @@ def test_a_colleagues_failed_review_says_so_without_the_details(gh, told, fresh_
     assert 'failed; Sam has the details' in said[-1] and 'token' not in said[-1]
 
 
-def test_a_colleague_can_have_three_reviews_going(gh, told, fresh_bot, their_dm):
+def test_a_colleague_can_queue_all_their_reviews(gh, told, fresh_bot, their_dm):
     for n in (5922, 5923, 5924, 5925):
         routing.route(colleague_dm(f'72.{n}', f'review https://github.com/{REPO}/pull/{n}'), False)
-    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923, 5924]
-    assert 'you already have 3 reviews going' in fresh_bot.messages[-1]['blocks'][0]['text']
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923, 5924, 5925]
+    assert not [m for m in fresh_bot.messages if 'Not reviewing' in m['text']]
 
 
 @pytest.mark.parametrize('settings', [{'review_requests': 'off'}, {'review_requests': 'access'}, {'mode': 'owner'}])
@@ -967,12 +967,17 @@ def test_someone_with_access_pasting_pr_links_gets_a_review_of_each(gh, told, fr
     assert ours == ['Reviewing app#5922', 'Reviewing app#5923']
 
 
-def test_a_pasted_list_past_the_cap_names_the_prs_to_ask_again(gh, told, fresh_bot, their_dm):
-    routing.route(colleague_dm('79.2', slack_links(5922, 5923, 5924, 5925, 5926)), False)
-    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923, 5924]
+def test_a_colleague_pasting_a_long_list_gets_every_pr_queued(gh, told, fresh_bot, their_dm):
+    routing.route(colleague_dm('79.2', slack_links(*range(5922, 5929))), False)
+    assert [q['number'] for q in state.state['review_queue']] == list(range(5922, 5929))
+
+
+def test_prs_in_a_list_that_cannot_be_reviewed_are_named_in_one_reply(gh, told, fresh_bot, their_dm):
+    other = '\n<https://github.com/other/repo/pull/1|github.com/other/repo/pull/1>'
+    routing.route(colleague_dm('79.4', slack_links(5922) + other), False)
+    assert [q['number'] for q in state.state['review_queue']] == [5922]
     said = fresh_bot.messages[-1]['blocks'][0]['text']
-    full = 'you already have 3 reviews going; ask again once one is done'
-    assert said == f':warning: Not reviewing:\n- app#5925, app#5926: {full}'
+    assert said.startswith(":warning: Not reviewing:\n- repo#1: I can't see other/repo")
 
 
 def test_the_owner_tagging_several_pr_links_reviews_them_all(gh, told):

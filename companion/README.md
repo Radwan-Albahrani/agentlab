@@ -62,7 +62,7 @@ What it does:
   Colleagues can ask too ("Who can ask for reviews": everyone on the team by default): a DM or tag with a PR link
   joins your batch, with "for <name>" on the card (asking for one already going follows it). You get its questions;
   they get a status line in their thread that follows it (queued, reviewing, waiting on you, paused) and the result
-  as a reply, three reviews at a time each.
+  as a reply. One message can list several PR links: each is reviewed.
 
 Everything it does is shown on the hub (task cards, events, polls, pull requests, settings).
 

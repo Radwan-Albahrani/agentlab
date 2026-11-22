@@ -185,9 +185,6 @@ def request(repo: str, number: int, origin: Origin | None = None) -> str:
     return ''
 
 
-MAX_ASKED = 3  # a colleague's reviews queued or running at once
-
-
 def from_slack(
     channel: str,
     thread_ts: str,
@@ -241,8 +238,6 @@ def from_slack(
 def _ask_one(repo: str, number: int, origin: Origin, by: str | None) -> str:
     """Queue (or follow) one asked-for review; returns a problem or ''. Holds the lock."""
     going = _going(f'{repo}#{number}') if by else None
-    if by and _asked_by(by) >= MAX_ASKED:
-        return f'you already have {MAX_ASKED} reviews going; ask again once one is done'
     if going and by:  # already queued or running: follow that review
         _follow(going, origin, by, new=False)
         _show()
@@ -259,11 +254,6 @@ def _going(pr_id: str) -> ReviewEntry | None:
 def _askers(e: ReviewEntry) -> list[Asker]:
     """The colleagues following this review."""
     return e.get('for') or []
-
-
-def _asked_by(user: str) -> int:
-    """The reviews this colleague follows in the batch that haven't finished."""
-    return sum(1 for e in _run() if verdict_of(e) in (None, 'asked') and any(a['user'] == user for a in _askers(e)))
 
 
 def _follow(e: ReviewEntry, origin: Origin, by: str, new: bool = True) -> None:
