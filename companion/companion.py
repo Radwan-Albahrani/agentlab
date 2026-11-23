@@ -15,7 +15,7 @@ companion.db  SQLite (WAL); bot writes, hub reads only; never trimmed. The table
       failed | stopped
   items(id, task, seq, kind, state, at, data, updated)   upserted; the ledger (bot/ledger.py): every message in and
     out of a task and everything waiting on the owner. kind: in | final | message | edit | approval | credential |
-    poll_change. state: that kind's state machine. data JSON (bot/ledger.py SHOWN): by, to, label, text, files,
+    poll_change | review. state: that kind's state machine. data JSON (bot/ledger.py SHOWN): by, to, label, text, files,
     private, note, ref, action, details, side, question, where, held, history [[state, at, note]].
   polls(id, task, open, closes, data, updated)   upserted; data JSON: question, channel,
     link, multiple, closed, options [{label, votes, voters [{name, avatar}]}]

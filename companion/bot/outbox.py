@@ -11,6 +11,7 @@ send.json: one item or a list. Every item names its "type", and a message its "t
   {"type": "withdraw", "why": "..."}                       takes back the approval waiting
   {"type": "credential", "for", "service", "url", "username", "password", "note"}
   {"type": "poll_change", "poll": "<id>", ...the fields that change}
+  {"type": "review", "prs": ["<pull request links>"]}       hands them to the review queue (reviews.from_task)
 review.json is a PR review's own hand-over (reviews.py)."""
 
 import json
@@ -25,7 +26,7 @@ from .shapes import Item, ItemFields, Task
 from .state import review_of
 
 OUTBOX = os.path.join(FILES, 'outbox')
-TYPES = ('message', 'edit', 'approval', 'withdraw', 'credential', 'poll_change')
+TYPES = ('message', 'edit', 'approval', 'withdraw', 'credential', 'poll_change', 'review')
 CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}')
 
 
@@ -106,6 +107,12 @@ def take(task: Task, box: str, raw: object) -> None:
         return
     if kind == 'credential':
         errands.ask_credential(task, raw)
+        return
+    if kind == 'review':
+        links = raw.get('prs')
+        it = ledger.add(task, 'review', text=' '.join(map(str, links)) if isinstance(links, list) else str(links or ''))
+        queued, problems = reviews.from_task(task, links)
+        ledger.move(task, it, 'applied' if queued else 'refused', note='; '.join(problems)[:300])
         return
     text = str(raw.get('text') or '').strip()[:3000]
     files = [os.path.basename(str(f)) for f in raw.get('files') or [] if str(f).strip()]

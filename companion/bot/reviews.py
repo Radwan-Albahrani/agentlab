@@ -245,6 +245,28 @@ def from_slack(
     return True
 
 
+def from_task(task: Task, links: object) -> tuple[list[str], list[str]]:
+    """The agent's "review" item: a review of each linked PR, followed in the task's thread by whoever the task is
+    for. Returns (the PRs queued or followed, the problems)."""
+    prs = _links(' '.join(str(x) for x in links) if isinstance(links, list) else str(links or ''))
+    if not prs:
+        return [], ['"prs" has no GitHub pull request links']
+    p = machine.party(task)
+    by = p['user'] if p['kind'] == 'colleague' else None
+    origin: Origin = {
+        'channel': task['channel'],
+        'thread_ts': task['thread_ts'],
+        'trigger_ts': task.get('trigger_ts') or task['thread_ts'],
+        'via': task['audit']['via'] if 'audit' in task else 'from a task',
+    }
+    if by:
+        origin['by'] = by
+    with lock:
+        done = [(f'{repo}#{n}', _ask_one(repo, n, origin, by)) for repo, n in prs]
+    log(f'{key_of(task)}: the agent handed {len(prs)} PRs to review')
+    return [pr for pr, why in done if not why], [f'{_short(pr)}: {why}' for pr, why in done if why]
+
+
 def _rest(msg: str) -> str:
     """The words of a readable message besides its PR links and Slack's "Sent using" footer."""
     return LINK_TEXT.sub(' ', FOOTER.sub(' ', msg)).strip()

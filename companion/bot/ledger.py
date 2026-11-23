@@ -11,6 +11,7 @@ Item: {id, kind, state, at, updated, history: [[state, at, note]], by, to, label
             approval    a sensitive step that needs the owner's OK
             credential  a first-login password to DM to someone
             poll_change a change to an open poll
+            review      pull requests the agent hands to the review queue (text: their links)
   state     see STATES: each kind starts in its first state and moves only along MOVES.
   to        who it is for: 'colleague', 'owner', 'thread', 'channel', 'people'; label is the human form ("#bugs").
   card      {ch, ts}: the message where the owner decides, while one is needed.
@@ -48,6 +49,7 @@ STATES: dict[ItemKind, tuple[ItemState, ...]] = {
     'approval': ('received', 'awaiting_owner', 'approved', 'rejected', 'replaced', 'withdrawn', 'refused'),
     'credential': ('received', 'awaiting_owner', 'sent', 'rejected', 'refused', 'failed', 'lost'),
     'poll_change': ('received', 'applied', 'refused'),
+    'review': ('received', 'applied', 'refused'),
 }
 MOVES: dict[ItemState, set[ItemState]] = {
     'received': {'awaiting_owner', 'approved', 'sent', 'applied', 'refused', 'failed', 'dry_run'},

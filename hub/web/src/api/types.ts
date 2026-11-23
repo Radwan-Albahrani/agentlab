@@ -301,7 +301,7 @@ export type ItemState =
 export interface CaseItem {
   seq: number;
   /** in: to the companion; final: the agent's last word of a turn; message: one it sent or wants to send */
-  kind: 'in' | 'final' | 'message' | 'edit' | 'approval' | 'credential' | 'poll_change';
+  kind: 'in' | 'final' | 'message' | 'edit' | 'approval' | 'credential' | 'poll_change' | 'review';
   state: ItemState;
   at: number;
   /** colleague | requester | owner | thread | channel | people (messages); case | thread (final) */

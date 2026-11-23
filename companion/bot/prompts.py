@@ -157,6 +157,10 @@ def sending(box: str, owner: str, recipients: Iterable[str], more: str = '') -> 
         f' short, clear, friendly. {when.RULE} That goes for your final message too. It is {when.say(form="date")}'
         ' now.'
         + more
+        + '\n- {"type": "review", "prs": ["<pull request links>"]}: when someone asks for pull requests to be reviewed'
+        f' (only links, or "review these"), hand them to {NAME}\'s PR review instead of reviewing them here: each'
+        ' gets its own full review, and whoever asked follows it in their thread. Then end your turn with one line'
+        ' saying you handed them over.'
         + f'\nWhat became of each item (sent, waiting for {owner}, approved, rejected, refused and why) is in'
         f' {box}/receipts.json, by "id". Check it before you say something went out, and fix what was refused.'
     )

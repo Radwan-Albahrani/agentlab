@@ -130,6 +130,7 @@ const DECISION: Record<string, { icon: string; what: (it: CaseItem) => string }>
   credential: { icon: 'key', what: (it) => `Login to DM: ${it.text || ''}` },
   edit: { icon: 'edit', what: (it) => `Edit of a message${it.label ? ` to ${it.label}` : ''}` },
   poll_change: { icon: 'poll', what: () => 'Poll change' },
+  review: { icon: 'eye', what: (it) => `Sent to PR review: ${it.text || ''}` },
 };
 
 function Item({ it, who, me }: { it: CaseItem; who: string; me: string }) {

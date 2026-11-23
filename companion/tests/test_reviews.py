@@ -5,9 +5,9 @@ import stat
 import time
 
 import pytest
-from bot import asks, config, machine, outbox, projects, publish, reviews, routing, state, t3, tasks
+from bot import asks, config, machine, outbox, projects, prompts, publish, reviews, routing, state, t3, tasks
 from bot.when import say
-from conftest import OWNER, ended, set_settings
+from conftest import OWNER, ROUTE, agent_sends, ended, set_settings
 from reviewer import report
 from reviewer.github import GitHubError
 from sqlalchemy import select
@@ -1009,6 +1009,26 @@ def test_reading_a_message_decides_review_or_task(text, kind, prs):
 def test_the_owner_tagging_several_pr_links_reviews_them_all(gh, told):
     assert reviews.from_slack('C1', '79.3', '79.3', '<@BCOMPANION> ' + slack_links(5922, 5923))
     assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+
+
+def test_a_task_agent_hands_pr_links_to_review(gh, told, fresh_bot):
+    # what the patterns missed: the chat's agent sees it is a review request and hands the PRs over
+    t = state.new_task(
+        'D_SALAHBOT', '85.1', 'T_ASK', 'PRs', 'ask-box', '85.1', None, ROUTE, party=machine.party_of('U_SALAH')
+    )
+    t['audit'] = tasks.audit('U_SALAH', 'in a DM')
+    machine.open_case(t, 'D_OWNER', '900.1', 'own')
+    machine.begin_turn(t, 'colleague', 'thread')
+    links = [f'https://github.com/{REPO}/pull/5922', f'https://github.com/{REPO}/pull/5923']
+    agent_sends(t, {'type': 'review', 'prs': [*links, 'https://github.com/other/repo/pull/1']})
+    assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+    it = t['items'][-1]
+    assert (it['kind'], it['state']) == ('review', 'applied') and "repo#1: I can't see other/repo" in it['note']
+    theirs = [m['text'] for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
+    assert theirs == ['Reviewing app#5922', 'Reviewing app#5923']
+    agent_sends(t, {'type': 'review', 'prs': ['no links here']})
+    assert t['items'][-1]['state'] == 'refused'
+    assert '"type": "review"' in prompts.sending('/box', 'Sam', [])
 
 
 def status_line(bot, msg):

@@ -32,7 +32,7 @@ AskState = Literal['pending', 'approved', 'declined']
 PollState = Literal['open', 'closed']
 RetryState = Literal['idle', 'waiting', 'sent']
 ReviewState = Literal['queued', 'reviewing', 'waiting', 'paused', 'asked', 'approved', 'changes', 'failed', 'stopped']
-ItemKind = Literal['in', 'final', 'message', 'edit', 'approval', 'credential', 'poll_change']
+ItemKind = Literal['in', 'final', 'message', 'edit', 'approval', 'credential', 'poll_change', 'review']
 ItemState = Literal[
     'received', 'awaiting_owner', 'approved', 'sent', 'silent', 'applied', 'refused', 'rejected', 'replaced', 'withdrawn',
     'failed', 'dry_run', 'lost',
