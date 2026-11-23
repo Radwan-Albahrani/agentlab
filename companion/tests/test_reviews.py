@@ -980,6 +980,32 @@ def test_prs_in_a_list_that_cannot_be_reviewed_are_named_in_one_reply(gh, told, 
     assert said.startswith(":warning: Not reviewing:\n- repo#1: I can't see other/repo")
 
 
+def test_a_list_sent_through_an_ai_app_is_still_a_review(gh, told, fresh_bot, their_dm, monkeypatch):
+    # Ali's message as Slack sent it: the links, Slack's "Sent using" footer, then the same links over http
+    set_settings({'access': ['U_SALAH']})
+    calls = []
+    monkeypatch.setattr(tasks, 'start', lambda *a, **kw: calls.append(a))
+    http = slack_links(5922, 5923).replace('<https://', '<http://')
+    routing.route(colleague_dm('79.5', slack_links(5922, 5923) + ' *Sent using* <@U0CLAUDE1>\n' + http), False)
+    assert not calls and [q['number'] for q in state.state['review_queue']] == [5922, 5923]
+
+
+@pytest.mark.parametrize(
+    'text, kind, prs',
+    [
+        (slack_links(5922) + ' *Sent using* <@U0CLAUDE1>', 'review', [5922]),
+        ('review ' + slack_links(5922, 5923), 'review', [5922, 5923]),
+        ('review this please', 'review', []),
+        ('fix the failing test in ' + slack_links(5922), 'task', [5922]),
+        ('look at #5922', 'task', []),
+        ('can you fix the login page?', 'task', []),
+    ],
+)
+def test_reading_a_message_decides_review_or_task(text, kind, prs):
+    r = reviews.read(text)
+    assert (r['kind'], [n for _, n in r['prs']]) == (kind, prs) and r['why']
+
+
 def test_the_owner_tagging_several_pr_links_reviews_them_all(gh, told):
     assert reviews.from_slack('C1', '79.3', '79.3', '<@BCOMPANION> ' + slack_links(5922, 5923))
     assert [q['number'] for q in state.state['review_queue']] == [5922, 5923]

@@ -40,6 +40,19 @@ PR_REF = re.compile(r'github\.com/[\w.-]+/[\w.-]+/pull/(\d+)|#(\d+)\b')
 LEADING_REF = re.compile(r'^\s*(?:<?https?://\S*github\.com/\S+/pull/\d+\S*|[\w./-]*#\d+\b)\s*[:,.-]?\s*')
 # A PR link as readable() leaves it, with or without its scheme: "github.com/o/r/pull/1 (https://github.com/o/r/pull/1)".
 LINK_TEXT = re.compile(r'\(?<?(?:https?://)?(?:www\.)?github\.com/[\w.-]+/[\w.-]+/pull/\d+[^\s)>]*>?\)?')
+# The footer Slack adds to a message sent through an AI app: "*Sent using* @Claude".
+FOOTER = re.compile(r'[*_]*Sent using[*_]*\s+(?:<@\w+>|@[\w.-]+)', re.I)
+WORDS = re.compile(r'[a-z]{3,}', re.I)
+
+AskKind = Literal['review', 'task']
+
+
+class Reading(TypedDict):
+    """What a Slack message asks the companion for: reviews of `prs`, or a task; `why` says what decided it."""
+
+    kind: AskKind
+    prs: list[tuple[str, int]]
+    why: str
 
 
 # The cached App and the secrets it was built with.
@@ -198,20 +211,17 @@ def from_slack(
     """Start a review of each PR this Slack message asks for; False means it asks for none (an ordinary task).
 
     by: a colleague asking (questions go to the owner, the result back to them); any_words: PR links are enough."""
-    msg = slack.ask(text).strip()
-    rest = LINK_TEXT.sub(' ', msg).strip()
-    asked = bool(ASKED.search(rest)) or (any_words and bool(re.search(r'\breview', rest, re.I)))
-    if not asked and not any_words and re.search(r'[a-z]{3,}', rest, re.I):
-        return False
-    prs = _links(msg)
-    if not prs and asked and thread_ts != trigger_ts:
+    r = read(text, any_words)
+    prs = r['prs']
+    if r['kind'] == 'review' and not prs and thread_ts != trigger_ts:  # "review this" under a message linking PRs
         root = slack.thread_messages(channel, thread_ts, trigger_ts)[:1]
         prs = _links(slack.readable(root[0].get('text', ''))) if root else []
-    if not prs and asked:
-        n = re.search(r'#(\d+)\b', rest)
+    if r['kind'] == 'review' and not prs:  # "review #5922": the one open PR with that number
+        n = re.search(r'#(\d+)\b', _rest(slack.ask(text)))
         hits = [(p['repo'], p['number']) for p in state.get('pulls') or [] if n and p['number'] == int(n.group(1))]
         prs = hits if len(hits) == 1 else []
-    if not prs:
+    log(f'{channel} {trigger_ts}:', 'review' if r['kind'] == 'review' and prs else 'task', '-', r['why'])
+    if r['kind'] == 'task' or not prs:
         return False
     via = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
     origin: Origin = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts, 'via': via}
@@ -233,6 +243,25 @@ def from_slack(
     if len(refused) < len(prs):
         slack.react(channel, trigger_ts, 'eyes')
     return True
+
+
+def _rest(msg: str) -> str:
+    """The words of a readable message besides its PR links and Slack's "Sent using" footer."""
+    return LINK_TEXT.sub(' ', FOOTER.sub(' ', msg)).strip()
+
+
+def read(text: str, any_words: bool = False) -> Reading:
+    """Decide what a Slack message asks for. A review: PR links and nothing else, or words that start with
+    review/qa/test/check (any_words: links with any words, or "review" anywhere). Anything else is a task."""
+    msg = slack.ask(text).strip()
+    prs, rest = _links(msg), _rest(msg)
+    if ASKED.search(rest) or (any_words and re.search(r'\breview', rest, re.I)):
+        return {'kind': 'review', 'prs': prs, 'why': f'asked for a review of {len(prs)} linked PRs'}
+    if not prs:
+        return {'kind': 'task', 'prs': [], 'why': 'no PR link'}
+    if any_words or not WORDS.search(rest):
+        return {'kind': 'review', 'prs': prs, 'why': f'{len(prs)} PR links and no other ask'}
+    return {'kind': 'task', 'prs': prs, 'why': f'words besides the links: {first_sentence(rest, 60)!r}'}
 
 
 def _ask_one(repo: str, number: int, origin: Origin, by: str | None) -> str:
@@ -329,12 +358,6 @@ def _keep_posted() -> None:
 def _links(text: str | None) -> list[tuple[str, int]]:
     """Every pull request the text links, once each, in the order written."""
     return list(dict.fromkeys((m.group(1), int(m.group(2))) for m in PR_LINK.finditer(text or '')))
-
-
-def _linked(text: str | None) -> tuple[str, int] | None:
-    """(repo, number) if the text links exactly one pull request, else None."""
-    links = {(m.group(1), int(m.group(2))) for m in PR_LINK.finditer(text or '')}
-    return next(iter(links)) if len(links) == 1 else None
 
 
 def _here(channel: str, thread_ts: str) -> dict[str, Task]:
