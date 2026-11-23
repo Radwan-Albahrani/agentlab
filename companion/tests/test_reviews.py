@@ -25,6 +25,7 @@ class FakeGitHub:
         self.comments = []  # the PR's issue comments
         self.evidence = None  # evidence repo head commit; None while empty
         self.trees, self.listing = [], []
+        self.stacks = {}  # stack number -> [(PR number, 'open' | 'closed')], bottom first
 
     def git(self, method, path, body):
         """Minimal fake Git Data API for the evidence branch."""
@@ -76,6 +77,10 @@ class FakeGitHub:
             raise GitHubError(422, 'Line could not be resolved')
         if '/git/' in path:
             return self.git(method, path, body)
+        if m := re.search(r'/stacks/(\d+)$', path):
+            if int(m.group(1)) not in self.stacks:
+                raise GitHubError(404, 'Not Found')
+            return {'pull_requests': [{'number': n, 'state': s} for n, s in self.stacks[int(m.group(1))]]}
         if path.endswith('/contents/README.md'):
             self.evidence = 'commit0'
             return {'commit': {'sha': 'commit0'}}
@@ -158,6 +163,7 @@ def gh(monkeypatch):
     state.state.pop('review_queue', None)
     state.state.pop('review_run', None)
     state.state.pop('review_batch', None)
+    state.state.pop('review_stacks', None)
     return fake
 
 
@@ -1029,6 +1035,100 @@ def test_a_task_agent_hands_pr_links_to_review(gh, told, fresh_bot):
     agent_sends(t, {'type': 'review', 'prs': ['no links here']})
     assert t['items'][-1]['state'] == 'refused'
     assert '"type": "review"' in prompts.sending('/box', 'Sam', [])
+
+
+STACK_LINK = f'<https://github.com/{REPO}/stack/77|github.com/{REPO}/stack/77>'
+
+
+def under_review():
+    """The PR numbers whose review chat is running."""
+    return sorted(
+        state.review_of(t)['number'] for t in state.state['tasks'].values() if state.review_of(t) and machine.running(t)
+    )
+
+
+def reviews_for(number):
+    return [t for t in state.state['tasks'].values() if state.review_of(t).get('number') == number]
+
+
+def end_review(number, outcome='failed'):
+    """The review's chat ends; one poll settles it, the next moves its stack on."""
+    ended(review(number), outcome)
+    reviews.tick()
+    reviews.tick()
+
+
+def said(bot, text):
+    return any(text in json.dumps(m) for m in bot.messages)
+
+
+def test_a_stack_link_reviews_its_open_prs_one_at_a_time_from_the_bottom(gh, told, fresh_bot):
+    set_settings({'review_slots': '3'})
+    gh.stacks[77] = [(5924, 'open'), (5922, 'open'), (5923, 'closed'), (5925, 'open')]
+    assert reviews.from_slack('C1', '90.1', '90.1', '<@BCOMPANION> ' + STACK_LINK)
+    assert said(fresh_bot, ':books: app stack #77: 3 open pull requests, reviewed one at a time from the bottom.')
+    reviews.tick()
+    assert under_review() == [5924]
+    end_review(5924)
+    assert under_review() == [5922]
+    card = card_now(fresh_bot, state.state['review_batch']['card'])
+    assert ':books: app stack #77 · 2 of 4 taken · now app#5922 · one at a time' in card
+    end_review(5922)
+    assert under_review() == [5925]  # 5923 is closed
+    end_review(5925)
+    assert not state.state.get('review_stacks') and 'review_batch' not in state.state
+    assert said(fresh_bot, ':checkered_flag: app stack #77: every open pull request reviewed.')
+
+
+def test_prs_sent_beside_their_stack_are_reviewed_once_in_its_turn(gh, told, fresh_bot):
+    set_settings({'review_slots': '3'})
+    gh.stacks[77] = [(5922, 'open'), (5923, 'open')]
+    assert reviews.from_slack('C1', '91.1', '91.1', slack_links(5922, 5923, 5924) + '\n' + STACK_LINK)
+    reviews.tick()
+    assert under_review() == [5922, 5924]  # 5924 isn't in the stack: it runs beside it
+    end_review(5922)
+    assert under_review() == [5923, 5924]
+    end_review(5923)
+    end_review(5924)
+    assert [len(reviews_for(n)) for n in (5922, 5923, 5924)] == [1, 1, 1]
+
+
+def test_a_stack_waits_for_its_pr_already_under_review_instead_of_running_it_again(gh, told, fresh_bot):
+    set_settings({'review_slots': '3'})
+    gh.stacks[77] = [(5922, 'open'), (5923, 'open')]
+    assert reviews.request(REPO, 5923) == ''
+    assert reviews.from_slack('C1', '92.1', '92.1', STACK_LINK)
+    assert reviews.from_slack('C1', '92.2', '92.2', STACK_LINK)
+    assert said(fresh_bot, 'that stack is already being reviewed, one PR at a time')
+    reviews.tick()
+    assert under_review() == [5922, 5923]
+    end_review(5922)
+    assert under_review() == [5923] and len(reviews_for(5923)) == 1
+    end_review(5923)
+    assert not state.state.get('review_stacks') and len(reviews_for(5923)) == 1
+
+
+def test_stopping_a_stacks_review_leaves_the_prs_above_it(gh, told, fresh_bot):
+    gh.stacks[77] = [(5922, 'open'), (5923, 'open')]
+    assert reviews.from_slack('C1', '93.1', '93.1', STACK_LINK)
+    reviews.tick()
+    end_review(5922, 'stopped')
+    assert under_review() == [] and not reviews_for(5923) and not state.state.get('review_stacks')
+    assert said(fresh_bot, 'stopped at app#5922; the PRs above it were left.')
+
+
+def test_a_stack_link_reads_as_a_review_and_the_agent_can_hand_one_over(gh, told, fresh_bot):
+    r = reviews.read(STACK_LINK + ' *Sent using* <@U0CLAUDE1>')
+    assert (r['kind'], r['stacks'], r['prs']) == ('review', [(REPO, 77)], [])
+    assert reviews.read('fix the stack ' + STACK_LINK)['kind'] == 'task'
+    gh.stacks[77] = [(5922, 'open')]
+    t = state.new_task('C1', '94.1', 'T_ASK', 'stack', 'stack-box', '94.1', None, ROUTE)
+    t['audit'] = tasks.audit(OWNER, 'in #general')
+    assert reviews.from_task(t, [f'https://github.com/{REPO}/stack/77']) == (['app stack #77'], [])
+    assert [q['number'] for q in state.state['review_queue']] == [5922]
+    assert reviews.from_task(t, [f'https://github.com/{REPO}/stack/78'])[1][0].startswith(
+        "app stack #78: I couldn't read it from GitHub"
+    )
 
 
 def status_line(bot, msg):

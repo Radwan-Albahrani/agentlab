@@ -16,7 +16,7 @@ from tables import CardRow, Counts, Detail, PullReview, PullRow, RunPos
 
 from . import machine, projects, prompts, slack, t3, tasks
 from .config import COMP, FILES, NAME, OWNER, evidence_repo, log, mode, optional_secret, review_slots, slack_for_github
-from .fsm import REVIEW, REVIEW_ENDS
+from .fsm import REVIEW, REVIEW_ENDS, STACK
 from .shapes import (
     Asker,
     Json,
@@ -25,21 +25,24 @@ from .shapes import (
     ReviewBatch,
     ReviewEntry,
     ReviewQueued,
+    ReviewStack,
     ReviewState,
     Task,
 )
-from .state import key, key_of, lock, new_task, review_of, save, state
+from .state import key, key_of, lock, new_task, now_iso, review_of, save, state
 from .text import first_sentence, no_emoji
 from .when import say
 
 APP_ID, APP_KEY = 'github-app-id.txt', 'github-app-key.pem'
 IMAGES = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 PR_LINK = re.compile(r'github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)')
+STACK_LINK = re.compile(r'github\.com/([\w.-]+/[\w.-]+)/stacks?/(\d+)')
 ASKED = re.compile(r'^\W*(review|qa|test|check)\b', re.I)
 PR_REF = re.compile(r'github\.com/[\w.-]+/[\w.-]+/pull/(\d+)|#(\d+)\b')
 LEADING_REF = re.compile(r'^\s*(?:<?https?://\S*github\.com/\S+/pull/\d+\S*|[\w./-]*#\d+\b)\s*[:,.-]?\s*')
-# A PR link as readable() leaves it, with or without its scheme: "github.com/o/r/pull/1 (https://github.com/o/r/pull/1)".
-LINK_TEXT = re.compile(r'\(?<?(?:https?://)?(?:www\.)?github\.com/[\w.-]+/[\w.-]+/pull/\d+[^\s)>]*>?\)?')
+# A PR or stack link as readable() leaves it, with or without its scheme:
+# "github.com/o/r/pull/1 (https://github.com/o/r/pull/1)".
+LINK_TEXT = re.compile(r'\(?<?(?:https?://)?(?:www\.)?github\.com/[\w.-]+/[\w.-]+/(?:pull|stacks?)/\d+[^\s)>]*>?\)?')
 # The footer Slack adds to a message sent through an AI app: "*Sent using* @Claude".
 FOOTER = re.compile(r'[*_]*Sent using[*_]*\s+(?:<@\w+>|@[\w.-]+)', re.I)
 WORDS = re.compile(r'[a-z]{3,}', re.I)
@@ -48,10 +51,12 @@ AskKind = Literal['review', 'task']
 
 
 class Reading(TypedDict):
-    """What a Slack message asks the companion for: reviews of `prs`, or a task; `why` says what decided it."""
+    """What a Slack message asks the companion for: reviews of `prs` and `stacks`, or a task; `why` says what decided
+    it."""
 
     kind: AskKind
     prs: list[tuple[str, int]]
+    stacks: list[tuple[str, int]]
     why: str
 
 
@@ -212,16 +217,18 @@ def from_slack(
 
     by: a colleague asking (questions go to the owner, the result back to them); any_words: PR links are enough."""
     r = read(text, any_words)
-    prs = r['prs']
-    if r['kind'] == 'review' and not prs and thread_ts != trigger_ts:  # "review this" under a message linking PRs
+    prs, stacks = r['prs'], r['stacks']
+    if r['kind'] == 'review' and not prs and not stacks and thread_ts != trigger_ts:  # "review this" under links
         root = slack.thread_messages(channel, thread_ts, trigger_ts)[:1]
-        prs = _links(slack.readable(root[0].get('text', ''))) if root else []
-    if r['kind'] == 'review' and not prs:  # "review #5922": the one open PR with that number
+        said = slack.readable(root[0].get('text', '')) if root else ''
+        prs, stacks = _links(said), _stack_links(said)
+    if r['kind'] == 'review' and not prs and not stacks:  # "review #5922": the one open PR with that number
         n = re.search(r'#(\d+)\b', _rest(slack.ask(text)))
         hits = [(p['repo'], p['number']) for p in state.get('pulls') or [] if n and p['number'] == int(n.group(1))]
         prs = hits if len(hits) == 1 else []
-    log(f'{channel} {trigger_ts}:', 'review' if r['kind'] == 'review' and prs else 'task', '-', r['why'])
-    if r['kind'] == 'task' or not prs:
+    wanted = r['kind'] == 'review' and bool(prs or stacks)
+    log(f'{channel} {trigger_ts}:', 'review' if wanted else 'task', '-', r['why'])
+    if not wanted:
         return False
     via = via or ('in a DM' if channel.startswith('D') else f'in #{slack.channel_name(channel)}')
     origin: Origin = {'channel': channel, 'thread_ts': thread_ts, 'trigger_ts': trigger_ts, 'via': via}
@@ -230,27 +237,28 @@ def from_slack(
     if approved_by:
         origin['approved_by'] = approved_by
     with lock:
-        problems = [(f'{repo}#{n}', _ask_one(repo, n, origin, by)) for repo, n in prs]
-    refused = [(pr, p) for pr, p in problems if p]
-    if len(refused) == 1 and len(prs) == 1:
+        asked = _ask_all(prs, stacks, origin, by)
+    refused = [(label, p) for label, p in asked if p]
+    if len(refused) == 1 and len(asked) == 1:
         slack.post(channel, thread_ts, refused[0][1], md=f':warning: Not reviewing: {refused[0][1]}.')
     elif refused:
         why: dict[str, list[str]] = {}
-        for pr, p in refused:
-            why.setdefault(p, []).append(_short(pr))
+        for label, p in refused:
+            why.setdefault(p, []).append(label)
         lines = '\n'.join(f'- {", ".join(names)}: {p}' for p, names in why.items())
-        slack.post(channel, thread_ts, f'Not reviewing {len(refused)} PRs', md=f':warning: Not reviewing:\n{lines}')
-    if len(refused) < len(prs):
+        slack.post(channel, thread_ts, f'Not reviewing {len(refused)} of them', md=f':warning: Not reviewing:\n{lines}')
+    if len(refused) < len(asked):
         slack.react(channel, trigger_ts, 'eyes')
     return True
 
 
 def from_task(task: Task, links: object) -> tuple[list[str], list[str]]:
-    """The agent's "review" item: a review of each linked PR, followed in the task's thread by whoever the task is
-    for. Returns (the PRs queued or followed, the problems)."""
-    prs = _links(' '.join(str(x) for x in links) if isinstance(links, list) else str(links or ''))
-    if not prs:
-        return [], ['"prs" has no GitHub pull request links']
+    """The agent's "review" item: a review of each linked PR or stack, followed in the task's thread by whoever the
+    task is for. Returns (what was queued or followed, the problems)."""
+    said = ' '.join(str(x) for x in links) if isinstance(links, list) else str(links or '')
+    prs, stacks = _links(said), _stack_links(said)
+    if not prs and not stacks:
+        return [], ['"prs" has no GitHub pull request or stack links']
     p = machine.party(task)
     by = p['user'] if p['kind'] == 'colleague' else None
     origin: Origin = {
@@ -262,28 +270,183 @@ def from_task(task: Task, links: object) -> tuple[list[str], list[str]]:
     if by:
         origin['by'] = by
     with lock:
-        done = [(f'{repo}#{n}', _ask_one(repo, n, origin, by)) for repo, n in prs]
-    log(f'{key_of(task)}: the agent handed {len(prs)} PRs to review')
-    return [pr for pr, why in done if not why], [f'{_short(pr)}: {why}' for pr, why in done if why]
+        done = _ask_all(prs, stacks, origin, by)
+    log(f'{key_of(task)}: the agent handed {len(prs)} PRs and {len(stacks)} stacks to review')
+    return [label for label, why in done if not why], [f'{label}: {why}' for label, why in done if why]
 
 
 def _rest(msg: str) -> str:
-    """The words of a readable message besides its PR links and Slack's "Sent using" footer."""
+    """The words of a readable message besides its PR and stack links and Slack's "Sent using" footer."""
     return LINK_TEXT.sub(' ', FOOTER.sub(' ', msg)).strip()
 
 
 def read(text: str, any_words: bool = False) -> Reading:
-    """Decide what a Slack message asks for. A review: PR links and nothing else, or words that start with
+    """Decide what a Slack message asks for. A review: PR or stack links and nothing else, or words that start with
     review/qa/test/check (any_words: links with any words, or "review" anywhere). Anything else is a task."""
     msg = slack.ask(text).strip()
-    prs, rest = _links(msg), _rest(msg)
+    prs, stacks, rest = _links(msg), _stack_links(msg), _rest(msg)
+    linked = f'{_plural(len(prs), "PR link")} and {_plural(len(stacks), "stack link")}'
     if ASKED.search(rest) or (any_words and re.search(r'\breview', rest, re.I)):
-        return {'kind': 'review', 'prs': prs, 'why': f'asked for a review of {len(prs)} linked PRs'}
-    if not prs:
-        return {'kind': 'task', 'prs': [], 'why': 'no PR link'}
+        return {'kind': 'review', 'prs': prs, 'stacks': stacks, 'why': f'asked for a review; {linked}'}
+    if not prs and not stacks:
+        return {'kind': 'task', 'prs': [], 'stacks': [], 'why': 'no PR or stack link'}
     if any_words or not WORDS.search(rest):
-        return {'kind': 'review', 'prs': prs, 'why': f'{len(prs)} PR links and no other ask'}
-    return {'kind': 'task', 'prs': prs, 'why': f'words besides the links: {first_sentence(rest, 60)!r}'}
+        return {'kind': 'review', 'prs': prs, 'stacks': stacks, 'why': f'{linked} and no other ask'}
+    return {
+        'kind': 'task',
+        'prs': prs,
+        'stacks': stacks,
+        'why': f'words besides the links: {first_sentence(rest, 60)!r}',
+    }
+
+
+def _ask_all(
+    prs: list[tuple[str, int]], stacks: list[tuple[str, int]], origin: Origin, by: str | None
+) -> list[tuple[str, str]]:
+    """Ask for each stack, then for each PR none of those stacks holds: a PR sent beside its own stack is reviewed
+    once, in the stack's turn. Returns (label, problem or '') per stack and PR asked for. Holds the lock."""
+    out: list[tuple[str, str]] = []
+    held: set[str] = set()
+    for repo, n in stacks:
+        problem, members = _ask_stack(repo, n, origin, by)
+        held |= members
+        out.append((_stack_label(repo, n), problem))
+    for repo, n in prs:
+        if f'{repo}#{n}' not in held:
+            out.append((_short(f'{repo}#{n}'), _ask_one(repo, n, origin, by)))
+    return out
+
+
+def _stacks() -> list[ReviewStack]:
+    """The stacks under review (finished ones are dropped)."""
+    return state.get('review_stacks') or []
+
+
+def _stack_label(repo: str, number: int) -> str:
+    return f'{repo.rsplit("/", 1)[-1]} stack #{number}'
+
+
+def _ask_stack(repo: str, number: int, origin: Origin, by: str | None) -> tuple[str, set[str]]:
+    """Start reviewing a stack, one PR at a time from the bottom. Returns (problem or '', the ids of its PRs, so the
+    same message's links to them aren't reviewed twice). Holds the lock."""
+    a = app()
+    if not a:
+        return 'the GitHub App is not set up yet (Secrets: github-app-id.txt and github-app-key.pem)', set()
+    try:
+        members = pulls.stack(a, repo, number)
+    except GitHubError as e:
+        return f"I couldn't read it from GitHub ({e})", set()
+    ids = {f'{repo}#{m["number"]}' for m in members}
+    sid = f'{repo}/stack/{number}'
+    if any(s['id'] == sid for s in _stacks()):
+        return 'that stack is already being reviewed, one PR at a time', ids
+    still = sum(1 for m in members if m['open'])
+    if not still:
+        return 'none of its pull requests is open', ids
+    s: ReviewStack = {
+        'id': sid,
+        'repo': repo,
+        'number': number,
+        'state': STACK.first('reviewing'),
+        'origin': origin,
+        'current': None,
+        'seen': [],
+        'size': len(members),
+        'started': now_iso(),
+    }
+    state.setdefault('review_stacks', []).append(s)
+    label = _stack_label(repo, number)
+    slack.note_only(
+        origin['channel'],
+        origin['thread_ts'],
+        f':books: {label}: {_plural(still, "open pull request")}, reviewed one at a time from the bottom.',
+    )
+    _advance(s, members)
+    if not STACK.is_(s['state'], 'reviewing'):
+        _end_stack(s)
+    save()
+    log(f'{sid}: reviewing {still} of {len(members)} PRs one at a time')
+    return '', ids
+
+
+def _advance(s: ReviewStack, members: list[pulls.StackPull] | None = None) -> None:
+    """Take the stack's next PR: the lowest open one not taken yet. One under review already (asked for on its own) is
+    waited for, not run again; one reviewed since the stack started is skipped. None left: done. Holds the lock."""
+    if members is None:
+        a = app()
+        try:
+            if not a:
+                raise GitHubError(0, 'the GitHub App is not set up')
+            members = pulls.stack(a, s['repo'], s['number'])
+        except GitHubError as e:
+            log(f'{s["id"]}: GitHub did not answer, trying again next poll ({e})')
+            return
+    s['size'] = len(members)
+    origin = s['origin']
+    by = origin.get('by') if origin else None
+    for m in members:
+        if m['number'] in s['seen']:
+            continue
+        s['seen'].append(m['number'])
+        pr_id = f'{s["repo"]}#{m["number"]}'
+        going = _going(pr_id)
+        if going:
+            if origin and by:
+                _follow(going, origin, by, new=False)
+        elif not m['open'] or _reviewed_since(pr_id, s['started']):
+            continue
+        elif problem := (_ask_one(s['repo'], m['number'], origin, by) if origin else request(s['repo'], m['number'])):
+            log(f'{s["id"]}: skipping {pr_id}: {problem}')
+            continue
+        s['current'] = pr_id
+        return
+    s['current'] = None
+    s['state'] = STACK.to(s['state'], 'done')
+
+
+def _reviewed_since(pr_id: str, started: str) -> bool:
+    """A review of this PR started at or after `started` (ISO), and has ended."""
+    _, t = latest(pr_id)
+    return bool(t) and (t or {}).get('start', '') >= started and not machine.running(t or {})
+
+
+def _stacks_tick() -> None:
+    """Move each stack on once its current PR's review ended: to the next PR, or done. A stopped review stops the
+    stack; one waiting on the owner's answer holds it."""
+    queued = {q['id'] for q in state.get('review_queue') or []}
+    for s in list(_stacks()):
+        cur = s['current']
+        if cur:
+            e = next((x for x in reversed(_run()) if x['id'] == cur), None)
+            v = verdict_of(e) if e else None
+            if cur in queued or (e and v in (None, 'asked')):
+                continue
+            if v == 'stopped':
+                s['state'] = STACK.to(s['state'], 'stopped')
+        if STACK.is_(s['state'], 'reviewing'):
+            _advance(s)
+        if not STACK.is_(s['state'], 'reviewing'):
+            _end_stack(s)
+        save()
+
+
+def _end_stack(s: ReviewStack) -> None:
+    """Drop a finished stack, telling the thread it was asked in."""
+    state['review_stacks'] = [x for x in _stacks() if x['id'] != s['id']]
+    label, o = _stack_label(s['repo'], s['number']), s['origin']
+    if STACK.is_(s['state'], 'stopped'):
+        md = f':black_square_for_stop: {label}: stopped at {_short(s["current"] or "")}; the PRs above it were left.'
+    else:
+        md = f':checkered_flag: {label}: every open pull request reviewed.'
+    if o:
+        slack.note_only(o['channel'], o['thread_ts'], md)
+    log(f'{s["id"]}: {s["state"]}')
+
+
+def _stack_line(s: ReviewStack) -> str:
+    """A stack's line on the batch card."""
+    at = f' · now {_short(s["current"])}' if s['current'] else ''
+    return f':books: {_stack_label(s["repo"], s["number"])} · {len(s["seen"])} of {s["size"]} taken{at} · one at a time'
 
 
 def _ask_one(repo: str, number: int, origin: Origin, by: str | None) -> str:
@@ -382,6 +545,11 @@ def _links(text: str | None) -> list[tuple[str, int]]:
     return list(dict.fromkeys((m.group(1), int(m.group(2))) for m in PR_LINK.finditer(text or '')))
 
 
+def _stack_links(text: str | None) -> list[tuple[str, int]]:
+    """Every GitHub stack the text links (github.com/<owner>/<repo>/stack/<number>), once each."""
+    return list(dict.fromkeys((m.group(1), int(m.group(2))) for m in STACK_LINK.finditer(text or '')))
+
+
 def _here(channel: str, thread_ts: str) -> dict[str, Task]:
     """PR id -> newest review task posting into this thread."""
     found: dict[str, Task] = {}
@@ -470,6 +638,7 @@ def prune_tick() -> None:
 
 
 def tick() -> None:
+    _stacks_tick()  # first: a stack's next PR starts in this same poll
     queue = state.get('review_queue') or []
     _tidy()
     running = sum(1 for t in state['tasks'].values() if review_of(t) and machine.running(t))
@@ -609,7 +778,7 @@ def _reset(prs: list[ReviewEntry]) -> float | None:
 def _card(b: ReviewBatch) -> tuple[str, str, str]:
     """(text, md, note) of the batch card."""
     prs = b['prs']
-    finished = all(verdict_of(e) for e in prs)
+    finished = all(verdict_of(e) for e in prs) and not _stacks()
     head = f'{"Reviewed" if finished else "Reviewing"} {_plural(len(prs), "pull request")}'
     n: dict[str, int] = {}
     for e in prs:
@@ -627,6 +796,7 @@ def _card(b: ReviewBatch) -> tuple[str, str, str]:
     bits = [f'{count} {label}' for label, count in parts if count]
     md = f'{":checkered_flag:" if finished else ":mag:"} **{head}**' + ''.join(f' · {x}' for x in bits)
     md += '\n' + '\n'.join(_line(e) for e in sorted(prs, key=lambda e: list(LOOK).index(_look(e))))
+    md += ''.join('\n' + _stack_line(s) for s in _stacks())
     if finished:
         note = f'Finished {say(form="day")}'
     elif n.get('paused'):
@@ -769,7 +939,7 @@ def _settle(queue: list[ReviewQueued]) -> None:
             md=f':double_vertical_bar: Paused for the usage limit; reviews resume {when}.',
         )
         save()
-    if b['prs'] and not queue and all(verdict_of(e) for e in b['prs']):
+    if b['prs'] and not queue and not _stacks() and all(verdict_of(e) for e in b['prs']):  # a stack has more to come
         _wrap_up(b)
         state.pop('review_batch')
         save()

@@ -131,6 +131,20 @@ def people(app: App, pulls: Sequence[OpenPull], repos: int = 20, cap: int = 300)
     return sorted(found.values(), key=lambda u: u['login'].casefold())[:cap]
 
 
+class StackPull(TypedDict):
+    number: int
+    open: bool
+
+
+def stack(app: App, repo: str, number: int) -> list[StackPull]:
+    """A stack's PRs in GitHub's order, bottom (next to its base) first."""
+    inst = app.installation_for(repo)
+    if inst is None:
+        raise GitHubError(404, f'the App is not installed on {repo.split("/", maxsplit=1)[0]}')
+    found = app.call('GET', f'/repos/{repo}/stacks/{number}', installation=inst)
+    return [{'number': int(p['number']), 'open': p.get('state') == 'open'} for p in found.get('pull_requests') or []]
+
+
 def facts(app: App, repo: str, number: int) -> Facts:
     """What a review starts from: the PR, its changed files with patches, and its review threads."""
     inst = app.installation_for(repo)

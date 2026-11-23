@@ -11,7 +11,7 @@ send.json: one item or a list. Every item names its "type", and a message its "t
   {"type": "withdraw", "why": "..."}                       takes back the approval waiting
   {"type": "credential", "for", "service", "url", "username", "password", "note"}
   {"type": "poll_change", "poll": "<id>", ...the fields that change}
-  {"type": "review", "prs": ["<pull request links>"]}       hands them to the review queue (reviews.from_task)
+  {"type": "review", "prs": ["<pull request or stack links>"]}  hands them to the review queue (reviews.from_task)
 review.json is a PR review's own hand-over (reviews.py)."""
 
 import json

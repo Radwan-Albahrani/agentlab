@@ -32,6 +32,7 @@ AskState = Literal['pending', 'approved', 'declined']
 PollState = Literal['open', 'closed']
 RetryState = Literal['idle', 'waiting', 'sent']
 ReviewState = Literal['queued', 'reviewing', 'waiting', 'paused', 'asked', 'approved', 'changes', 'failed', 'stopped']
+StackState = Literal['reviewing', 'done', 'stopped']
 ItemKind = Literal['in', 'final', 'message', 'edit', 'approval', 'credential', 'poll_change', 'review']
 ItemState = Literal[
     'received', 'awaiting_owner', 'approved', 'sent', 'silent', 'applied', 'refused', 'rejected', 'replaced', 'withdrawn',
@@ -402,6 +403,22 @@ class Origin(TypedDict):
 
 
 @with_config(STRICT)
+class ReviewStack(TypedDict):
+    """A GitHub stack reviewed one PR at a time, bottom up (reviews.py, fsm.STACK). current: the PR id under review;
+    seen: the PR numbers taken so far (reviewed, skipped or followed), so none is taken twice."""
+
+    id: str
+    repo: str
+    number: int
+    state: StackState
+    origin: Origin | None
+    current: str | None
+    seen: list[int]
+    size: int
+    started: str  # ISO, as tasks' "start": a review of one of its PRs started since then counts as done
+
+
+@with_config(STRICT)
 class ReviewQueued(TypedDict):
     """A requested review waiting for a slot (reviews.queue); origin None: from the hub."""
 
@@ -447,6 +464,7 @@ class State(TypedDict, total=False):
     inbox: dict[str, Ask]
     review_queue: list[ReviewQueued]
     review_batch: ReviewBatch | None
+    review_stacks: list[ReviewStack]
     pulls: list[OpenPull]
     github_people: People
     github_repos: Repos

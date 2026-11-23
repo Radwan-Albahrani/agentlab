@@ -7,7 +7,7 @@ the companion's lifecycle state."""
 
 from collections.abc import Mapping
 
-from .shapes import AskState, DraftState, PollState, RetryState, ReviewState
+from .shapes import AskState, DraftState, PollState, RetryState, ReviewState, StackState
 
 
 class IllegalStateError(ValueError):
@@ -89,6 +89,12 @@ REVIEW: Machine[ReviewState] = Machine(
         'stopped': (),
     },
 )
+
+# A GitHub stack under review (reviews.py, state['review_stacks']): one PR at a time, bottom up.
+#   reviewing  a PR of it is queued or under review (current), or the next one is about to be taken
+#   done       every open PR of it was reviewed (or already had been since it started)
+#   stopped    someone stopped the review of its current PR: the rest is left alone
+STACK: Machine[StackState] = Machine('stack', {'reviewing': ('done', 'stopped'), 'done': (), 'stopped': ()})
 
 # A task's automatic retry after a transient model failure (tasks.retry_transient), task['retry']: {state, count, at}.
 #   idle     nothing pending (count: the retries this turn so far)
