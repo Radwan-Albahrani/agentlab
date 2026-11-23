@@ -185,6 +185,12 @@ def is_side_question(msg: str) -> bool:
     return is_status_ask(msg) or bool(BTW.match(msg) and BTW.sub('', msg).strip())
 
 
+def keeps_private(task: Task, by: str) -> bool:
+    """In a private case, anyone but the owner hears only what the agent chooses to send them: never a summary the
+    companion makes from the chat's record, which is the agent's work for the owner."""
+    return by != OWNER and machine.case_mode(task) == 'private'
+
+
 def side_reply(task: Task, question: str, ts: str, place: Place, lead: str = '') -> None:
     """Answer a side question with the quick model from the chat's record, without messaging the chat, at `place`
     (machine.PLACES): where it was asked. `lead`: a line before the answer. Falls back to the plain status summary
@@ -255,7 +261,8 @@ def follow_up(
             cases.open_late(task, by, text)
     if task.get('case') and place == 'thread' and not decision:  # everyone's words in the thread, the owner's too
         cases.heard(task, by, text, files or (), ts=ts)
-    if is_side_question(msg) and not files and not decision and not picked:
+    private = keeps_private(task, by)
+    if is_side_question(msg) and not files and not decision and not picked and not private:
         side_reply(task, msg, ts, place)
         return
     colleague = other and machine.is_colleague(task) and by == machine.party(task)['user']
@@ -300,6 +307,8 @@ def follow_up(
     queued = (res.get('result') or {}).get('delivery') == 'queued'  # T3 can't steer for us: say so
     if queued and decision:
         slack.note_only(*errands.approver(task), ':inbox_tray: The agent gets your decision when its current step ends')
+    elif queued and private:  # a plain receipt: what the agent is doing stays with the owner
+        slack.note_only(*at(task, place), ":inbox_tray: Got it. I'll read this as soon as I finish the step I'm on.")
     elif queued:
         lead = ':inbox_tray: Queued: the agent reads this when its current step ends.'
         jobs.run_later(side_reply, task, 'What is it doing right now?', ts, place, lead)

@@ -230,7 +230,9 @@ def test_without_the_quick_model_a_status_ask_gets_the_plain_summary(monkeypatch
     assert 'Half way through the migration' in fresh_bot.text()
 
 
-def test_a_colleagues_side_question_and_its_answer_reach_the_owners_case(monkeypatch, t3_quiet, fresh_bot):
+@pytest.mark.parametrize('mode', ['private', 'shared'])
+def test_a_colleagues_status_ask_gets_the_record_only_in_a_shared_case(monkeypatch, t3_quiet, fresh_bot, mode):
+    # private: the agent's work is for the owner, so the ask goes to the agent; shared: the thread is public anyway
     monkeypatch.setattr(t3, 'digest', lambda tid: 'r')
     monkeypatch.setattr(t3, 'triage', lambda prompt: {'ok': True, 'result': 'Reviewing PR 6257.'})
     t = task(
@@ -239,12 +241,13 @@ def test_a_colleagues_side_question_and_its_answer_reach_the_owners_case(monkeyp
         'colleague',
         channel='D_U_SALAH',
         thread_ts='60.1',
-        case={'ch': 'D_OWNER', 'ts': '61.1', 'head': 'own', 'mode': 'private'},
+        case={'ch': 'D_OWNER', 'ts': '61.1', 'head': 'own', 'mode': mode},
     )
     tasks.follow_up(t, 'any update?', None, '60.5', 'thread', 'U_SALAH')
     in_case = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m.get('thread_ts') == '61.1']
-    assert 'any update?' in str(in_case) and 'Reviewing PR 6257.' in str(in_case)
-    assert any(m['channel'] == 'D_U_SALAH' and 'Reviewing PR 6257.' in str(m) for m in fresh_bot.messages)
+    assert 'any update?' in str(in_case)
+    theirs = any(m['channel'] == 'D_U_SALAH' and 'Reviewing PR 6257.' in str(m) for m in fresh_bot.messages)
+    assert theirs is (mode == 'shared')
 
 
 @pytest.mark.parametrize('delivery', ['queued', 'started'])

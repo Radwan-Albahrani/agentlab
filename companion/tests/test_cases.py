@@ -247,22 +247,37 @@ def test_the_owners_own_task_keeps_no_case(monkeypatch, t3_quiet, fresh_bot):
     assert 'case' not in t and t['party']['kind'] == 'owner'
 
 
-def test_side_questions_are_answered_on_the_side_and_start_no_turn(case, fresh_bot, monkeypatch):
+def test_a_colleagues_side_question_goes_to_the_agent_and_never_gets_the_record(case, fresh_bot, monkeypatch):
+    # what the agent is doing is its work for the owner: the colleague hears only what it chooses to send them
+    t, sent = case
+    finish(t, monkeypatch, 'Done.')
+    n = len(sent)
+    tasks.follow_up(t, '/btw what is it doing?', None, '94.1', 'thread', 'U_SALAH')
+    assert len(sent) == n + 1 and 'what is it doing?' in sent[-1]
+    assert 'It is checking the stack.' not in text_of(posted(fresh_bot, SALAH_DM))
+
+
+def test_a_colleagues_queued_message_gets_a_plain_receipt(case, fresh_bot, monkeypatch):
+    t, _ = case
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True, 'result': {'delivery': 'queued'}})
+    tasks.follow_up(t, 'one more thing: the client is the ministry', None, '96.1', 'thread', 'U_SALAH')
+    theirs = text_of(posted(fresh_bot, SALAH_DM))
+    assert "Got it. I'll read this as soon as I finish the step I'm on." in theirs
+    assert 'Right now' not in theirs and 'It is checking the stack.' not in theirs
+
+
+def test_the_owners_side_questions_are_answered_on_the_side_and_start_no_turn(case, fresh_bot, monkeypatch):
     t, sent = case
     finish(t, monkeypatch, 'Done.')
     n, turn = len(sent), dict(t['turn'])
-    tasks.follow_up(t, '/btw what is it doing?', None, '94.1', 'thread', 'U_SALAH')
-    assert len(sent) == n and t['turn'] == turn  # the chat was not messaged; no new turn
-    assert 'It is checking the stack.' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    side = ledger.items(t)[-1]
-    assert side['kind'] == 'message' and side['to'] == 'colleague' and side['side'] and side['state'] == 'sent'
-    assert 'It is checking the stack.' in in_case(fresh_bot, t)  # the owner sees the side answer too
     routing.route(
         {'channel': 'D_OWNER', 'channel_type': 'im', 'ts': '95.1', 'thread_ts': t['case']['ts'], 'user': OWNER,
          'text': 'status?'},
         False,
     )  # fmt: skip
-    assert len(sent) == n and ledger.items(t)[-1]['to'] == 'owner'
+    assert len(sent) == n and t['turn'] == turn and ledger.items(t)[-1]['to'] == 'owner'
+    assert 'It is checking the stack.' in in_case(fresh_bot, t)
+    assert 'It is checking the stack.' not in text_of(posted(fresh_bot, SALAH_DM))
 
 
 def test_moves_the_state_machine_does_not_allow_are_bugs_not_states(case):
