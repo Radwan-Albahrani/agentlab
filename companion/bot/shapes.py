@@ -144,6 +144,7 @@ class Post(TypedDict, total=False):
     edit: str  # the ledger id of the message it edits
     where: str
     msgs: list[tuple[str, str]]  # (channel, ts) of the messages it edits
+    files: list[str]  # paths of the files that go with it, through the gate
 
 
 @with_config(STRICT)

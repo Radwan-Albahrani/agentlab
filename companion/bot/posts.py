@@ -1,6 +1,8 @@
 """Ledger messages for a channel or people (with a poll, maybe) and edits of messages sent before: previewed for the
 owner unless they go to the task's own channel or review is off. Each preview card belongs to one ledger item."""
 
+import os
+from collections.abc import Sequence
 from datetime import datetime
 
 from . import cases, errands, ledger, machine, polls, slack
@@ -18,7 +20,8 @@ def in_channel(task: Task) -> bool:
     return not task['channel'].startswith('D')
 
 
-def _direct(names: list[str], text: str, poll: Json | None) -> tuple[Post | None, str]:
+def _direct(names: list[str], text: str, poll: Json | None, files: bool = False) -> tuple[Post | None, str]:
+    """files: it carries files, so it may have no text."""
     if poll:
         return None, 'a poll goes to a channel, not to DMs'
     if len(names) > MAX_PEOPLE:
@@ -30,7 +33,9 @@ def _direct(names: list[str], text: str, poll: Json | None) -> tuple[Post | None
             return None, problem or f'no one is called {n}'
         ids.append(uid)
     text = text.strip()[:3000]
-    return ({'to': list(dict.fromkeys(ids)), 'text': text}, '') if text else (None, 'there is nothing to send')
+    if not text and not files:
+        return None, 'there is nothing to send'
+    return {'to': list(dict.fromkeys(ids)), 'text': text}, ''
 
 
 def where(post: Post, md: bool = False) -> str:
@@ -56,7 +61,9 @@ def parse(p: Json, default: str = '') -> tuple[Post | None, str]:
     return _to_channel(str(p.get('channel') or ''), str(p.get('text') or ''), p.get('poll'), default)
 
 
-def _to_channel(channel: str, text: str, raw_poll: Json | None, default: str = '') -> tuple[Post | None, str]:
+def _to_channel(
+    channel: str, text: str, raw_poll: Json | None, default: str = '', files: bool = False
+) -> tuple[Post | None, str]:
     known = slack.channels()
     names = {c['name']: c['id'] for c in known}
     ch = channel.strip().lstrip('#') or default
@@ -66,12 +73,14 @@ def _to_channel(channel: str, text: str, raw_poll: Json | None, default: str = '
     if ch not in {c['id'] for c in known if c['member']}:
         return None, f'I am not in <#{ch}>. Invite me there with `/invite @{NAME}`, then reply here to try again'
     post: Post = {'channel': ch, 'text': text.strip()[:3000]}
+    if raw_poll and files:
+        return None, "a poll can't carry files: send them in a message of their own"
     if raw_poll:
         poll, problem = _poll(raw_poll)
         if poll is None:
             return None, problem
         post['poll'] = poll
-    elif not post['text']:
+    elif not post['text'] and not files:
         return None, 'there is nothing to post'
     return post, ''
 
@@ -90,18 +99,18 @@ def _poll(p: Json) -> tuple[PollSpec | None, str]:
     return {'question': question, 'options': options, 'closes': closes, 'multiple': bool(p.get('multiple'))}, ''
 
 
-def _target(task: Task, it: Item) -> tuple[Post | None, str]:
-    """(post, problem) for a ledger message to a channel or people, or an edit."""
+def _target(task: Task, it: Item, files: bool) -> tuple[Post | None, str]:
+    """(post, problem) for a ledger message to a channel or people (files: it carries some), or an edit."""
     if it['kind'] == 'edit':
         return _edit(task, it)
     if it['to'] == 'people':
         raw = it.get('raw_to')
         names = [str(n) for n in raw] if isinstance(raw, list) else [it['label']]
-        return _direct(names, it['text'], it.get('poll'))
+        return _direct(names, it['text'], it.get('poll'), files)
     ch = it['label'].lstrip('#')
     if ch.startswith('<#'):
         ch = ch[2:-1]
-    return _to_channel(ch, it['text'], it.get('poll'))
+    return _to_channel(ch, it['text'], it.get('poll'), files=files)
 
 
 def _sent_messages(task: Task) -> dict[str, Item]:
@@ -130,18 +139,30 @@ def preview_md(post: Post) -> str:
     if post.get('edit'):
         return f'**Edit your message {post["where"]} to:**\n' + quote(post['text'])
     md = f'**To {where(post, md=True)}:**' + ('\n' + quote(post['text']) if post['text'] else '')
+    if post.get('files'):
+        md += f'\n_With {_files(post)}_'
     if post.get('poll'):
         md += '\n\n' + polls.describe(post['poll'])
     return md
 
 
-def offer(task: Task, it: Item) -> None:
+def _files(post: Post) -> str:
+    """'2 files: a.xlsx, b.zip'."""
+    names = [os.path.basename(p) for p in post.get('files') or []]
+    return f'{len(names)} file{"s" if len(names) != 1 else ""}: {", ".join(names)}'
+
+
+def offer(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[str] = ()) -> None:
     """A ledger message for a channel or people, or an edit: refused, sent at once (this channel, or review off), or a
-    preview card for the owner (awaiting_owner)."""
-    post, problem = _target(task, it)
+    preview card for the owner (awaiting_owner). ok / refused: its files, through the gate (outbox._message)."""
+    if refused:
+        it['held'] = ', '.join(refused)
+    post, problem = _target(task, it, bool(ok))
     if problem or post is None:
         ledger.move(task, it, 'refused', note=problem)
         return
+    if ok:
+        post['files'] = list(ok)
     it['post'] = post
     here = in_channel(task) and post.get('channel') == task['channel']
     if here or not task.get('preview', True):
@@ -149,6 +170,8 @@ def offer(task: Task, it: Item) -> None:
         send(task, it)
         return
     md = ':outbox_tray: ' + preview_md(post)
+    if it.get('held'):
+        md += f'\n:no_entry: Held back: {it["held"]}'
     if machine.party(task)['kind'] != 'owner':
         md += f'\n\nAsked by **{slack.name(machine.party(task)["user"])}**'
     at, at_thread = cases.owner_place(task)
@@ -209,6 +232,8 @@ def send(task: Task, it: Item) -> None:
     k = key_of(task)
     dest = where(post)
     at: list[tuple[str, str]] = []
+    ts = ''
+    files = post.get('files') or []
     try:
         if post.get('poll'):
             poll = polls.start(post, k)
@@ -216,20 +241,23 @@ def send(task: Task, it: Item) -> None:
         else:
             for to in post.get('to') or [post['channel']]:
                 dest_id = slack.app.client.conversations_open(users=to)['channel']['id'] if post.get('to') else to
-                ts = slack.app.client.chat_postMessage(
-                    channel=dest_id,
-                    text=first_sentence(post['text'], 200),
-                    blocks=slack.blocks(post['text']),
-                    unfurl_links=False,
-                )['ts']
-                at.append((dest_id, ts))
+                if post['text']:
+                    ts = slack.app.client.chat_postMessage(
+                        channel=dest_id,
+                        text=first_sentence(post['text'], 200),
+                        blocks=slack.blocks(post['text']),
+                        unfurl_links=False,
+                    )['ts']
+                    at.append((dest_id, ts))
+                if files:
+                    slack.upload(dest_id, None, files)
     except Exception as e:
         log('post failed:', e)
         ledger.move(task, it, 'failed', note=f"couldn't send it to {dest}: {str(e)[:200]}")
         return
-    link = None if post.get('to') else slack.permalink(post['channel'], ts)
+    link = slack.permalink(post['channel'], ts) if ts and not post.get('to') else None
     what = 'Poll' if post.get('poll') else 'Message'
-    sent = f'sent to {dest}' if post.get('to') else f'posted in {dest}'
+    sent = (f'sent to {dest}' if post.get('to') else f'posted in {dest}') + (f' with {_files(post)}' if files else '')
     line = f':white_check_mark: {what} {sent}' + (f' · <{link}|open>' if link else '')
     if post.get('poll'):
         line += f' · closes {say(post["poll"]["closes"], "day")}'

@@ -149,7 +149,7 @@ def test_on_the_owners_word_the_agent_sends_the_colleague_a_message(case, fresh_
     (r,) = receipts(box)
     assert r == {
         'id': '2', 'type': 'message', 'to': 'Salah', 'state': 'sent', 'meaning': 'sent', 'note': '',
-        'text': 'The stack is on hold until the engine is in a repo.',
+        'text': 'The stack is on hold until the engine is in a repo.', 'files': [], 'held_back': '',
     }  # fmt: skip
 
 

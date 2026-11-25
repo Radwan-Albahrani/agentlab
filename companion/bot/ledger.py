@@ -188,6 +188,8 @@ def receipts(task: Task) -> None:
             'meaning': LABELS[i['state']],
             'note': i.get('note', ''),
             'text': (i.get('text') or '')[:120],
+            'files': i.get('files') or [],
+            'held_back': i.get('held') or '',
         }
         for i in items(task)
         if i['kind'] not in ('in', 'final')

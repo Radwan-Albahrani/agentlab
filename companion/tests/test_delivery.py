@@ -2,7 +2,7 @@ import json
 import os
 
 from bot import ledger, machine, outbox, posts, prompts, slack, state
-from conftest import ROUTE, agent_sends, click
+from conftest import ROUTE, agent_sends, click, receipts
 
 
 def task_in(channel='C_TECH', thread='300.1', guest=None):
@@ -25,6 +25,46 @@ def test_files_go_into_the_tasks_own_thread(fresh_bot):
     assert not any(m['channel'] == 'D_OWNER' for m in fresh_bot.messages)
     (it,) = ledger.items(t)
     assert it['state'] == 'sent' and it['held'] == 'notes.txt (missing)'
+
+
+def put(t, *names):
+    for n in names:
+        with open(os.path.join(outbox.OUTBOX, t['outbox'], n), 'wb') as f:
+            f.write(b'x')
+
+
+def test_files_for_someone_by_dm_go_with_the_message_once_the_owner_sends_it(fresh_bot):
+    t = task_in()
+    put(t, 'TDF-trees.xlsx', 'claims.zip', 'run.sh')
+    files = ['TDF-trees.xlsx', 'claims.zip', 'run.sh']
+    box = agent_sends(t, {'type': 'message', 'to': 'Ali', 'text': 'The tree sheet.', 'files': files})
+    card = fresh_bot.text()
+    assert '_With 2 files: TDF-trees.xlsx, claims.zip_' in card and 'Held back: run.sh (file type not allowed)' in card
+    assert not fresh_bot.uploads  # nothing leaves before the owner says so
+    click(fresh_bot, 'post_send')
+    (up,) = fresh_bot.uploads
+    assert up['channel'] == 'D_U_ALI' and [f['filename'] for f in up['file_uploads']] == [
+        'TDF-trees.xlsx',
+        'claims.zip',
+    ]
+    assert 'Message sent to Ali by DM with 2 files: TDF-trees.xlsx, claims.zip' in fresh_bot.text()
+    (r,) = receipts(box)
+    assert r['state'] == 'sent' and r['files'] == files and r['held_back'] == 'run.sh (file type not allowed)'
+
+
+def test_files_alone_need_no_text_and_a_poll_cannot_carry_them(fresh_bot):
+    t = task_in()
+    put(t, 'chart.png')
+    agent_sends(t, {'type': 'message', 'to': '#ask-tech', 'files': ['chart.png']})
+    assert [u['channel'] for u in fresh_bot.uploads] == ['C_TECH'] and ledger.items(t)[-1]['state'] == 'sent'
+    poll = {'question': 'Ship?', 'options': ['Yes', 'No'], 'closes': '2099-01-01T00:00:00+00:00'}
+    agent_sends(t, {'type': 'message', 'to': '#ask-tech', 'text': 'Vote', 'poll': poll, 'files': ['chart.png']})
+    assert "a poll can't carry files" in ledger.items(t)[-1]['note']
+
+
+def test_the_agent_is_told_how_to_send_files_to_anyone():
+    rules = prompts.sending('/box', 'Sam', [])
+    assert 'any message can carry them, whoever it is to' in rules and 'xlsx' in rules and '50 MB' in rules
 
 
 def test_a_message_to_its_own_channel_is_a_new_message_there_at_once(fresh_bot):

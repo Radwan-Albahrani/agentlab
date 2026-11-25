@@ -167,5 +167,5 @@ def _message(task: Task, box: str, it: Item) -> None:
     elif to == 'requester':
         errands.offer_reply(task, it, ok, refused)
     else:
-        posts.offer(task, it)
+        posts.offer(task, it, ok, refused)
     log('outbox item', it['id'], it['kind'], to, it['state'])

@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
-from . import when
+from . import gate, when
 from .config import AGENT_FILES, NAME, RECENT, RECENT_DM, org, work_tools
 from .slack import Channel
 
@@ -153,7 +153,11 @@ def sending(box: str, owner: str, recipients: Iterable[str], more: str = '') -> 
         ' (one item, or a list). Every item has a "type", and a message says who it is "to"; nothing has a default.'
         '\n- {"type": "message", "to": "<who>", "text": "<standard markdown>", "files": ["<names>"]}. "to" is one of:'
         + ''.join(f'\n  - {r}' for r in recipients)
-        + f'\nFiles you send go in {box}/ first; name them in "files". Write messages the way people talk there:'
+        + f'\nFiles: any message can carry them, whoever it is to. Save each file in {box}/ first, then list just'
+        ' its file name in "files" (["report.xlsx"], not a path); a message may be files alone, with no "text".'
+        f' Allowed: {", ".join(sorted(t.lstrip(".") for t in gate.TYPES))}, up to 50 MB each; anything else is held'
+        ' back (zip other file types). receipts.json lists the files that went with each message and any held back.'
+        '\nWrite messages the way people talk there:'
         f' short, clear, friendly. {when.RULE} That goes for your final message too. It is {when.say(form="date")}'
         ' now.'
         + more
