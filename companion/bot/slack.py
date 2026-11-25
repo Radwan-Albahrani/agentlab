@@ -38,6 +38,23 @@ class _Channels(TypedDict):
 
 
 app = App(token=secret('bot-token.txt'), token_verification_enabled=False)  # main.run checks it
+_watchers: list[Callable[[str, str], None]] = []
+
+
+def on_change(fn: Callable[[str, str], None]) -> Callable[[str, str], None]:
+    """fn(channel, ts) after the companion posts, edits or uploads anything: ts is the message, or its thread."""
+    _watchers.append(fn)
+    return fn
+
+
+def _changed(channel: str, ts: str | None) -> None:
+    for fn in _watchers:
+        try:
+            fn(channel, ts or '')
+        except Exception as e:
+            log('change watcher failed:', e)
+
+
 USER: WebClient | None
 try:
     USER = WebClient(token=secret('user-token.txt'))  # read-only, as the owner
@@ -326,11 +343,14 @@ def post(
         unfurl_media=False,
         **({'reply_broadcast': True} if broadcast and thread_ts else {}),
     )
+    if r:
+        _changed(channel, thread_ts or r['ts'])
     return r['ts'] if r else None
 
 
 def update(channel: str, ts: str, text: str, md: str | None = None, note: str | None = None) -> None:
-    _send(app.client.chat_update, md, note, channel=channel, ts=ts, text=text[:3000])
+    if _send(app.client.chat_update, md, note, channel=channel, ts=ts, text=text[:3000]) is not None:
+        _changed(channel, ts)
 
 
 def note_only(channel: str, thread_ts: str | None, line: str) -> str | None:
@@ -344,12 +364,52 @@ def react(channel: str, ts: str, emoji: str, remove: bool = False) -> None:
 
 
 def upload(channel: str, thread_ts: str | None, paths: Iterable[str], comment: str | None = None) -> SlackResponse:
-    return app.client.files_upload_v2(
+    r = app.client.files_upload_v2(
         channel=channel,
         thread_ts=thread_ts,
         initial_comment=comment,
         file_uploads=[{'file': p, 'filename': os.path.basename(p)} for p in paths],
     )
+    _changed(channel, thread_ts)
+    return r
+
+
+def replies(channel: str, ts: str) -> list[Json] | None:
+    """Every message of the thread at `ts` (its root first), read by the bot or else as the owner; None when neither
+    can read it."""
+    for client in (app.client, USER):
+        if client is None:
+            continue
+        try:
+            out: list[Json] = []
+            cursor = None
+            while True:
+                r = client.conversations_replies(channel=channel, ts=ts, limit=200, cursor=cursor)
+                out += r['messages']
+                cursor = (r.get('response_metadata') or {}).get('next_cursor')
+                if not r.get('has_more') or not cursor:
+                    return out
+        except Exception as e:
+            log('thread unreadable:', channel, ts, str(e)[:120])
+    return None
+
+
+def landed(channel: str, upload: SlackResponse, tries: int = 4) -> str:
+    """The ts of the message an upload made in `channel`, or '' when Slack doesn't say in time (it shares
+    asynchronously)."""
+    ids = [f['id'] for f in upload.get('files') or [] if f.get('id')]
+    for n in range(tries if ids else 0):
+        try:
+            shares = app.client.files_info(file=ids[0])['file'].get('shares') or {}
+        except Exception as e:
+            log('upload not found:', str(e)[:120])
+            return ''
+        for kind in ('private', 'public'):
+            found = (shares.get(kind) or {}).get(channel)
+            if found:
+                return str(found[0]['ts'])
+        time.sleep(0.5 * (n + 1))
+    return ''
 
 
 def fetch(f: Json, folder: str) -> tuple[str, str]:

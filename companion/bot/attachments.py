@@ -4,8 +4,8 @@ Outgoing: check() runs the agent's files through the gate once: ready or held. W
 ready files sent or failed (sent / failed below) before moving it to sent, and ledger.move withholds them when the
 message never goes, so no message is ever recorded as sent while its files stayed behind.
 
-Incoming: fetched() downloads the files someone sent: ready, or held when Slack wouldn't give them; the case relay
-(cases.py) then uploads them to the owner: sent or failed."""
+Incoming: fetched() downloads the files on a message in a colleague's thread: ready, or held when Slack wouldn't give
+them; the case's copy of the message (mirror.py) then carries them to the owner: sent or failed."""
 
 import os
 from collections.abc import Iterable

@@ -94,7 +94,7 @@ def test_a_failed_upload_marks_its_files_failed_and_the_message_still_sent(fresh
     agent_sends(t, {'type': 'message', 'to': 'colleague', 'text': 'Here', 'files': ['a.pdf']})
     it = ledger.items(t)[-1]
     assert it['state'] == 'sent' and states(it) == [('a.pdf', 'failed', "Slack didn't take it: file_upload_failed")]
-    assert '_Files: a.pdf failed (Slack didn' in fresh_bot.text()  # the owner's case says so
+    assert "went without a.pdf (failed: Slack didn't take it" in fresh_bot.text()  # the owner's case says so
 
 
 def test_a_message_cannot_be_recorded_sent_while_its_files_wait():

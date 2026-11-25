@@ -1,6 +1,6 @@
 """Routes each Slack message; the owner and people they gave access give work, anyone else gets one refusal."""
 
-from . import cases, drafts, inbox, jobs, machine, requests, reviews, slack, tasks
+from . import cases, drafts, inbox, jobs, machine, mirror, requests, reviews, slack, tasks
 from .config import COMP, OWNER, has_access, log, mode, requests_channel
 from .shapes import Json
 from .state import key, save, state
@@ -54,6 +54,7 @@ def tagged_by_edit(ev: Json) -> Json | None:
 
 
 def route(ev: Json, mentioned: bool) -> None:
+    mirror.noticed(ev)  # anything in a case's thread, edits, deletions and the companion's own posts included
     edited = tagged_by_edit(ev)
     if edited:
         log('tag added by an edit', ev['channel'], edited['ts'])

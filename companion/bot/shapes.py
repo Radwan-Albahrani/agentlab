@@ -34,6 +34,7 @@ RetryState = Literal['idle', 'waiting', 'sent']
 ReviewState = Literal['queued', 'reviewing', 'waiting', 'paused', 'asked', 'approved', 'changes', 'failed', 'stopped']
 StackState = Literal['reviewing', 'done', 'stopped']
 FileState = Literal['ready', 'held', 'sent', 'failed', 'withheld']
+CopyState = Literal['copied', 'edited', 'deleted', 'failed']
 ItemKind = Literal['in', 'final', 'message', 'edit', 'approval', 'credential', 'poll_change', 'review']
 ItemState = Literal[
     'received', 'awaiting_owner', 'approved', 'sent', 'silent', 'applied', 'refused', 'rejected', 'replaced', 'withdrawn',
@@ -149,13 +150,35 @@ class Post(TypedDict, total=False):
 
 @with_config(STRICT)
 class Attachment(TypedDict):
-    """A file the agent attached to a message (attachments.py, fsm.ATTACHMENT). path: where it is, once the gate
-    passed it ('' when held); note: why it was held, failed or withheld."""
+    """A file on a message (attachments.py, fsm.ATTACHMENT): one the agent sends, or one a case passes on to the owner.
+    path: where it is, once ready ('' when held); note: why it was held, failed or withheld."""
 
     name: str
     path: str
     state: FileState
     note: str
+
+
+@with_config(STRICT)
+class Copy(TypedDict):
+    """One message of a colleague's thread, as copied into the owner's case thread (mirror.py, fsm.COPY)."""
+
+    ts: str  # the message, in the colleague's thread
+    who: str  # who wrote it, by name
+    copy: str  # its copy in the case thread; '' when Slack never said where an upload landed
+    state: CopyState
+    sig: str  # what the message said when last copied: a change is an edit
+    files: list[Attachment]
+    note: str  # why the last copy failed
+
+
+@with_config(STRICT)
+class Mirror(TypedDict):
+    """The case thread's copy of the colleague's thread (mirror.py)."""
+
+    since: str  # messages up to this ts were there before the mirror began ('' for a case opened with it)
+    latest: float  # the newest message's time, so the sweep knows a thread is still alive
+    copies: dict[str, Copy]  # by the message's ts
 
 
 @with_config(STRICT)
@@ -275,6 +298,7 @@ class Task(TypedDict, total=False):
     source_ch: str
     source_im: bool
     source_thread: str | None
+    mirror: Mirror  # a case's copy of the colleague's thread
 
 
 @with_config(STRICT)

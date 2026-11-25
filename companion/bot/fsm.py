@@ -7,7 +7,7 @@ the companion's lifecycle state."""
 
 from collections.abc import Mapping
 
-from .shapes import AskState, DraftState, FileState, PollState, RetryState, ReviewState, StackState
+from .shapes import AskState, CopyState, DraftState, FileState, PollState, RetryState, ReviewState, StackState
 
 
 class IllegalStateError(ValueError):
@@ -116,3 +116,18 @@ RETRY: Machine[RetryState] = Machine('retry', {'idle': ('waiting',), 'waiting': 
 
 # A poll (polls.py): open until it closes, by its time, the owner, or the hub.
 POLL: Machine[PollState] = Machine('poll', {'open': ('closed',), 'closed': ()})
+
+# One message of a colleague's thread, copied into the owner's case thread (mirror.py), task['mirror']['copies'].
+#   copied   the copy shows the message as it is
+#   edited   the message was edited since; the copy shows the edit
+#   deleted  the message was deleted; the copy says so
+#   failed   Slack refused the copy; the next sync tries again, so the copies keep the thread's order
+COPY: Machine[CopyState] = Machine(
+    'copy',
+    {
+        'copied': ('edited', 'deleted'),
+        'edited': ('edited', 'deleted'),
+        'deleted': (),
+        'failed': ('copied', 'failed', 'deleted'),
+    },
+)

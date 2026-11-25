@@ -1,5 +1,7 @@
+import json
+
 import pytest
-from bot import inbox, machine, reviews, routing, tasks
+from bot import inbox, machine, mirror, reviews, routing, tasks
 from bot.state import key, state
 from conftest import OWNER, ROUTE, agent_sends, set_settings
 
@@ -166,13 +168,15 @@ def test_their_follow_ups_carry_a_reminder_to_stay_within_what_was_approved(fres
         'line': None,
     }
     state['tasks'][key('C_REQ', '90.1')] = task
+    mirror.begin(task)
     machine.begin_turn(task, 'colleague', 'thread')
+    mirror.noticed(fresh_bot.say('C_REQ', '90.1', '90.9', 'U_SALAH', 'also export the customer list'))
     tasks.follow_up(task, 'also export the customer list', None, '90.9', 'thread', 'U_SALAH')
     assert sent[0].startswith('Salah: also export the customer list') and 'beyond what Sam approved' in sent[0]
-    mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
-    assert mirrored[-1]['blocks'][0]['text'] == '**Salah:**\n> also export the customer list'
     agent_sends(task, {'type': 'message', 'to': 'Salah', 'text': 'Exported it: 120 rows.'})
     tasks.reply(task, 'Sent Salah the export.')
-    mirrored = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
-    assert mirrored[-2]['blocks'][0]['text'] == ':outbox_tray: **Companion → Salah:**\nExported it: 120 rows.'
-    assert mirrored[-1]['blocks'][0]['text'] == '**Companion → you:**\nSent Salah the export.'
+    in_card = [json.dumps(m) for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m['thread_ts'] == '5.0']
+    said = [s for s in in_card if 'customer list' in s or '120 rows' in s or 'Sent Salah the export' in s]
+    assert '*Salah*' in said[0] and 'also export the customer list' in said[0]  # the copy of the thread, in order
+    assert '*Companion*' in said[1] and 'Exported it: 120 rows.' in said[1]
+    assert said[2].count('**Companion \\u2192 you:**\\nSent Salah the export.') == 1  # its word to the owner alone

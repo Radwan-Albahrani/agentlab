@@ -12,6 +12,7 @@ from . import (  # noqa: F401  (routing registers the handlers)
     asks,
     drafts,
     machine,
+    mirror,
     outbox,
     polls,
     publish,
@@ -69,6 +70,13 @@ def watch_pulls() -> None:
         time.sleep(reviews.PULLS_EVERY)
 
 
+def watch_mirrors() -> None:
+    """Re-sync live case threads, for any change Slack's events missed (mirror.py)."""
+    while True:
+        time.sleep(mirror.SWEEP_EVERY)
+        _guarded('mirrors', mirror.sweep)
+
+
 def _check_scopes(me: SlackResponse) -> None:
     """Say on the hub when the Slack app lacks scopes its manifest asks for: without them messages go unseen."""
     tokens = [('bot', me)]
@@ -102,5 +110,6 @@ def run() -> None:
     threading.Thread(target=poll, daemon=True).start()
     threading.Thread(target=watch_asks, daemon=True).start()
     threading.Thread(target=watch_pulls, daemon=True).start()
+    threading.Thread(target=watch_mirrors, daemon=True).start()
     handler = publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
     handler.start()

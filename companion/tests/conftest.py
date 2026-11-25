@@ -64,18 +64,42 @@ class FakeSlack:
 
     def __init__(self):
         self.messages, self.updates, self.uploads = [], [], []
+        self.sent = []  # messages and uploads, in the order they went
+        self.threads = {}  # (channel, root ts) -> its messages, as conversations_replies gives them
 
     def chat_postMessage(self, **kw):  # noqa: N802 (Slack SDK method names)
         self.messages.append(kw)
-        return {'ts': f'{len(self.messages)}.0'}
+        self.sent.append(kw)
+        ts = f'{len(self.messages)}.0'
+        root = kw.get('thread_ts') or ts
+        posted = {'ts': ts, 'thread_ts': root, 'user': 'BCOMPANION', 'bot_id': 'B_COMPANION'}
+        self.threads.setdefault((kw['channel'], root), []).append(
+            posted | {'text': kw.get('text') or '', 'blocks': kw.get('blocks') or []}
+        )
+        return {'ts': ts}
 
     def chat_update(self, **kw):
         self.updates.append(kw)
+        for (ch, _), msgs in self.threads.items():
+            for m in msgs:
+                if ch == kw['channel'] and m['ts'] == kw['ts']:
+                    m.update(text=kw.get('text') or '', blocks=kw.get('blocks') or [])
         return {}
 
     def files_upload_v2(self, **kw):
         self.uploads.append(kw)
-        return {}
+        self.sent.append(kw)
+        return {'files': [{'id': f'F{len(self.uploads)}'}]}
+
+    def files_info(self, file):
+        n = int(file[1:])
+        return {'file': {'shares': {'private': {self.uploads[n - 1]['channel']: [{'ts': f'{n}.5'}]}}}}
+
+    def say(self, channel, root, ts, user, text, files=None):
+        """Someone writes in a thread: it is there for conversations_replies; -> the Slack event."""
+        msg = {'ts': ts, 'thread_ts': root, 'user': user, 'text': text} | ({'files': files} if files else {})
+        self.threads.setdefault((channel, root), []).append(msg)
+        return dict(msg, channel=channel, channel_type='im' if channel.startswith('D') else 'channel')
 
     def conversations_open(self, users):
         return {'channel': {'id': 'D_OWNER' if users == OWNER else 'D_' + users}}
@@ -86,7 +110,7 @@ class FakeSlack:
         return {'messages': [{'text': 'head', 'blocks': [{'type': 'actions'}]}]}
 
     def conversations_replies(self, **kw):
-        return {'messages': []}
+        return {'messages': list(self.threads.get((kw['channel'], kw['ts']), []))}
 
     def conversations_info(self, channel):
         return {'channel': {'name': 'general', 'is_member': True}}

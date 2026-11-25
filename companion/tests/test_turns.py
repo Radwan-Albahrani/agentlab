@@ -1,5 +1,5 @@
 import pytest
-from bot import ledger, machine, slack, state, t3, tasks
+from bot import ledger, machine, mirror, slack, state, t3, tasks
 from conftest import OWNER, ROUTE, set_settings
 
 
@@ -243,6 +243,8 @@ def test_a_colleagues_status_ask_gets_the_record_only_in_a_shared_case(monkeypat
         thread_ts='60.1',
         case={'ch': 'D_OWNER', 'ts': '61.1', 'head': 'own', 'mode': mode},
     )
+    mirror.begin(t)
+    mirror.noticed(fresh_bot.say('D_U_SALAH', '60.1', '60.5', 'U_SALAH', 'any update?'))
     tasks.follow_up(t, 'any update?', None, '60.5', 'thread', 'U_SALAH')
     in_case = [m for m in fresh_bot.messages if m['channel'] == 'D_OWNER' and m.get('thread_ts') == '61.1']
     assert 'any update?' in str(in_case)

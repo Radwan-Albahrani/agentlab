@@ -5,7 +5,7 @@ import json
 import os
 
 import pytest
-from bot import cases, jobs, ledger, machine, routing, slack, state, t3, tasks
+from bot import jobs, ledger, machine, mirror, routing, slack, state, t3, tasks
 from conftest import OWNER, ROUTE, agent_sends, click, receipts, set_settings
 
 SALAH_DM = 'D_U_SALAH'  # Salah's DM with the bot
@@ -34,6 +34,7 @@ def case(monkeypatch, t3_quiet, fresh_bot):
     monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
     monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: [])
     message = {'ts': '60.1', 'user': 'U_SALAH', 'text': 'I fixed them'}
+    fresh_bot.threads[(SALAH_DM, '60.1')] = [message]
     monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, trigger: [message])
     tasks.start(SALAH_DM, '60.1', '60.1', 'I fixed them', guest='U_SALAH')
     t = state.state['tasks'][state.key(SALAH_DM, '60.1')]
@@ -81,7 +82,7 @@ def test_the_colleague_hears_only_what_the_agent_sends_and_its_final_message_is_
     theirs = text_of(posted(fresh_bot, SALAH_DM, '60.1'))
     assert 'All 16 PRs' in theirs and 'needs a test' not in theirs
     case_thread = in_case(fresh_bot, t)
-    assert 'Companion → Salah' in case_thread and 'All 16 PRs' in case_thread  # what went, copied
+    assert '*Companion*  ·  ' in case_thread and 'All 16 PRs' in case_thread  # what went, copied
     assert 'Companion → you' in case_thread and 'needs a test' in case_thread  # the agent's word to the owner
     assert 'Nothing was sent' not in case_thread
     assert kinds(t) == [('in', '', 'received'), ('message', 'colleague', 'sent'), ('final', 'case', 'sent')]
@@ -144,7 +145,7 @@ def test_on_the_owners_word_the_agent_sends_the_colleague_a_message(case, fresh_
         t, {'type': 'message', 'to': 'Salah', 'text': 'The stack is on hold until the engine is in a repo.'}
     )
     assert 'on hold' in text_of(posted(fresh_bot, SALAH_DM, '60.1'))
-    assert 'Companion → Salah' in in_case(fresh_bot, t)
+    assert '*Companion*  ·  ' in in_case(fresh_bot, t) and 'on hold' in in_case(fresh_bot, t)
     assert not os.path.exists(os.path.join(box, 'send.json'))
     (r,) = receipts(box)
     assert r == {
@@ -162,6 +163,7 @@ def test_a_colleague_writing_while_the_owner_talks_waits_its_turn(case, fresh_bo
         False,
     )  # fmt: skip
     n = len(sent)
+    mirror.noticed(fresh_bot.say(SALAH_DM, '60.1', '92.1', 'U_SALAH', 'the staging log is attached now'))
     tasks.follow_up(t, 'the staging log is attached now', None, '92.1', 'thread', 'U_SALAH')
     assert len(sent) == n and t['queue'][0]['text'] == 'the staging log is attached now'
     assert 'the staging log is attached now' in in_case(fresh_bot, t)  # the owner sees it at once
@@ -229,6 +231,7 @@ def test_a_colleague_talking_in_a_review_they_asked_for_opens_a_shared_case(monk
     t['audit'] = tasks.audit('U_SALAH', 'in #tech')
     machine.begin_turn(t, 'system', 'thread')
     machine.end_turn(t, 'answered')
+    fresh_bot.say('C_TECH', '80.1', '81.1', 'U_SALAH', 'why did it fail the migration check?')
     tasks.follow_up(t, 'why did it fail the migration check?', None, '81.1', 'thread', 'U_SALAH')
     assert t['party'] == {'kind': 'colleague', 'user': 'U_SALAH'} and t['case']['mode'] == 'shared'
     assert 'migration check' in in_case(fresh_bot, t)
@@ -358,6 +361,7 @@ def test_a_case_in_a_thread_syncs_the_whole_thread_and_an_ask_written_before_the
         {'ts': '70.4', 'user': 'U_SALAH', 'text': '<@BCOMPANION>'},
     ]
     monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, trigger: thread)
+    fresh_bot.threads[('C_TECH', '70.1')] = list(thread)
     tasks.start('C_TECH', '70.1', '70.4', '<@BCOMPANION>', guest='U_SALAH')
     t = state.state['tasks'][state.key('C_TECH', '70.1')]
     said = [(i['label'], i['text']) for i in ledger.items(t) if i['kind'] == 'in']
@@ -367,66 +371,14 @@ def test_a_case_in_a_thread_syncs_the_whole_thread_and_an_ask_written_before_the
     ]
     assert t['title'].startswith('compare it with the rust one')
     case = in_case(fresh_bot, t)
-    assert 'Earlier in the thread' in case and 'Vercel Board looks neat' in case
+    assert case.index('Vercel Board looks neat') < case.index('compare it') < case.index('readme is too long')
 
     fresh_bot.messages.clear()
-    routing.route({'channel': 'C_TECH', 'ts': '70.6', 'thread_ts': '70.1', 'user': 'U_ALI', 'text': 'nice'}, False)
-    later = {'channel': 'C_TECH', 'ts': '70.7', 'thread_ts': '70.1', 'user': 'U_SALAH', 'text': '<@BCOMPANION>'}
+    routing.route(fresh_bot.say('C_TECH', '70.1', '70.6', 'U_ALI', 'nice'), False)
+    later = fresh_bot.say('C_TECH', '70.1', '70.7', 'U_SALAH', '<@BCOMPANION>')
     routing.route(later, True)
     routing.route(dict(later), True)  # Slack sends a tag as app_mention and as message
     news = [(i['label'], i['text']) for i in ledger.items(t) if i['kind'] == 'in'][2:]
     assert news == [('Ali', 'nice'), ('Salah', '@BCOMPANION')]
     case = in_case(fresh_bot, t)
-    assert 'nice' in case and '> @BCOMPANION' in case
-
-
-def fetch_into(tmp_path):
-    def fetch(f, folder):
-        if f['name'] == 'broken.pdf':
-            return '', "couldn't download it: 403"
-        p = tmp_path / f['name']
-        p.write_bytes(b'x')
-        return str(p), ''
-
-    return fetch
-
-
-def test_a_colleagues_files_reach_the_case_as_files_with_their_words_as_written(case, fresh_bot, monkeypatch, tmp_path):
-    t, _ = case
-    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
-    ev = {
-        'ts': '60.5',
-        'user': 'U_SALAH',
-        'text': 'fyi <@BCOMPANION>',
-        'files': [{'name': 'TDF.xlsx', 'url_private': 'u'}],
-    }
-    cases.in_thread(t, ev)
-    (up,) = fresh_bot.uploads
-    assert (up['channel'], up['thread_ts']) == ('D_OWNER', t['case']['ts'])
-    assert [f['filename'] for f in up['file_uploads']] == ['TDF.xlsx'] and 'fyi @' in up['initial_comment']
-    assert 'file(s)' not in in_case(fresh_bot, t)
-    assert ledger.items(t)[-1]['attachments'][0]['state'] == 'sent'
-
-
-def test_a_file_that_cannot_be_passed_on_is_named_with_why(case, fresh_bot, monkeypatch, tmp_path):
-    t, _ = case
-    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
-    files = [{'name': 'broken.pdf', 'url_private': 'u'}]
-    cases.in_thread(t, {'ts': '60.6', 'user': 'U_SALAH', 'text': 'see this', 'files': files})
-    assert not fresh_bot.uploads
-    assert "broken.pdf held (couldn't download it: 403)" in in_case(fresh_bot, t) and 'see this' in in_case(
-        fresh_bot, t
-    )
-
-
-def test_the_first_messages_files_reach_the_case_too(monkeypatch, t3_quiet, fresh_bot, tmp_path):
-    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
-    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
-    monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: [])
-    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
-    message = {'ts': '61.1', 'user': 'U_SALAH', 'text': 'trees?', 'files': [{'name': 'a.pdf', 'url_private': 'u'}]}
-    monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, trigger: [message])
-    tasks.start(SALAH_DM, '61.1', '61.1', 'trees?', guest='U_SALAH')
-    t = state.state['tasks'][state.key(SALAH_DM, '61.1')]
-    (up,) = fresh_bot.uploads
-    assert up['thread_ts'] == t['case']['ts'] and [f['filename'] for f in up['file_uploads']] == ['a.pdf']
+    assert 'nice' in case and '"text": "@BCOMPANION"' in case  # each once, as written
