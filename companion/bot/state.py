@@ -24,24 +24,15 @@ def _rows(s: State) -> Json:
 SHAPE: TypeAdapter[State] = TypeAdapter(State)
 
 
-def _retire(raw: Json) -> None:
-    """Once, then removed: items saved before attachments (fsm.ATTACHMENT) drop "held", "paths" and post "files"."""
-    for t in raw['tasks'].values():
-        for it in t.get('items') or []:
-            it.pop('held', None)
-            it.pop('paths', None)
-            (it.get('post') or {}).pop('files', None)
-
-
 def _load() -> State:
     """The stored records, checked against shapes.State: one that doesn't fit stops the companion here."""
     rows = COMP.store_all()
     raw: Json = {'refused': [], 'drafts': {}, 'polls': {}}
     raw.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
     raw['tasks'] = {k[5:]: v for k, v in rows.items() if k.startswith('task:')}
-    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())  # as stored: retired rows re-save
-    _retire(raw)
-    return SHAPE.validate_python(raw)
+    s = SHAPE.validate_python(raw)
+    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())
+    return s
 
 
 state = _load()
