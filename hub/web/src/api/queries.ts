@@ -52,7 +52,12 @@ export function useChannelsRefresh(name: string, channels: { id: string }[]): [b
   ];
 }
 
-/** Asks a companion to re-read its PRs, then polls until a list newer than `at` arrives (max 30 s); never on a timer. */
+/** How old (seconds) the companion's PR list may be before opening the tab asks for a fresh one: the companion re-reads
+ * it every 2 minutes on its own (bot/reviews.py PULLS_EVERY), so this only bites when it was down. */
+const PULLS_STALE = 300;
+
+/** Shows the companion's PR list as it is, asking for a fresh one on open only when it is stale; Refresh asks, then
+ * polls until a list newer than `at` arrives (max 30 s). */
 export function usePullsRefresh(name: string, at: number): [boolean, () => void] {
   const [opened] = useState(at);
   const [waiting, setWaiting] = useState<number | null>(null);
@@ -70,7 +75,7 @@ export function usePullsRefresh(name: string, at: number): [boolean, () => void]
     [name],
   );
   useEffect(() => {
-    ask(opened);
+    if (Date.now() / 1000 - opened > PULLS_STALE) ask(opened);
   }, [ask, opened]);
   const refreshing = waiting !== null && at <= waiting;
   useCompanionPoll(name, refreshing, () => {

@@ -20,7 +20,7 @@ import re
 import time
 from typing import Any
 
-from . import cases, errands, gate, ledger, machine, polls, posts, reviews, slack
+from . import attachments, cases, errands, ledger, machine, polls, posts, reviews, slack
 from .config import FILES, OWNER, log
 from .shapes import Item, ItemFields, Task
 from .state import review_of
@@ -124,6 +124,7 @@ def take(task: Task, box: str, raw: object) -> None:
         if (to := raw.get('to')) is not None:
             fields['raw_to'] = to
         it = ledger.add(task, 'message', **fields)
+        attachments.check(it, box)  # each file ready or held, from here on
         if problem or (not text and not files and not raw.get('poll')):
             ledger.move(task, it, 'refused', note=problem or 'it has no text and no files')
             return
@@ -152,20 +153,22 @@ def take(task: Task, box: str, raw: object) -> None:
 
 
 def _message(task: Task, box: str, it: Item) -> None:
-    ok, refused = gate.files(box, it.get('files') or [])
+    """A checked message (its attachments ready or held) to the module that sends it to its "to"."""
     to = it['to']
     if to == 'colleague':
-        cases.deliver(task, it, ok, refused)
+        cases.deliver(task, it)
     elif to in ('owner', 'thread'):
         ch, tts = cases.owner_place(task) if to == 'owner' else (task['channel'], task['thread_ts'])
-        md = it['text'] + ('\n:no_entry: Held back: ' + ', '.join(refused) if refused else '')
+        held = attachments.held(it)
+        md = it['text'] + (f'\n:no_entry: Held back: {held}' if held else '')
+        ok = attachments.ready(it)
         if ok:
-            slack.upload(ch, tts, ok, md or None)
+            attachments.upload(it, [(ch, tts)], md or None)
         elif md:
             slack.post(ch, tts, it['text'][:150] or 'Files', md=md)
-        ledger.move(task, it, 'sent', held=', '.join(refused) or None)
+        ledger.move(task, it, 'sent')
     elif to == 'requester':
-        errands.offer_reply(task, it, ok, refused)
+        errands.offer_reply(task, it)
     else:
-        posts.offer(task, it, ok, refused)
+        posts.offer(task, it)
     log('outbox item', it['id'], it['kind'], to, it['state'])

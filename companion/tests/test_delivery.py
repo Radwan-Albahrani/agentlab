@@ -1,7 +1,8 @@
 import json
 import os
 
-from bot import ledger, machine, outbox, posts, prompts, slack, state
+import pytest
+from bot import attachments, ledger, machine, outbox, posts, prompts, slack, state
 from conftest import ROUTE, agent_sends, click, receipts
 
 
@@ -24,7 +25,11 @@ def test_files_go_into_the_tasks_own_thread(fresh_bot):
     assert [(u['channel'], u['thread_ts']) for u in fresh_bot.uploads] == [('C_TECH', '300.1')]
     assert not any(m['channel'] == 'D_OWNER' for m in fresh_bot.messages)
     (it,) = ledger.items(t)
-    assert it['state'] == 'sent' and it['held'] == 'notes.txt (missing)'
+    assert it['state'] == 'sent' and states(it) == [('proof.png', 'sent', ''), ('notes.txt', 'held', 'missing')]
+
+
+def states(it):
+    return [(a['name'], a['state'], a['note']) for a in it['attachments']]
 
 
 def put(t, *names):
@@ -47,9 +52,16 @@ def test_files_for_someone_by_dm_go_with_the_message_once_the_owner_sends_it(fre
         'TDF-trees.xlsx',
         'claims.zip',
     ]
-    assert 'Message sent to Ali by DM with 2 files: TDF-trees.xlsx, claims.zip' in fresh_bot.text()
+    sent = (
+        'Message sent to Ali by DM · files: TDF-trees.xlsx sent · claims.zip sent · run.sh held (file type not allowed)'
+    )
+    assert ledger.items(t)[-1]['note'] == sent
     (r,) = receipts(box)
-    assert r['state'] == 'sent' and r['files'] == files and r['held_back'] == 'run.sh (file type not allowed)'
+    assert r['state'] == 'sent' and r['files'] == [
+        {'name': 'TDF-trees.xlsx', 'state': 'sent', 'why': ''},
+        {'name': 'claims.zip', 'state': 'sent', 'why': ''},
+        {'name': 'run.sh', 'state': 'held', 'why': 'file type not allowed'},
+    ]
 
 
 def test_files_alone_need_no_text_and_a_poll_cannot_carry_them(fresh_bot):
@@ -59,7 +71,39 @@ def test_files_alone_need_no_text_and_a_poll_cannot_carry_them(fresh_bot):
     assert [u['channel'] for u in fresh_bot.uploads] == ['C_TECH'] and ledger.items(t)[-1]['state'] == 'sent'
     poll = {'question': 'Ship?', 'options': ['Yes', 'No'], 'closes': '2099-01-01T00:00:00+00:00'}
     agent_sends(t, {'type': 'message', 'to': '#ask-tech', 'text': 'Vote', 'poll': poll, 'files': ['chart.png']})
-    assert "a poll can't carry files" in ledger.items(t)[-1]['note']
+    it = ledger.items(t)[-1]
+    assert "a poll can't carry files" in it['note'] and states(it) == [('chart.png', 'withheld', 'refused')]
+
+
+def test_files_of_a_message_the_owner_turns_down_are_withheld(fresh_bot):
+    t = task_in()
+    put(t, 'a.pdf')
+    agent_sends(t, {'type': 'message', 'to': 'Ali', 'text': 'Here', 'files': ['a.pdf']})
+    click(fresh_bot, 'post_skip')
+    assert states(ledger.items(t)[-1]) == [('a.pdf', 'withheld', 'rejected by the owner')] and not fresh_bot.uploads
+
+
+def test_a_failed_upload_marks_its_files_failed_and_the_message_still_sent(fresh_bot, monkeypatch):
+    t = task_in(guest='U_SALAH')
+    put(t, 'a.pdf')
+
+    def refuse(**kw):
+        raise RuntimeError('file_upload_failed')
+
+    monkeypatch.setattr(fresh_bot, 'files_upload_v2', refuse)
+    agent_sends(t, {'type': 'message', 'to': 'colleague', 'text': 'Here', 'files': ['a.pdf']})
+    it = ledger.items(t)[-1]
+    assert it['state'] == 'sent' and states(it) == [('a.pdf', 'failed', "Slack didn't take it: file_upload_failed")]
+    assert '_Files: a.pdf failed (Slack didn' in fresh_bot.text()  # the owner's case says so
+
+
+def test_a_message_cannot_be_recorded_sent_while_its_files_wait():
+    t = task_in()
+    put(t, 'a.pdf')
+    it = ledger.add(t, 'message', to='people', label='Ali', text='x', files=['a.pdf'])
+    attachments.check(it, os.path.join(outbox.OUTBOX, t['outbox']))
+    with pytest.raises(ledger.IllegalMoveError, match='still waiting to go'):
+        ledger.move(t, it, 'sent')
 
 
 def test_the_agent_is_told_how_to_send_files_to_anyone():

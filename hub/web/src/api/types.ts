@@ -320,8 +320,17 @@ export interface CaseItem {
   side?: boolean;
   question?: boolean;
   where?: string;
-  held?: string;
+  /** an outgoing message's files, each in its own state (companion/bot/attachments.py) */
+  attachments?: Attachment[];
   history: [ItemState, number][];
+}
+
+/** A file on an outgoing message: ready to go, held back by the gate, sent, failed (the upload), or withheld (its
+ * message never went); note says why. */
+export interface Attachment {
+  name: string;
+  state: 'ready' | 'held' | 'sent' | 'failed' | 'withheld';
+  note: string;
 }
 
 export interface Poll {

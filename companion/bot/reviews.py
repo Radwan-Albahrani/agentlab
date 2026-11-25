@@ -95,43 +95,52 @@ def app() -> App | None:
     return _app['app']
 
 
+PULLS_EVERY = 120  # seconds between re-reads of the open PRs (main.watch_pulls), so the hub's list is always fresh
+
+
 def refresh() -> None:
-    """Re-read the open PRs."""
+    """Re-read the open PRs: GitHub is asked outside the lock, the state changes under it."""
     a = app()
     if not a:
-        state['pulls'] = []
+        with lock:
+            state['pulls'] = []
         return
     try:
         found = pulls.open_pulls(a)
         accounts = [i['account'] for i in a.installations()]
-        status.update({'ready': True, 'error': '', 'bot': a.slug(), 'accounts': accounts, 'at': time.time()})
-        state['pulls'] = found
+        bot = a.slug()
     except Exception as e:  # keep the last list
         log('pull requests unavailable:', e)
         status.update({'error': str(e)[:200], 'at': time.time()})
+    else:
+        with lock:
+            state['pulls'] = found
+        status.update({'ready': True, 'error': '', 'bot': bot, 'accounts': accounts, 'at': time.time()})
     _refresh_people(a)
-    save()
+    with lock:
+        save()
 
 
 def _refresh_people(a: App) -> None:
     """Hourly: who can work on the repos with open PRs, and the App's private repos (the hub's pickers).
 
-    Failures keep the last list."""
+    Failures keep the last list. GitHub is asked outside the lock."""
     known = state.get('github_people')
     if known and time.time() - known['at'] < PEOPLE_EVERY:
         return
     try:
-        found = pulls.people(a, state.get('pulls') or [])
+        found = pulls.people(a, list(state.get('pulls') or []))
     except Exception as e:
         log('GitHub people unavailable:', e)
         found = known['list'] if known else []
-    state['github_people'] = {'at': time.time(), 'list': found}
     try:
         repos = sorted((r['name'] for r in a.repositories() if r['private']), key=str.casefold)
     except Exception as e:
         log('GitHub repositories unavailable:', e)
         repos = state['github_repos']['list'] if 'github_repos' in state else []
-    state['github_repos'] = {'at': time.time(), 'list': repos}
+    with lock:
+        state['github_people'] = {'at': time.time(), 'list': found}
+        state['github_repos'] = {'at': time.time(), 'list': repos}
 
 
 def latest(pr_id: str) -> tuple[str, Task] | tuple[None, None]:

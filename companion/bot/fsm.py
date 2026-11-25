@@ -7,7 +7,7 @@ the companion's lifecycle state."""
 
 from collections.abc import Mapping
 
-from .shapes import AskState, DraftState, PollState, RetryState, ReviewState, StackState
+from .shapes import AskState, DraftState, FileState, PollState, RetryState, ReviewState, StackState
 
 
 class IllegalStateError(ValueError):
@@ -95,6 +95,18 @@ REVIEW: Machine[ReviewState] = Machine(
 #   done       every open PR of it was reviewed (or already had been since it started)
 #   stopped    someone stopped the review of its current PR: the rest is left alone
 STACK: Machine[StackState] = Machine('stack', {'reviewing': ('done', 'stopped'), 'done': (), 'stopped': ()})
+
+# A file the agent attached to a message (attachments.py, a ledger item's "attachments"): the gate decides the first
+# state, the message's fate the last. ledger.move refuses to send a message while a file of it is still ready.
+#   ready     it passed the gate (allowed type, size, in the outbox) and goes when its message goes
+#   held      the gate kept it back: it never leaves
+#   sent      it went with its message
+#   failed    its message went, the upload did not
+#   withheld  its message never went (refused, rejected, replaced, failed, dry run)
+ATTACHMENT: Machine[FileState] = Machine(
+    'attachment',
+    {'ready': ('sent', 'failed', 'withheld'), 'held': (), 'sent': (), 'failed': (), 'withheld': ()},
+)
 
 # A task's automatic retry after a transient model failure (tasks.retry_transient), task['retry']: {state, count, at}.
 #   idle     nothing pending (count: the retries this turn so far)

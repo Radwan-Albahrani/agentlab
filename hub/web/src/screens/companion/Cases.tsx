@@ -174,11 +174,21 @@ function Item({ it, who, me }: { it: CaseItem; who: string; me: string }) {
           <SlackText text={it.text} />
         </div>
       )}
-      {it.files?.length ? <span {...stylex.props(styles.note)}>Files: {it.files.join(', ')}</span> : null}
-      {it.held && <span {...stylex.props(styles.note)}>Held back: {it.held}</span>}
+      {filesLine(it) && <span {...stylex.props(styles.note)}>Files: {filesLine(it)}</span>}
       {it.note && it.state !== 'sent' && <span {...stylex.props(styles.note)}>{it.note}</span>}
     </article>
   );
+}
+
+/** "a.xlsx · run.sh held (file type not allowed)": an outgoing message's files with any state but sent, or the names
+ * of the files someone sent in. */
+function filesLine(it: CaseItem): string {
+  if (it.attachments?.length) {
+    return it.attachments
+      .map((a) => (a.state === 'sent' ? a.name : `${a.name} ${a.state}${a.note ? ` (${a.note})` : ''}`))
+      .join(' · ');
+  }
+  return it.files?.join(', ') ?? '';
 }
 
 function Waiting({ t }: { t: Task }) {

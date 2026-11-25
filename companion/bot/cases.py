@@ -9,9 +9,9 @@ colleague's thread is public and answered there (machine turn place)."""
 
 import os
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
-from . import ledger, machine, prompts, slack, t3
+from . import attachments, ledger, machine, prompts, slack, t3
 from .config import COMP, NAME, OWNER, log
 from .shapes import Item, ItemFields, Json, Queued, Task
 from .state import key_of, lock, now_iso, save, state
@@ -192,9 +192,8 @@ def _render(task: Task, it: Item, old: str | None) -> None:
         files = f'\n_{len(it["files"])} file(s)_' if it.get('files') else ''
         note(task, f'**{it["label"]}:**\n' + quote(it['text']) + files, f'{it["label"]} wrote')
     elif kind == 'message' and it.get('to') == 'colleague' and st == 'sent':
-        files = f'\n_With {len(it["files"])} file(s): {", ".join(it["files"])}_' if it.get('files') else ''
-        held = f'\n:no_entry: Held back: {it["held"]}' if it.get('held') else ''
-        note(task, f':outbox_tray: **{NAME} → {who(task)}:**\n{it["text"]}{files}{held}', f'Sent to {who(task)}')
+        files = f'\n_Files: {attachments.summary(it)}_' if it.get('attachments') else ''
+        note(task, f':outbox_tray: **{NAME} → {who(task)}:**\n{it["text"]}{files}', f'Sent to {who(task)}')
     elif kind == 'final' and st == 'sent' and it.get('to') == 'thread':  # shared: the colleague read it there
         note(task, f'**{NAME} → {who(task)}:**\n{it["text"]}', f'{NAME} replied to {who(task)}')
 
@@ -261,16 +260,14 @@ def next_in_line(task: Task) -> Queued | None:
     return q.pop(0) if q else None
 
 
-def deliver(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[str] = ()) -> None:
-    """A ledger message for the colleague: into their thread at once. ok / refused: its files, through the gate."""
-    if refused:
-        it['held'] = ', '.join(refused)
-    if not slack.post(
-        task['channel'], task['thread_ts'], first_sentence(no_emoji(it['text']), 200) or 'Message', md=it['text']
+def deliver(task: Task, it: Item) -> None:
+    """A ledger message for the colleague: into their thread at once, with its ready files (attachments.py)."""
+    if it['text'] and not slack.post(
+        task['channel'], task['thread_ts'], first_sentence(no_emoji(it['text']), 200), md=it['text']
     ):
         ledger.move(task, it, 'failed', note='Slack did not take the message')
         return
-    if ok:
-        slack.upload(task['channel'], task['thread_ts'], ok)
+    if attachments.ready(it):
+        attachments.upload(it, [(task['channel'], task['thread_ts'])])
     ledger.move(task, it, 'sent')
     COMP.event('sent', f'Message to {who(task)}', task=key_of(task), to=who(task), detail=it['text'])

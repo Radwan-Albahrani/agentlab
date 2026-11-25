@@ -1,10 +1,10 @@
 """Errands: work done as the owner for someone who asked them, run from a thread in the owner's DM; owner-only buttons."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from slack_bolt import Ack
 
-from . import cases, gate, jobs, ledger, machine, projects, prompts, slack, t3, tasks
+from . import attachments, cases, gate, jobs, ledger, machine, projects, prompts, slack, t3, tasks
 from .config import COMP, NAME, OWNER, log, mode
 from .shapes import Item, Request, Route, Task
 from .slack import Json
@@ -237,7 +237,7 @@ def after_turn(task: Task, completed: bool) -> None:
     for it in ledger.items(task):
         if it['kind'] == 'message' and it['state'] == 'approved' and it.get('after') == 'turn':
             if completed:
-                send_to_requester(task, it, it.get('paths') or [])
+                send_to_requester(task, it)
             else:
                 ledger.move(task, it, 'failed', note='the turn did not complete')
 
@@ -260,13 +260,11 @@ def stop(task: Task, k: str) -> None:
         )
 
 
-def offer_reply(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[str] = ()) -> None:
+def offer_reply(task: Task, it: Item) -> None:
     """A ledger message for an errand's requester: Send / Don't send for the owner (sent at once when it answers a
-    decision the owner just approved; never sent in dry run)."""
+    decision the owner just approved; never sent in dry run). Its files: attachments.py."""
     who = cases.who(task)
-    it['paths'] = list(ok)
-    if refused:
-        it['held'] = ', '.join(refused)
+    ok = attachments.ready(it)
     if mode() == 'owner':
         slack.post(
             task['channel'],
@@ -281,12 +279,14 @@ def offer_reply(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[
     approval = ledger.latest(task, 'approval', {'approved'})
     if turn.get('by') == 'decision' and approval and approval['updated'] >= turn.get('at', 0) - 5:
         ledger.move(task, it, 'approved', note=f'with approval {approval["id"]}')
-        send_to_requester(task, it, ok)
+        send_to_requester(task, it)
         return
+    held = attachments.held(it)
     md = (
         f':outbox_tray: **Send to {who}?**\n'
         + quote(it['text'])
-        + (f'\n\nWith {len(ok)} file(s), shown above.' if ok else '')
+        + (f'\n\nWith {attachments.described(ok)}, shown above.' if ok else '')
+        + (f'\n:no_entry: Held back: {held}' if held else '')
     )
     if ok:
         slack.upload(task['channel'], task['thread_ts'], ok, f':mag: The file(s) that would go to {who}')
@@ -305,9 +305,10 @@ def offer_reply(task: Task, it: Item, ok: Sequence[str] = (), refused: Sequence[
     ledger.move(task, it, 'awaiting_owner', card={'ch': task['channel'], 'ts': ts}, md=md)
 
 
-def send_to_requester(task: Task, it: Item, files: Sequence[str] = ()) -> None:
-    """Send the reply in the requester's thread if possible, else by DM; sent or failed."""
+def send_to_requester(task: Task, it: Item) -> None:
+    """Send the reply in the requester's thread if possible, else by DM, then its ready files there; sent or failed."""
     who, req = cases.who(task), machine.party(task)['user']
+    files = attachments.ready(it)
     targets: list[tuple[str, str | None]] = (
         [] if task.get('source_im') else [(task['source_ch'], task.get('source_thread'))]
     )
@@ -322,14 +323,14 @@ def send_to_requester(task: Task, it: Item, files: Sequence[str] = ()) -> None:
                 text=first_sentence(it['text'], 200),
                 blocks=slack.blocks(it['text'], f"From {slack.name(OWNER)}'s assistant"),
             )
-            if files:
-                slack.upload(ch, tts, files)
             break
         except Exception as e:
             log('send to requester failed in', ch, e)
     else:
         ledger.move(task, it, 'failed', note=f"couldn't reach {who}")
         return
+    if files:  # where the message went, so a failed upload never sends the message twice
+        attachments.upload(it, [(ch, tts)])
     slack.post(
         task['channel'],
         task['thread_ts'],
@@ -364,7 +365,7 @@ def decide_reply(task: Task, k: str, send: bool, card: str) -> None:
     )
     if send:
         ledger.move(task, it, 'approved')
-        send_to_requester(task, it, it.get('paths') or [])
+        send_to_requester(task, it)
     else:
         ledger.move(task, it, 'rejected')
         close_head(task, f':black_square_for_stop: Closed · nothing sent to {who}', 'black_square_for_stop')

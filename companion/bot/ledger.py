@@ -15,7 +15,8 @@ Item: {id, kind, state, at, updated, history: [[state, at, note]], by, to, label
   state     see STATES: each kind starts in its first state and moves only along MOVES.
   to        who it is for: 'colleague', 'owner', 'thread', 'channel', 'people'; label is the human form ("#bugs").
   card      {ch, ts}: the message where the owner decides, while one is needed.
-  ref       the item id an edit changes, or an approval a withdraw takes back."""
+  ref       the item id an edit changes, or an approval a withdraw takes back.
+  attachments  an outgoing message's files, each in its own state (attachments.py, fsm.ATTACHMENT)."""
 
 import contextlib
 import json
@@ -27,8 +28,9 @@ from typing import Literal, Unpack, get_args
 
 from tables import ItemRow
 
+from . import attachments
 from .config import COMP, FILES, log
-from .shapes import Item, ItemData, ItemFields, ItemKind, ItemState, Task
+from .shapes import Item, ItemData, ItemFields, ItemKind, ItemState, Json, Task
 from .state import key_of, save
 
 STATES: dict[ItemKind, tuple[ItemState, ...]] = {
@@ -57,6 +59,7 @@ MOVES: dict[ItemState, set[ItemState]] = {
     'approved': {'sent', 'failed'},
 }
 OPEN: tuple[ItemState, ...] = ('received', 'awaiting_owner', 'approved')  # not settled yet
+NEVER_WENT: tuple[ItemState, ...] = ('refused', 'rejected', 'replaced', 'withdrawn', 'failed', 'dry_run', 'lost')
 LABELS: dict[ItemState, str] = {  # how a state reads to people (receipts, case thread, hub)
     'received': 'received',
     'awaiting_owner': 'waiting for the owner',
@@ -129,6 +132,10 @@ def move(task: Task, it: Item, state: ItemState, note: str = '', **fields: Unpac
     old = it['state']
     if state not in STATES[it['kind']] or state not in MOVES.get(old, ()):
         raise IllegalMoveError(f'{it["kind"]} {it["id"]}: {old} -> {state}')
+    if state == 'sent' and attachments.ready(it):
+        raise IllegalMoveError(f'{it["kind"]} {it["id"]}: sent while its files are still waiting to go')
+    if state in NEVER_WENT:
+        attachments.settle(it, 'withheld', LABELS[state])
     now = time.time()
     it.update({'state': state, 'updated': now})
     it.update(fields)
@@ -188,8 +195,7 @@ def receipts(task: Task) -> None:
             'meaning': LABELS[i['state']],
             'note': i.get('note', ''),
             'text': (i.get('text') or '')[:120],
-            'files': i.get('files') or [],
-            'held_back': i.get('held') or '',
+            'files': [{'name': a['name'], 'state': a['state'], 'why': a['note']} for a in i.get('attachments') or []],
         }
         for i in items(task)
         if i['kind'] not in ('in', 'final')
@@ -206,9 +212,16 @@ def receipts(task: Task) -> None:
 
 Shown = Literal[  # what the hub gets of an item; never cards, drafts' markup or file paths
     'by', 'to', 'label', 'text', 'files', 'private', 'note', 'ref', 'action', 'details', 'side', 'question', 'where',
-    'held', 'history',
+    'history',
 ]  # fmt: skip
 SHOWN: tuple[Shown, ...] = get_args(Shown)
+
+
+def _shown(i: Item) -> Json:
+    data: Json = {f: i[f] for f in SHOWN if i.get(f) not in (None, '', [])}
+    if i.get('attachments'):  # each file's state, without its path
+        data['attachments'] = [{'name': a['name'], 'state': a['state'], 'note': a['note']} for a in i['attachments']]
+    return data
 
 
 def rows(task: Task) -> list[ItemRow]:
@@ -222,7 +235,7 @@ def rows(task: Task) -> list[ItemRow]:
             'kind': i['kind'],
             'state': i['state'],
             'at': i['at'],
-            'data': {f: i[f] for f in SHOWN if i.get(f) not in (None, '', [])},
+            'data': _shown(i),
         }
         for i in items(task)
     ]

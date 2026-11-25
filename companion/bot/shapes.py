@@ -33,6 +33,7 @@ PollState = Literal['open', 'closed']
 RetryState = Literal['idle', 'waiting', 'sent']
 ReviewState = Literal['queued', 'reviewing', 'waiting', 'paused', 'asked', 'approved', 'changes', 'failed', 'stopped']
 StackState = Literal['reviewing', 'done', 'stopped']
+FileState = Literal['ready', 'held', 'sent', 'failed', 'withheld']
 ItemKind = Literal['in', 'final', 'message', 'edit', 'approval', 'credential', 'poll_change', 'review']
 ItemState = Literal[
     'received', 'awaiting_owner', 'approved', 'sent', 'silent', 'applied', 'refused', 'rejected', 'replaced', 'withdrawn',
@@ -144,7 +145,17 @@ class Post(TypedDict, total=False):
     edit: str  # the ledger id of the message it edits
     where: str
     msgs: list[tuple[str, str]]  # (channel, ts) of the messages it edits
-    files: list[str]  # paths of the files that go with it, through the gate
+
+
+@with_config(STRICT)
+class Attachment(TypedDict):
+    """A file the agent attached to a message (attachments.py, fsm.ATTACHMENT). path: where it is, once the gate
+    passed it ('' when held); note: why it was held, failed or withheld."""
+
+    name: str
+    path: str
+    state: FileState
+    note: str
 
 
 @with_config(STRICT)
@@ -162,12 +173,11 @@ class ItemData(TypedDict, total=False):
     card: Card
     ref: str
     side: bool
-    held: str | None  # what the gate held back
+    attachments: list[Attachment]  # an outgoing message's files, each in its own state (attachments.py)
     after: Literal['turn']  # sent once the turn ends (errands.after_turn)
     action: str
     md: str
     post: Post
-    paths: list[str]
     where: str
     msgs: list[tuple[str, str]] | None  # (channel, ts) of the posted messages
     reply: str

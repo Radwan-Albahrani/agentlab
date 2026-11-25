@@ -269,7 +269,7 @@ def accounts(host: str, prof: str, page: Json) -> Json:
 
 
 CASE_ITEM = ('seq', 'kind', 'state', 'at', 'to', 'label', 'text', 'files', 'private', 'note', 'action', 'details',
-             'side', 'question', 'where', 'held', 'history')  # fmt: skip
+             'side', 'question', 'where', 'attachments', 'history')  # fmt: skip
 
 
 def _case_item(it: Json) -> Json:

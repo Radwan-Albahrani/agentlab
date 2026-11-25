@@ -62,6 +62,13 @@ def watch_asks() -> None:
         _guarded('asks', asks.tick)
 
 
+def watch_pulls() -> None:
+    """Keep the open PRs fresh on their own, so the hub's list never waits on GitHub (the hub's Refresh still asks)."""
+    while True:
+        _guarded('pull requests', asks.refresh_pulls)
+        time.sleep(reviews.PULLS_EVERY)
+
+
 def _check_scopes(me: SlackResponse) -> None:
     """Say on the hub when the Slack app lacks scopes its manifest asks for: without them messages go unseen."""
     tokens = [('bot', me)]
@@ -94,5 +101,6 @@ def run() -> None:
     _check_scopes(me)
     threading.Thread(target=poll, daemon=True).start()
     threading.Thread(target=watch_asks, daemon=True).start()
+    threading.Thread(target=watch_pulls, daemon=True).start()
     handler = publish.handler = SocketModeHandler(slack.app, secret('app-token.txt'))
     handler.start()
