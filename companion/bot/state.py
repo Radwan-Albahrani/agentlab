@@ -39,10 +39,9 @@ def _load() -> State:
     raw: Json = {'refused': [], 'drafts': {}, 'polls': {}}
     raw.update((k, v) for k, v in rows.items() if not k.startswith('task:'))
     raw['tasks'] = {k[5:]: v for k, v in rows.items() if k.startswith('task:')}
+    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())  # as stored: retired rows re-save
     _retire(raw)
-    s = SHAPE.validate_python(raw)
-    _written.update((k, json.dumps(v, sort_keys=True)) for k, v in rows.items())
-    return s
+    return SHAPE.validate_python(raw)
 
 
 state = _load()
