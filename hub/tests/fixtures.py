@@ -347,7 +347,7 @@ def companion_db(path: str) -> None:
             'task': 't4',
             'head': 'abc1234',
             'at': iso(NOW - 4000),
-            'counts': {'findings': 2, 'blocking': 0, 'open': 0, 'qa': 'pass'},
+            'counts': {'findings': 2, 'blocking': 0, 'open': 0, 'open_blocking': 0, 'qa': 'pass'},
             'run': {'n': 1, 'of': 3, 'done': True},
         },
     }
@@ -370,7 +370,7 @@ def companion_db(path: str) -> None:
                 'task': 't6',
                 'head': 'old1234',
                 'at': iso(NOW - 5000),
-                'counts': {'findings': 2, 'blocking': 1, 'open': 0, 'qa': 'partial'},
+                'counts': {'findings': 2, 'blocking': 1, 'open': 0, 'open_blocking': 0, 'qa': 'partial'},
                 'detail': {
                     'findings': [
                         {

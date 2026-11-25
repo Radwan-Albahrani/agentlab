@@ -768,11 +768,11 @@ def _line(e: ReviewEntry) -> str:
     """One PR's short line on the card; the details are in its reply in the thread."""
     st = _look(e)
     icon, label = LOOK[st]
-    c: Counts = e.get('counts') or {'findings': 0, 'blocking': 0, 'open': 0, 'qa': ''}
-    if st == 'changes' and c['blocking']:
-        label += f' · {c["blocking"]} blocking'
-    elif st == 'approved' and c['findings']:
-        label += f' · {_plural(c["findings"], "finding")}'
+    c: Counts = e.get('counts') or {'findings': 0, 'blocking': 0, 'open': 0, 'open_blocking': 0, 'qa': ''}
+    if st == 'changes' and c['blocking'] + c['open_blocking']:
+        label += f' · {c["blocking"] + c["open_blocking"]} blocking'
+    elif st == 'approved' and c['findings'] + c['open']:
+        label += f' · {_plural(c["findings"] + c["open"], "finding")}'
     pr = f'<{e.get("link") or e["url"]}|#{e["id"].rsplit("#", 1)[-1]}>'
     names = ', '.join(a['name'] for a in _askers(e))
     asker = f' · for {names}' if names else ''
@@ -1084,7 +1084,10 @@ def publish(task: Task, box: str, data: Json) -> None:
     problems: list[str] = []
     qa_text, qa_url = '', ''
     verdicts = data.get('threads')
-    still_open = set(mine) - _settle_threads(a, f, head, verdicts if isinstance(verdicts, list) else [], mine, problems)
+    standing = list(
+        _settle_threads(a, f, head, verdicts if isinstance(verdicts, list) else [], mine, problems).values()
+    )
+    held = sum(s == 'blocking' for s in standing)
     if qa.get('verdict') in ('pass', 'fail', 'partial') and qa.get('report'):
         found = _qa_report(box, qa['report'])
         if found is None:
@@ -1098,11 +1101,11 @@ def publish(task: Task, box: str, data: Json) -> None:
         if findings or limitation:
             body, inline = report.build(findings, files, r['repo'], head, extra)
             url = pulls.post_review(a, f, head, body, inline)
-        elif not still_open:
+        elif not held:  # a non-blocking finding left open doesn't hold the PR back
             pulls.thumbs_up(a, f)
     except GitHubError as err:
         problems.append(f'the review itself: {err}')
-    summary = report.summary(findings, qa)
+    summary = report.summary(findings, qa, standing)
     link = url or qa_url or r['url']
     note = f':white_check_mark: Review posted on <{link}|{r["id"]}> · {summary}'
     if problems:
@@ -1110,13 +1113,15 @@ def publish(task: Task, box: str, data: Json) -> None:
     counts: Counts = {
         'findings': len(findings),
         'blocking': sum(x['severity'] == 'blocking' for x in findings),
-        'open': len(still_open),
+        'open': len(standing),
+        'open_blocking': held,
         'qa': qa.get('verdict', ''),
     }
     detail = _detail(r['repo'], head, findings, qa, qa_text, qa_url, url)
     r.update({'published': head, 'summary': summary, 'url': link, 'counts': counts, 'detail': detail})
     task['closed'] = note
-    verdict: ReviewState = 'changes' if counts['blocking'] or counts['open'] or counts['qa'] == 'fail' else 'approved'
+    blocked = counts['blocking'] or held or counts['qa'] == 'fail'
+    verdict: ReviewState = 'changes' if blocked else 'approved'
     said = summary + (' · :warning: trouble with ' + '; '.join(problems) if problems else '')
     k = key_of(task)
     e: ReviewEntry | None = next((x for x in reversed(_run()) if x.get('task') == k), None)
@@ -1204,9 +1209,10 @@ def _trim(text: str | None, limit: int) -> str:
 
 def _settle_threads(
     a: App, f: Target, head: str, verdicts: list[Json], mine: dict[str, Thread], problems: list[str]
-) -> set[str]:
-    """Resolve or rewrite the companion's own earlier threads per the verdicts; returns the ids closed."""
-    closed: set[str] = set()
+) -> dict[str, report.Severity]:
+    """Resolve or rewrite the companion's own earlier threads per the verdicts; returns the ones still open, with the
+    severity each now has."""
+    standing = {k: report.severity_of(th['comments'][0]['body'] if th['comments'] else '') for k, th in mine.items()}
     for th in verdicts:
         if not isinstance(th, dict) or th.get('id') not in mine:
             continue
@@ -1215,15 +1221,16 @@ def _settle_threads(
             if th.get('action') in ('fixed', 'retract'):
                 lead = f'Fixed in `{head[:7]}`: ' if th['action'] == 'fixed' else 'Retracting this: '
                 pulls.close_thread(a, f, th['id'], lead + note)
-                closed.add(th['id'])
+                standing.pop(th['id'])
             elif th.get('action') == 'update' and (first := mine[th['id']].get('first_comment')):
                 found = report.clean([th.get('finding') or {}])
                 if found:
                     text = report.header(found[0]) + '\n\n' + found[0]['body']
                     pulls.update_comment(a, f, first, text)
+                    standing[th['id']] = found[0]['severity']
         except GitHubError as e:
             problems.append(f'an earlier thread: {e}')
-    return closed
+    return standing
 
 
 def _qa_report(box: str, name: object) -> str | None:

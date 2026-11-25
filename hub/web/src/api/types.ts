@@ -424,8 +424,8 @@ export interface PullReview {
   url?: string;
   t3?: string;
   slack?: string;
-  // open = earlier findings that still stand
-  counts?: { findings: number; blocking: number; open: number; qa: string } | null;
+  // open = earlier findings that still stand; open_blocking = how many of those block
+  counts?: { findings: number; blocking: number; open: number; open_blocking: number; qa: string } | null;
   run?: { n: number; of: number; done: boolean }; // its place in the batch being reviewed now
   resumes_at?: number | null; // epoch, while paused
   detail?: ReviewDetail; // only once the review is done

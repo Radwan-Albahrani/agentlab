@@ -207,9 +207,12 @@ class OpenPull(TypedDict):
 
 
 class Counts(TypedDict):
+    """A review's tally: its new findings, and the earlier ones it left open (open), each with how many block."""
+
     findings: int
     blocking: int
     open: int
+    open_blocking: int
     qa: str
 
 

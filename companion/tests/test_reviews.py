@@ -26,6 +26,7 @@ class FakeGitHub:
         self.evidence = None  # evidence repo head commit; None while empty
         self.trees, self.listing = [], []
         self.stacks = {}  # stack number -> [(PR number, 'open' | 'closed')], bottom first
+        self.mine = '`🔴 blocking`'  # the severity in the header of the companion's earlier thread
 
     def git(self, method, path, body):
         """Minimal fake Git Data API for the evidence branch."""
@@ -110,7 +111,7 @@ class FakeGitHub:
                 'repository': {
                     'pullRequest': {
                         'reviewThreads': {
-                            'nodes': [_thread('T_MINE', 'example-companion'), _thread('T_HUMAN', 'Ali')],
+                            'nodes': [_thread('T_MINE', 'example-companion', self.mine), _thread('T_HUMAN', 'Ali')],
                         }
                     }
                 }
@@ -137,7 +138,7 @@ def _node(number, ci):
     }
 
 
-def _thread(tid, who):
+def _thread(tid, who, mark=''):
     return {
         'id': tid,
         'isResolved': False,
@@ -145,7 +146,9 @@ def _thread(tid, who):
         'path': 'api/f.py',
         'line': 11,
         'comments': {
-            'nodes': [{'id': f'C_{tid}', 'author': {'login': who}, 'body': 'x', 'createdAt': '', 'reactionGroups': []}]
+            'nodes': [
+                {'id': f'C_{tid}', 'author': {'login': who}, 'body': f'**Retry** | {mark}\n\nx', 'reactionGroups': []}
+            ]
         },
     }
 
@@ -387,10 +390,32 @@ def test_a_comment_github_cannot_place_moves_into_the_body(gh, told):
     assert '/api/f.py#L11-L12' in posts[1]['body'] and 'suggestion' not in posts[1]['body']
 
 
-def test_no_thumbs_up_while_an_earlier_finding_still_stands(gh, told):
+def test_no_thumbs_up_while_an_earlier_blocking_finding_still_stands(gh, told, fresh_bot):
     task = started(gh, told)
-    finish(task, {'head': 'a' * 40, 'findings': []})
+    finish(task, {'head': 'a' * 40, 'findings': [], 'qa': {'verdict': 'skipped'}})
     assert not [c for c in gh.calls if c[1].endswith('/reactions') or c[1].endswith('/reviews')]
+    assert task['review']['summary'] == 'no new findings · 1 earlier blocking finding still open · QA not needed'
+    assert fresh_bot.messages[-1]['text'] == f'Review of {REPO}#5922: changes requested'
+
+
+def test_an_earlier_non_blocking_finding_left_open_does_not_hold_the_pr(gh, told, fresh_bot):
+    gh.mine = '`🟠 non-blocking`'
+    task = started(gh, told)
+    finish(task, {'head': 'a' * 40, 'findings': [], 'qa': {'verdict': 'skipped'}})
+    assert [c[1] for c in gh.calls if c[0] == 'POST'] == [f'/repos/{REPO}/issues/5922/reactions']
+    assert task['review']['summary'] == 'no new findings · 1 earlier finding still open · QA not needed'
+    assert task['review']['counts'] == {'findings': 0, 'blocking': 0, 'open': 1, 'open_blocking': 0, 'qa': 'skipped'}
+    assert fresh_bot.messages[-1]['text'] == f'Review of {REPO}#5922: approved'
+
+
+def test_an_earlier_finding_rewritten_as_blocking_holds_the_pr(gh, told):
+    gh.mine = '`🟠 non-blocking`'
+    task = started(gh, told)
+    worse = {'title': 'Retry', 'severity': 'blocking', 'lane': 'correctness', 'body': 'Now it loses data.'}
+    finish(
+        task, {'head': 'a' * 40, 'findings': [], 'threads': [{'id': 'T_MINE', 'action': 'update', 'finding': worse}]}
+    )
+    assert task['review']['counts']['open_blocking'] == 1 and not [c for c in gh.calls if c[1].endswith('/reactions')]
 
 
 def test_a_rereview_rewrites_a_changed_finding_in_place(gh, told):
@@ -575,7 +600,9 @@ def test_a_hub_run_of_three_has_one_card_a_quiet_reply_per_review_and_one_done_m
     [done] = fresh_bot.messages[1:]
     assert (done['thread_ts'], done['text']) == (ts, f'{REPO}#5922: changes requested')
     assert done['blocks'][1]['elements'][0]['text'] == '1 of 3 reviews done'
-    assert card_now(fresh_bot, ts).split('\n')[3].endswith('· changes requested · 1 blocking')
+    assert (
+        card_now(fresh_bot, ts).split('\n')[3].endswith('· changes requested · 2 blocking')
+    )  # its new one and the one still open
     assert card_now(fresh_bot, ts).startswith(':mag: **Reviewing 3 pull requests** · 1 done')
     runs = [p['review']['run'] for p in reviews.rows(lambda k, t: {'status': 'done', 'outcome': ''})]
     assert runs == [{'n': 1, 'of': 3, 'done': True}, {'n': 2, 'of': 3, 'done': False}, {'n': 3, 'of': 3, 'done': False}]
@@ -781,7 +808,8 @@ def test_a_linked_author_hears_the_result_once(gh, told, fresh_bot, linked, mode
     if dms:
         assert sent[0]['blocks'][0]['text'] == (
             f':mag: Companion reviewed your pull request <https://github.com/{REPO}/pull/5922|app#5922>: '
-            'changes requested · 2 findings (1 blocking) — <https://github.com/review/1|see the review>'
+            'changes requested · 2 new findings (1 blocking) · 1 earlier blocking finding still open'
+            ' — <https://github.com/review/1|see the review>'
         )
 
 
@@ -839,9 +867,14 @@ def test_finished_lines_say_their_counts_and_wait_for_the_running_ones():
         reviews._line(dict(e, task='k', state='reviewing'))
         == ':arrows_counterclockwise: <https://x/6129|#6129> A title that goes on for well over… · reviewing'
     )
-    approved = dict(e, state='approved', counts={'findings': 2, 'blocking': 0})
+    approved = dict(e, state='approved', counts={'findings': 2, 'blocking': 0, 'open': 0, 'open_blocking': 0, 'qa': ''})
     assert reviews._line(approved).endswith('· approved · 2 findings')
-    changes = dict(e, state='changes', counts={'findings': 3, 'blocking': 1}, detail='QA found problems')
+    changes = dict(
+        e,
+        state='changes',
+        counts={'findings': 3, 'blocking': 1, 'open': 0, 'open_blocking': 0, 'qa': 'fail'},
+        detail='QA found problems',
+    )
     assert reviews._line(changes).endswith('· changes requested · 1 blocking')
     assert reviews._card({'prs': [approved, dict(e, task='k', state='paused', paused=0)]})[0] == (
         'Reviewing 2 pull requests · 1 done · 1 paused for the usage limit'
@@ -915,7 +948,7 @@ def test_a_colleague_dms_a_pr_link_and_hears_the_result_in_their_thread(gh, told
     assert status_line(fresh_bot, ack).startswith(':octagonal_sign: Changes requested · ')
     theirs = [m for m in fresh_bot.messages if m['channel'] == 'D_SALAHBOT']
     assert [m['text'] for m in theirs] == ['Reviewing app#5922', 'Review of app#5922: changes requested']
-    assert '2 findings (1 blocking)' in theirs[-1]['blocks'][0]['text']
+    assert '2 new findings (1 blocking) · 1 earlier blocking finding still open' in theirs[-1]['blocks'][0]['text']
     assert not [m for m in fresh_bot.messages if m['channel'] == 'D_U_SALAH']  # no second DM as the author
 
 

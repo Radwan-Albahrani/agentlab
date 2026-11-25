@@ -12,7 +12,7 @@ export function outcomeOf(p: Pull): Outcome {
   if (!r) return p.draft ? 'draft' : 'unreviewed';
   if (BUSY.has(r.status)) return 'reviewing';
   if (r.status !== 'done') return 'failed';
-  if (r.counts?.blocking) return 'blocking';
+  if (r.counts?.blocking || r.counts?.open_blocking) return 'blocking';
   if (r.counts && (r.counts.findings || r.counts.open)) return 'findings';
   return 'clean';
 }

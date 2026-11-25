@@ -7,13 +7,14 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', re.M)
 MAX_FINDINGS = 50
+Severity = Literal['blocking', 'non-blocking']
 
 
 class Finding(TypedDict):
     """One normalised finding of review.json (clean)."""
 
     title: str
-    severity: Literal['blocking', 'non-blocking']
+    severity: Severity
     lane: str
     path: str
     line: int | None
@@ -150,15 +151,27 @@ def closing(findings: Sequence[Finding], limitation: str, verdict: Any, qa_url: 
     return '\n\n'.join(lines)
 
 
-def summary(findings: Sequence[Finding], qa: Mapping[str, Any] | None) -> str:
-    """'2 findings (1 blocking) · QA verified' style line."""
+def severity_of(comment: str) -> Severity:
+    """A finding comment's severity, from its header(); a comment without one counts as blocking."""
+    return 'non-blocking' if '`🟠 non-blocking`' in comment.split('\n', 1)[0] else 'blocking'
+
+
+def summary(findings: Sequence[Finding], qa: Mapping[str, Any] | None, standing: Sequence[Severity] = ()) -> str:
+    """'2 findings (1 blocking) · 1 earlier finding still open · QA verified' style line; standing: the severities of
+    earlier findings this review left open."""
     n = len(findings)
     blocking = sum(f['severity'] == 'blocking' for f in findings)
     out = (
-        'no findings'
+        f'no {"new " if standing else ""}findings'
         if not n
-        else f'{n} finding{"s" if n != 1 else ""}' + (f' ({blocking} blocking)' if blocking else '')
+        else f'{n} {"new " if standing else ""}finding{"s" if n != 1 else ""}'
+        + (f' ({blocking} blocking)' if blocking else '')
     )
+    if standing:
+        held, s = sum(x == 'blocking' for x in standing), 's' if len(standing) != 1 else ''
+        kind = 'blocking ' if held == len(standing) else ''
+        some = f' ({held} blocking)' if 0 < held < len(standing) else ''
+        out += f' · {len(standing)} earlier {kind}finding{s} still open{some}'
     verdict = (qa or {}).get('verdict')
     if verdict in QA_WORDS:
         out += ' · QA ' + QA_WORDS[verdict]

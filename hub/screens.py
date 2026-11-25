@@ -155,7 +155,7 @@ def outcome(p: Json) -> str:
     if r.get('status') != 'done':
         return 'failed'
     c = r.get('counts') or {}
-    if c.get('blocking'):
+    if c.get('blocking') or c.get('open_blocking'):
         return 'blocking'
     return 'findings' if c.get('findings') or c.get('open') else 'clean'
 

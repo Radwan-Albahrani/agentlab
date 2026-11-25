@@ -235,7 +235,7 @@ test('pull requests: mine first, searchable, and Review sends the agent (interce
         task: 't',
         head: 'old',
         at: '',
-        counts: { findings: 2, blocking: 1, open: 0, qa: 'fail' },
+        counts: { findings: 2, blocking: 1, open: 0, open_blocking: 0, qa: 'fail' },
       },
     },
   ]);
