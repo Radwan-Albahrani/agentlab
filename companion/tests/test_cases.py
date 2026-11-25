@@ -5,7 +5,7 @@ import json
 import os
 
 import pytest
-from bot import jobs, ledger, machine, routing, slack, state, t3, tasks
+from bot import cases, jobs, ledger, machine, routing, slack, state, t3, tasks
 from conftest import OWNER, ROUTE, agent_sends, click, receipts, set_settings
 
 SALAH_DM = 'D_U_SALAH'  # Salah's DM with the bot
@@ -305,7 +305,7 @@ def test_the_owner_asking_in_the_colleagues_thread_is_answered_in_that_thread(ca
     assert side and 'Side answer' in text_of(side)
     assert not any('Side answer' in text_of(m) for m in posted(fresh_bot, 'D_OWNER'))
     owners = [i for i in ledger.items(t) if i['kind'] == 'in' and i.get('by') == OWNER]
-    assert [i['text'] for i in owners] == ['bro why is there n+1', 'updates?']
+    assert [i['text'] for i in owners] == ['@BCOMPANION bro why is there n+1', '@BCOMPANION updates?']  # as written
     assert ledger.items(t)[-1]['to'] == 'colleague' and ledger.items(t)[-1]['side']
 
 
@@ -375,6 +375,58 @@ def test_a_case_in_a_thread_syncs_the_whole_thread_and_an_ask_written_before_the
     routing.route(later, True)
     routing.route(dict(later), True)  # Slack sends a tag as app_mention and as message
     news = [(i['label'], i['text']) for i in ledger.items(t) if i['kind'] == 'in'][2:]
-    assert news == [('Ali', 'nice'), ('Salah', '(tagged Companion)')]
+    assert news == [('Ali', 'nice'), ('Salah', '@BCOMPANION')]
     case = in_case(fresh_bot, t)
-    assert 'nice' in case and '(tagged Companion)' in case
+    assert 'nice' in case and '> @BCOMPANION' in case
+
+
+def fetch_into(tmp_path):
+    def fetch(f, folder):
+        if f['name'] == 'broken.pdf':
+            return '', "couldn't download it: 403"
+        p = tmp_path / f['name']
+        p.write_bytes(b'x')
+        return str(p), ''
+
+    return fetch
+
+
+def test_a_colleagues_files_reach_the_case_as_files_with_their_words_as_written(case, fresh_bot, monkeypatch, tmp_path):
+    t, _ = case
+    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
+    ev = {
+        'ts': '60.5',
+        'user': 'U_SALAH',
+        'text': 'fyi <@BCOMPANION>',
+        'files': [{'name': 'TDF.xlsx', 'url_private': 'u'}],
+    }
+    cases.in_thread(t, ev)
+    (up,) = fresh_bot.uploads
+    assert (up['channel'], up['thread_ts']) == ('D_OWNER', t['case']['ts'])
+    assert [f['filename'] for f in up['file_uploads']] == ['TDF.xlsx'] and 'fyi @' in up['initial_comment']
+    assert 'file(s)' not in in_case(fresh_bot, t)
+    assert ledger.items(t)[-1]['attachments'][0]['state'] == 'sent'
+
+
+def test_a_file_that_cannot_be_passed_on_is_named_with_why(case, fresh_bot, monkeypatch, tmp_path):
+    t, _ = case
+    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
+    files = [{'name': 'broken.pdf', 'url_private': 'u'}]
+    cases.in_thread(t, {'ts': '60.6', 'user': 'U_SALAH', 'text': 'see this', 'files': files})
+    assert not fresh_bot.uploads
+    assert "broken.pdf held (couldn't download it: 403)" in in_case(fresh_bot, t) and 'see this' in in_case(
+        fresh_bot, t
+    )
+
+
+def test_the_first_messages_files_reach_the_case_too(monkeypatch, t3_quiet, fresh_bot, tmp_path):
+    monkeypatch.setattr(t3, 'send', lambda tid, msg: {'ok': True})
+    monkeypatch.setattr(jobs, 'run_later', lambda fn, *a: fn(*a))
+    monkeypatch.setattr(tasks, 'history_with', lambda uid, now=None: [])
+    monkeypatch.setattr(slack, 'fetch', fetch_into(tmp_path))
+    message = {'ts': '61.1', 'user': 'U_SALAH', 'text': 'trees?', 'files': [{'name': 'a.pdf', 'url_private': 'u'}]}
+    monkeypatch.setattr(slack, 'thread_messages', lambda ch, tts, trigger: [message])
+    tasks.start(SALAH_DM, '61.1', '61.1', 'trees?', guest='U_SALAH')
+    t = state.state['tasks'][state.key(SALAH_DM, '61.1')]
+    (up,) = fresh_bot.uploads
+    assert up['thread_ts'] == t['case']['ts'] and [f['filename'] for f in up['file_uploads']] == ['a.pdf']

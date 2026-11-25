@@ -140,7 +140,9 @@ def start(
     if machine.is_colleague(task):
         threaded = not elsewhere and thread_ts != trigger_ts
         before = [m for m in msgs if float(m['ts']) < float(trigger_ts) and m not in lead] if threaded else []
-        cases.open_case(task, ask, f'in {elsewhere[0]}' if elsewhere else how['via'], approved or None, before)
+        trigger = next((m for m in msgs if m.get('ts') == trigger_ts), {})
+        where_from = f'in {elsewhere[0]}' if elsewhere else how['via']
+        cases.open_case(task, ask, where_from, approved or None, before, trigger.get('files') or ())
     save()
     log('started', k, tid, 'for', guest or 'owner')
     COMP.event('started', title, task=k, detail=f'task from {asker} in ' + (f'#{chan}' if chan else 'a DM'))

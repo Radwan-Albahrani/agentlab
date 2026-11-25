@@ -1,16 +1,30 @@
-"""The files on an outgoing ledger message, each in its own explicit state (fsm.ATTACHMENT).
+"""The files on a ledger message, each in its own explicit state (fsm.ATTACHMENT).
 
-check() runs them through the gate once: ready or held. Whoever sends the message marks its ready files sent or
-failed (sent / failed below) before moving it to sent, and ledger.move withholds them when the message never goes,
-so no message is ever recorded as sent while its files stayed behind."""
+Outgoing: check() runs the agent's files through the gate once: ready or held. Whoever sends the message marks its
+ready files sent or failed (sent / failed below) before moving it to sent, and ledger.move withholds them when the
+message never goes, so no message is ever recorded as sent while its files stayed behind.
+
+Incoming: fetched() downloads the files someone sent: ready, or held when Slack wouldn't give them; the case relay
+(cases.py) then uploads them to the owner: sent or failed."""
 
 import os
+from collections.abc import Iterable
 from typing import Literal
 
 from . import gate, slack
 from .config import log
 from .fsm import ATTACHMENT
-from .shapes import Attachment, Item
+from .shapes import Attachment, Item, Json
+
+
+def fetched(files: Iterable[Json | str], folder: str) -> list[Attachment]:
+    """Slack files someone sent, downloaded into <folder>: ready to pass on, or held with why."""
+    out: list[Attachment] = []
+    for f in files:
+        name = os.path.basename(str(f.get('name') or f.get('id') or 'file') if isinstance(f, dict) else f)
+        path, why = slack.fetch(f, folder) if isinstance(f, dict) else ('', 'only its name came')
+        out.append({'name': name, 'path': path, 'state': ATTACHMENT.first('ready' if path else 'held'), 'note': why})
+    return out
 
 
 def check(it: Item, box: str) -> list[str]:

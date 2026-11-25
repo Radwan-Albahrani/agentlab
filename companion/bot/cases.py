@@ -15,7 +15,7 @@ from . import attachments, ledger, machine, prompts, slack, t3
 from .config import COMP, NAME, OWNER, log
 from .shapes import Item, ItemFields, Json, Queued, Task
 from .state import key_of, lock, now_iso, save, state
-from .text import first_sentence, no_emoji, quote
+from .text import first_sentence, no_emoji, quote, to_slack
 from .when import say
 
 THINKING = ':seedling: thinking…'
@@ -46,9 +46,16 @@ def _head_md(task: Task, ask: str, where: str) -> str:
     )
 
 
-def open_case(task: Task, ask: str, where: str, card: str | None = None, earlier: Iterable[Json] = ()) -> None:
+def open_case(
+    task: Task,
+    ask: str,
+    where: str,
+    card: str | None = None,
+    earlier: Iterable[Json] = (),
+    files: Iterable[Json] = (),
+) -> None:
     """The owner's case for a colleague's new task: a head message in their DM, or the requests channel's card.
-    earlier: the thread's messages before the ask, synced into the case too."""
+    earlier: the thread's messages before the ask, synced into the case too; files: the ask's own, passed on too."""
     dm = slack.dm_owner()
     if card:
         machine.open_case(task, dm, card, 'card')
@@ -60,7 +67,7 @@ def open_case(task: Task, ask: str, where: str, card: str | None = None, earlier
             return
         machine.open_case(task, dm, ts, 'own', md=md)
     _earlier(task, earlier)
-    heard(task, machine.party(task)['user'], ask, first=True, ts=task['trigger_ts'])
+    heard(task, machine.party(task)['user'], ask, files, first=True, ts=task['trigger_ts'])
     status(task)
     save()
 
@@ -68,16 +75,19 @@ def open_case(task: Task, ask: str, where: str, card: str | None = None, earlier
 def _earlier(task: Task, msgs: Iterable[Json]) -> None:
     """The thread before the case opened, into the case: it is synced whole, not from the tag on."""
     me = slack.bot_user()
-    said: list[str] = []
+    got: list[Item] = []
     with ledger.muted():
         for m in msgs:
             if m.get('user') in (None, me) or m.get('bot_id') or m['ts'] == task['trigger_ts']:
                 continue
             it = heard(task, m['user'], m.get('text') or '', m.get('files') or (), ts=m['ts'])
             if it:
-                said.append(f'**{it["label"]}:**\n' + quote(it['text']))
-    if said:
-        note(task, '**Earlier in the thread:**\n' + '\n'.join(said), 'Earlier in the thread')
+                got.append(it)
+    if got:
+        note(task, '**Earlier in the thread:**\n' + '\n'.join(_said(it) for it in got), 'Earlier in the thread')
+    for it in got:
+        if it.get('attachments'):
+            _relay(task, it, f'**{it["label"]}:**')
 
 
 def in_thread(task: Task, ev: Json) -> None:
@@ -157,13 +167,17 @@ def heard(
     so each message is recorded once however it arrives (live, tagged, or with the thread so far)."""
     if ts and any(i['kind'] == 'in' and i.get('ts') == ts for i in ledger.items(task)):
         return None
-    said = slack.ask(text).strip() or ('(files)' if files else f'(tagged {NAME})')
+    said = slack.readable(text).strip()  # as they wrote it: the case shows exactly what was said
+    files = list(files or ())
     fields: ItemFields = {
         'by': by,
         'label': slack.name(by),
         'text': said,
-        'files': [os.path.basename(str(f.get('name') if isinstance(f, dict) else f)) for f in files or ()],
+        'files': [os.path.basename(str(f.get('name') if isinstance(f, dict) else f)) for f in files],
     }
+    c = task.get('case')
+    if files and not private and c and c.get('head') != 'errand':  # passed on to the owner (_relay)
+        fields['attachments'] = attachments.fetched(files, f'{task["channel"]}-{task["thread_ts"].replace(".", "")}')
     if private:  # ledger.add drops fields given as None
         fields['private'] = True
     if first:
@@ -188,14 +202,30 @@ def _render(task: Task, it: Item, old: str | None) -> None:
         return
     if not c or c.get('head') == 'errand':
         return
-    if kind == 'in' and not it.get('private') and not it.get('first'):
-        files = f'\n_{len(it["files"])} file(s)_' if it.get('files') else ''
-        note(task, f'**{it["label"]}:**\n' + quote(it['text']) + files, f'{it["label"]} wrote')
+    if kind == 'in' and not it.get('private'):
+        _relay(task, it, '' if it.get('first') else _said(it))  # the head already shows the first message's words
     elif kind == 'message' and it.get('to') == 'colleague' and st == 'sent':
         files = f'\n_Files: {attachments.summary(it)}_' if it.get('attachments') else ''
         note(task, f':outbox_tray: **{NAME} → {who(task)}:**\n{it["text"]}{files}', f'Sent to {who(task)}')
     elif kind == 'final' and st == 'sent' and it.get('to') == 'thread':  # shared: the colleague read it there
         note(task, f'**{NAME} → {who(task)}:**\n{it["text"]}', f'{NAME} replied to {who(task)}')
+
+
+def _said(it: Item) -> str:
+    return f'**{it["label"]}:**' + (f'\n{quote(it["text"])}' if it['text'] else '')
+
+
+def _relay(task: Task, it: Item, words: str) -> None:
+    """Someone's message into the case as they sent it: `words`, with their files uploaded under them."""
+    files = it.get('attachments') or []
+    if attachments.ready(it):
+        attachments.upload(it, [owner_place(task)], to_slack(words) or None)
+        if any(a['state'] == 'sent' for a in files):
+            words = ''  # they went as the upload's comment
+    if any(a['state'] != 'sent' for a in files):
+        words = (words or f'**{it["label"]}:**') + f'\n_Files: {attachments.summary(it)}_'
+    if words:
+        note(task, words, f'{it["label"]} wrote')
 
 
 def ask(task: Task, text: str, files: list[Json] | None, ts: str) -> None:

@@ -352,24 +352,29 @@ def upload(channel: str, thread_ts: str | None, paths: Iterable[str], comment: s
     )
 
 
+def fetch(f: Json, folder: str) -> tuple[str, str]:
+    """(path here, '') of one Slack file downloaded into <folder>, else ('', why not)."""
+    url = f.get('url_private_download') or f.get('url_private')
+    if not url:
+        return '', 'Slack gave no link to it'
+    fname = re.sub(r'[^\w.\-]+', '_', f.get('name') or f.get('id', 'file'))[:80]
+    path = os.path.join(FILES, folder, fname)
+    try:
+        os.makedirs(os.path.join(FILES, folder), exist_ok=True)
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {app.client.token}'})
+        with urllib.request.urlopen(req, timeout=60) as r, open(path, 'wb') as w:
+            w.write(r.read())
+        os.chmod(path, 0o644)
+    except Exception as e:
+        log('file download failed:', fname, e)
+        return '', f"couldn't download it: {str(e)[:100]}"
+    return path, ''
+
+
 def download(files: Iterable[Json] | None, folder: str) -> list[str]:
     """Download Slack files into <folder>; returns the paths as the agent sees them."""
-    out: list[str] = []
-    os.makedirs(os.path.join(FILES, folder), exist_ok=True)
-    for f in files or []:
-        url = f.get('url_private_download') or f.get('url_private')
-        if not url:
-            continue
-        fname = re.sub(r'[^\w.\-]+', '_', f.get('name') or f.get('id', 'file'))[:80]
-        try:
-            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {app.client.token}'})
-            with urllib.request.urlopen(req, timeout=60) as r, open(os.path.join(FILES, folder, fname), 'wb') as w:
-                w.write(r.read())
-            os.chmod(os.path.join(FILES, folder, fname), 0o644)
-            out.append(f'{AGENT_FILES}/{folder}/{fname}')
-        except Exception as e:
-            log('file download failed:', fname, e)
-    return out
+    got = (fetch(f, folder)[0] for f in files or [])
+    return [f'{AGENT_FILES}/{folder}/{os.path.basename(p)}' for p in got if p]
 
 
 def transcript(msgs: Iterable[Json], folder: str | None = None) -> tuple[list[str], list[str]]:
