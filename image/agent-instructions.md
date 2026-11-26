@@ -61,10 +61,10 @@ and yours to change. Use the `companion` skill for how (test, commit, restart, l
   connects them on the Accounts page. If a tool you need is missing, tell them which connector to add.
 
 ### Worktrees
-- A finished chat's worktree is removed after a while (a PR review's as soon as the review is done). One with
-  uncommitted changes or unpushed commits is kept for 3 days after the last work in it, then removed too; its state is
-  saved first as `refs/agentlab/removed/<name>` in the repository (`git worktree add <path> <ref>` brings it back).
-  Push or commit what you want to keep.
+- A PR review's checkouts (its own and its workers') are deleted, with anything in them, the moment the review is done.
+- Any other finished chat's worktree is removed after a while. One with uncommitted changes or unpushed commits is kept
+  for 3 days after the last work in it, then removed too; its state is saved first as `refs/agentlab/removed/<name>`
+  in the repository (`git worktree add <path> <ref>` brings it back). Push or commit what you want to keep.
 
 ### Be careful with
 - Pushing to protected branches, force-pushing, merging, closing issues/PRs, and anything that

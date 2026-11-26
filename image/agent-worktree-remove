@@ -1,14 +1,21 @@
 #!/bin/bash
 # Removes the worktrees named on stdin (agent-side paths), as the agent. Unsaved work (uncommitted changes, commits on
 # no remote) is kept as refs/agentlab/removed/<name> in the main repository first, once untouched NOTICE_DAYS (0: at
-# once); a worktree without a commit has nothing to keep. DRY=1 only lists. Used by the host's janitor and the
-# companion bridge's release (accounts/bridge.py).
+# once); a worktree without a commit has nothing to keep. DISCARD=1 keeps nothing (a finished PR review's checkouts:
+# they only read the code). DRY=1 only lists. Used by the host's janitor and the companion bridge's release
+# (accounts/bridge.py).
 NOTICE_DAYS=${NOTICE_DAYS:-3}
 removed="" kept="" n=0 now=$(date +%s)
 while read -r wt; do
   [ -e "${wt}/.git" ] || continue
   name=${wt#/workspace/worktrees/}
   main=$(dirname "$(git -C "${wt}" rev-parse --path-format=absolute --git-common-dir)")
+  if [ -n "${DISCARD}" ]; then
+    if [ -n "${DRY}" ] || git -C "${main}" worktree remove --force --force "${wt}" 2>/dev/null; then
+      removed+=" ${name}"; n=$((n + 1))
+    else kept+=" ${name} (git refused)"; fi
+    continue
+  fi
   head=$(git -C "${wt}" rev-parse -q --verify HEAD 2>/dev/null)
   if [ -z "${head}" ]; then
     if [ -n "${DRY}" ] || git -C "${main}" worktree remove --force "${wt}" 2>/dev/null; then

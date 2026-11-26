@@ -852,7 +852,7 @@ def _finish(
     e.update({'detail': detail, 'link': link or e['url'], 'ended': time.time()})
     e.pop('paused', None)
     t = state['tasks'].get(e.get('task') or '')
-    if verdict != 'asked' and t and t.get('thread'):  # its checkouts go once its chats finish (a question keeps them)
+    if verdict != 'asked' and t and t.get('thread'):  # its checkouts go now (a question keeps them)
         res = t3.release(t['thread'])
         if not res.get('ok'):
             log('worktree release failed:', e['id'], t3.error_text(res))

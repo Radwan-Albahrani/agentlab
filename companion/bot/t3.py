@@ -113,7 +113,7 @@ def stop(thread: str) -> Reply:
 
 
 def release(thread: str) -> Reply:
-    """The chat's work is over: the agent removes its worktrees and its workers' once they have all finished."""
+    """A finished PR review: the agent drops the worktrees of its chat and its workers now, keeping nothing."""
     return bridge('/api/t3/release', {'thread': thread})
 
 

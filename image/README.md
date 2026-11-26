@@ -34,9 +34,9 @@ whether a turn is in progress, the runs not yet finished (`[[run id, thread id]]
 chat finished (`null` while one is live), for every worktree or only those of one chat and its workers.
 
 `agent-worktree-remove` removes the worktrees named on stdin, keeping unsaved work as `refs/agentlab/removed/<name>`
-first (after `NOTICE_DAYS` untouched; 0 = at once). The host's janitor runs it for idle worktrees; the companion
-bridge's `/api/t3/release` runs it for a finished PR review's chat and its workers, as soon as all of them have
-finished (watched for up to 6 hours, then the janitor has them). The host asks it through `docker exec -u agent` (agentctl before redeploying, shrinking a disk or
+first (after `NOTICE_DAYS` untouched; 0 = at once), or nothing with `DISCARD=1`. The host's janitor runs it for idle
+worktrees; the companion bridge's `/api/t3/release` runs it with `DISCARD=1` on a finished PR review's chat and its
+workers the moment the review is done (a review only reads the code, so its checkouts hold nothing to keep). The host asks it through `docker exec -u agent` (agentctl before redeploying, shrinking a disk or
 resuming chats, the janitor before removing worktrees) instead of opening the database itself. It reads
 `~/.t3/userdata/statev2.sqlite` read-only through the typed models in `t3schema.py` (`t3state.py`, SQLAlchemy in the
 `/opt/agent-t3` venv, which `agent-updater` uses too). The host counts a stopped agent as idle and an agent that

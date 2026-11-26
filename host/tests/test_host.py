@@ -814,6 +814,29 @@ class WorktreeNotice(unittest.TestCase):
         self.assertIn(f'saved as {ref}', out)
         self.assertEqual(self.git('show', f'{ref}:notes.txt').stdout, 'stale')
 
+    def test_discard_drops_a_worktree_at_once_and_keeps_nothing(self):
+        tmp = tempfile.mkdtemp(dir=TMP)
+        self.old_date = f'{int(time.time())} +0000'
+        self.repo = f'{tmp}/repo'
+        subprocess.run(['git', 'init', '-q', self.repo], check=True)
+        self.git('commit', '-q', '--allow-empty', '-m', 'base')
+        wt = f'{tmp}/wt/review'
+        self.git('worktree', 'add', '-q', '--detach', wt)
+        self.git('commit', '-q', '--allow-empty', '-m', 'on no remote', cwd=wt)
+        with open(f'{wt}/scratch.txt', 'w') as f:
+            f.write('x')
+        out = subprocess.run(
+            ['bash', REMOVE_WORKTREES],
+            input=f'{wt}\n',
+            env={**os.environ, 'DISCARD': '1', 'DRY': ''},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertFalse(os.path.exists(wt))
+        self.assertIn('removed 1 worktrees:', out)
+        self.assertEqual(self.git('for-each-ref', 'refs/agentlab').stdout, '')
+
 
 class PickPackage(unittest.TestCase):
     """pick_package under pipefail with an apt-cache that keeps writing after the Candidate line (#17)."""

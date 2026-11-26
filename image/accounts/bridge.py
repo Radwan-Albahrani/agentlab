@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import threading
-import time
 
 import t3tools
 from util import HOME
@@ -20,8 +19,6 @@ ROUTES = (
     '/api/t3/triage',
 )
 T3_SETTINGS = os.path.join(HOME, '.t3', 'userdata', 'settings.json')
-RELEASE_EVERY_S = 60
-RELEASE_FOR_S = 6 * 3600  # a chat still running after this is left to the host's janitor
 _releasing: set[str] = set()
 _lock = threading.Lock()
 
@@ -77,8 +74,8 @@ def _thread_cli(args, body):
 
 
 def release(thread):
-    """A chat whose work is over (a finished review): its worktrees and its workers' go as soon as every chat on them
-    has finished, watched in the background -> (ok, detail)."""
+    """A finished PR review: the worktrees of its chat and its workers are dropped now, in the background (they only
+    read the code, so nothing in them is kept) -> (ok, detail)."""
     if not thread:
         return False, 'no thread'
     with _lock:
@@ -88,19 +85,11 @@ def release(thread):
     return True, {'releasing': thread}
 
 
-def _release(thread, sleep=time.sleep, clock=time.monotonic):
-    end = clock() + RELEASE_FOR_S
+def _release(thread):
     try:
-        while True:
-            trees = _worktrees_of(thread)
-            if trees is None:
-                return
-            done = [w for w, since in trees.items() if since is not None and os.path.exists(w)]
-            if done:
-                print(f'release {thread}: {_remove(done)}', flush=True)
-            if all(since is not None for since in trees.values()) or clock() > end:
-                return
-            sleep(RELEASE_EVERY_S)
+        trees = [w for w in _worktrees_of(thread) or {} if os.path.exists(w)]
+        if trees:
+            print(f'release {thread}: {_remove(trees)}', flush=True)
     finally:
         with _lock:
             _releasing.discard(thread)
@@ -119,12 +108,12 @@ def _worktrees_of(thread):
 
 
 def _remove(paths):
-    """agent-worktree-remove at once: unsaved work is kept as a ref first, so nothing is lost."""
+    """agent-worktree-remove, keeping nothing -> its summary line."""
     try:
         p = subprocess.run(
             ['agent-worktree-remove'],
             input=''.join(f'{w}\n' for w in paths),
-            env={**os.environ, 'NOTICE_DAYS': '0', 'DRY': ''},
+            env={**os.environ, 'DISCARD': '1', 'DRY': ''},
             capture_output=True,
             text=True,
             timeout=1800,
