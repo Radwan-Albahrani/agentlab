@@ -851,6 +851,11 @@ def _finish(
     e['state'] = REVIEW.to(e.get('state'), verdict)
     e.update({'detail': detail, 'link': link or e['url'], 'ended': time.time()})
     e.pop('paused', None)
+    t = state['tasks'].get(e.get('task') or '')
+    if verdict != 'asked' and t and t.get('thread'):  # its checkouts go once its chats finish (a question keeps them)
+        res = t3.release(t['thread'])
+        if not res.get('ok'):
+            log('worktree release failed:', e['id'], t3.error_text(res))
     asked = e.pop('asked', None)
     if asked:
         slack.react(asked['channel'], asked['ts'], 'eyes', remove=True)
@@ -1130,7 +1135,8 @@ def publish(task: Task, box: str, data: Json) -> None:
         e['counts'] = counts
         _finish(e, verdict, said, link)
     else:  # a re-run from the thread after its batch ended
-        _finish({'id': r['id'], 'url': r['url'], 'title': r.get('title', '')}, verdict, said, link, (ch, tts))
+        rerun: ReviewEntry = {'id': r['id'], 'url': r['url'], 'title': r.get('title', ''), 'task': k}
+        _finish(rerun, verdict, said, link, (ch, tts))
     with_token = os.path.join(box, '.token')
     if os.path.exists(with_token):
         os.remove(with_token)

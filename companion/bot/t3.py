@@ -112,6 +112,11 @@ def stop(thread: str) -> Reply:
     return bridge('/api/t3/stop', {'thread': thread})
 
 
+def release(thread: str) -> Reply:
+    """The chat's work is over: the agent removes its worktrees and its workers' once they have all finished."""
+    return bridge('/api/t3/release', {'thread': thread})
+
+
 def triage(prompt: str) -> Reply:
     """One quick model call on the agent's own provider."""
     return bridge('/api/t3/triage', {'message': prompt})

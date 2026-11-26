@@ -34,8 +34,10 @@ files.
 
 ## Disk space
 
-`status` shows each disk: the shared pool, or each person's. The janitor tidies nightly and whenever a disk passes
-75%: settled worktrees (clean, pushed, idle 12 hours or more), package caches, and the agents' Docker leftovers. A
+`status` shows each disk: the shared pool, or each person's. The janitor tidies twice a day and at once when an
+agent's disk passes 90%: worktrees whose chats finished 6 hours ago (any finished one on a disk 70% full or more;
+unsaved work is kept as a git ref), package caches, and the agents' Docker leftovers. A finished PR review's
+worktrees go as soon as the review is done. A
 person's full disk only stops that person; tell them, or raise `person_size` and `apply`.
 Nothing inside someone's workspace gets deleted without asking them or the admin.
 

@@ -4,13 +4,26 @@ import json
 import os
 import subprocess
 import threading
+import time
 
 import t3tools
 from util import HOME
 
 KEY_FILE = os.path.join(HOME, '.config', 'agent', 'bridge-key')
-ROUTES = ('/api/t3/start', '/api/t3/send', '/api/t3/respond', '/api/t3/stop', '/api/t3/archive', '/api/t3/triage')
+ROUTES = (
+    '/api/t3/start',
+    '/api/t3/send',
+    '/api/t3/respond',
+    '/api/t3/stop',
+    '/api/t3/archive',
+    '/api/t3/release',
+    '/api/t3/triage',
+)
 T3_SETTINGS = os.path.join(HOME, '.t3', 'userdata', 'settings.json')
+RELEASE_EVERY_S = 60
+RELEASE_FOR_S = 6 * 3600  # a chat still running after this is left to the host's janitor
+_releasing: set[str] = set()
+_lock = threading.Lock()
 
 
 def authorized(key):
@@ -31,6 +44,8 @@ def handle(path, body):
         return _result(*t3tools.interrupt(str(body.get('thread', ''))))
     if path == '/api/t3/archive':
         return _result(*t3tools.archive(str(body.get('thread', ''))))
+    if path == '/api/t3/release':
+        return _result(*release(str(body.get('thread', ''))))
     if path == '/api/t3/start':
         title = ['--title', str(body['title'])[:120]] if body.get('title') else []
         return _thread_cli(['start', '--json', *title, str(body.get('project') or '/workspace'), '-'], body)
@@ -59,6 +74,65 @@ def _thread_cli(args, body):
     except ValueError:
         out = {'raw': p.stdout[-2000:]}
     return (200 if p.returncode == 0 else 500), {'ok': p.returncode == 0, 'result': out, 'stderr': p.stderr[-1000:]}
+
+
+def release(thread):
+    """A chat whose work is over (a finished review): its worktrees and its workers' go as soon as every chat on them
+    has finished, watched in the background -> (ok, detail)."""
+    if not thread:
+        return False, 'no thread'
+    with _lock:
+        if thread not in _releasing:
+            _releasing.add(thread)
+            threading.Thread(target=_release, args=(thread,), daemon=True).start()
+    return True, {'releasing': thread}
+
+
+def _release(thread, sleep=time.sleep, clock=time.monotonic):
+    end = clock() + RELEASE_FOR_S
+    try:
+        while True:
+            trees = _worktrees_of(thread)
+            if trees is None:
+                return
+            done = [w for w, since in trees.items() if since is not None and os.path.exists(w)]
+            if done:
+                print(f'release {thread}: {_remove(done)}', flush=True)
+            if all(since is not None for since in trees.values()) or clock() > end:
+                return
+            sleep(RELEASE_EVERY_S)
+    finally:
+        with _lock:
+            _releasing.discard(thread)
+
+
+def _worktrees_of(thread):
+    """{worktree: finished at | None while a chat on it runs} for the chat and its workers; None if T3 can't say."""
+    try:
+        p = subprocess.run(
+            ['agent-t3', 'worktrees-of', thread], capture_output=True, text=True, timeout=120, check=False
+        )
+        got = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def _remove(paths):
+    """agent-worktree-remove at once: unsaved work is kept as a ref first, so nothing is lost."""
+    try:
+        p = subprocess.run(
+            ['agent-worktree-remove'],
+            input=''.join(f'{w}\n' for w in paths),
+            env={**os.environ, 'NOTICE_DAYS': '0', 'DRY': ''},
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return f'{type(e).__name__}: {e}'
+    return (p.stdout.strip().splitlines() or [p.stderr.strip()[-300:]])[-1]
 
 
 def default_model():

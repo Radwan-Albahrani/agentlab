@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 
 import bridge
 import pytest
@@ -66,3 +68,50 @@ def test_bridge_routes_dispatch_to_t3_tools(monkeypatch):
     )
     assert bridge.handle('/api/t3/stop', {'thread': 't1'}) == (500, {'ok': False, 'result': 'no run'})
     assert bridge.handle('/api/t3/archive', {'thread': 't1'}) == (200, {'ok': True, 'result': {'archived': 't1'}})
+
+
+def test_a_released_chats_worktrees_go_once_its_chats_finish(monkeypatch, tmp_path):
+    review, lane, shared = (str(tmp_path / n) for n in ('review', 'lane', 'shared'))
+    for w in (review, lane, shared):
+        os.makedirs(w)
+    answers = iter(
+        [
+            {review: None, lane: 1.0, shared: None},  # the lead is still writing; a lane is done
+            {review: 2.0, lane: 1.0, shared: None},  # all done but one another chat still uses
+            {review: 2.0, lane: 1.0, shared: None},  # ... until the watch gives up: the janitor has it
+        ]
+    )
+    removed, slept = [], []
+
+    def run(cmd, input=None, env=None, **kw):
+        if cmd[0] == 'agent-t3':
+            assert cmd[1:] == ['worktrees-of', 'lead']
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(next(answers)), stderr='')
+        assert cmd == ['agent-worktree-remove'] and env['NOTICE_DAYS'] == '0'
+        paths = input.split()
+        removed.append(paths)
+        for w in paths:
+            os.rmdir(w)
+        return subprocess.CompletedProcess(cmd, 0, stdout=f'removed {len(paths)} worktrees: ...\n', stderr='')
+
+    monkeypatch.setattr(bridge.subprocess, 'run', run)
+    clock = iter([0, 60, 120, bridge.RELEASE_FOR_S + 1])
+    bridge._release('lead', sleep=slept.append, clock=lambda: next(clock))
+    assert removed == [[lane], [review]] and slept == [bridge.RELEASE_EVERY_S] * 2
+    assert os.path.exists(shared) and not bridge._releasing
+
+
+def test_release_gives_up_after_a_while_and_when_t3_cannot_say(monkeypatch):
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"/nowhere": null}', stderr='')
+
+    monkeypatch.setattr(bridge.subprocess, 'run', run)
+    clock = iter([0, bridge.RELEASE_FOR_S + 1])
+    bridge._release('lead', sleep=lambda s: None, clock=lambda: next(clock))
+    assert len(calls) == 1
+    monkeypatch.setattr(bridge.subprocess, 'run', lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, '', 'no db'))
+    bridge._release('lead', sleep=lambda s: pytest.fail('waited'), clock=lambda: 0)
+    assert bridge.handle('/api/t3/release', {}) == (500, {'ok': False, 'result': 'no thread'})

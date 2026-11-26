@@ -96,6 +96,26 @@ def test_worktrees_say_when_their_chats_finished_in_two_queries(tmp_path, querie
     assert len(queries) == 2
 
 
+def test_a_chats_worktrees_include_its_workers_and_wait_for_every_chat_on_them(tmp_path):
+    old = int(time.time()) - 3600
+    lead = {'lineage': {'parentThreadId': 'lead'}}
+    db = t3_db(
+        tmp_path / 's.db',
+        thread('lead', 'review', settledAt=stamp(old)),
+        thread('w1', 'review', settledAt=stamp(old), **lead),  # a worker in the lead's worktree
+        thread('w2', 'lane', **lead),
+        thread('w3', 'deep', parentThreadId='w2'),  # a worker's worker (older T3's field)
+        thread('other', 'lane', settledAt=None),  # another chat still in w2's worktree
+        thread('x', 'unrelated', settledAt=stamp(old)),
+        Run(run_id='r1', thread_id='w2', completed_at=stamp(old)),
+        Run(run_id='r2', thread_id='w3', completed_at=stamp(old)),
+        Run(run_id='r3', thread_id='other', status='running'),
+    )
+    with t3state.reading(db) as s:
+        assert t3state.chat_worktrees(s, 'lead') == {'/w/review': old, '/w/lane': None, '/w/deep': old}
+        assert t3state.chat_worktrees(s, 'nobody') == {}
+
+
 def test_the_command_answers_in_json_and_no_database_means_no_chats(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(t3state, 'DB', str(tmp_path / 'missing.sqlite'))
     for question, want in (('busy', False), ('inflight', []), ('worktrees', None)):
@@ -114,4 +134,6 @@ def test_an_unreadable_database_or_question_exits_non_zero(tmp_path, monkeypatch
     monkeypatch.setattr(t3state, 'DB', str(bad))
     assert t3state.main(['busy']) == 1
     assert t3state.main(['what']) == 2
+    assert t3state.main(['worktrees-of']) == 2  # needs the chat
+    assert t3state.main(['busy', 'x']) == 2
     assert capsys.readouterr().out == ''

@@ -83,12 +83,19 @@ def agents() -> list[cluster.Agent]:
     return [a for a in cluster.load().get('agents') or [] if a.get('id') and a.get('path')]
 
 
+JANITOR_UNIT = 'agentlab-janitor.service'
+JANITOR_AT = 90  # % full: the janitor runs now rather than at its next twice-daily time
+
+
 def _alert(state: store.State, key: str, label: str, use: Use) -> None:
     pct = 100 * use['used'] / use['size'] if use and use['size'] else 0
     alerted = state.setdefault('alerted', {})
     change = alert_change(pct, alerted.get(key, 0))
     if change and change[0] == 'up':
         store.event('alert', f'💾 {label} {pct:.0f}% full', f'{use["avail"] / 1e9:.0f} GB left', ok=False)
+        if change[1] >= JANITOR_AT and not host.unit_active(JANITOR_UNIT):
+            host.start_unit(JANITOR_UNIT)
+            store.event('cleanup', f'Cleanup started: {label} at {pct:.0f}%')
     elif change:
         store.event('alert', f'{label} back to {pct:.0f}%')
     if change:

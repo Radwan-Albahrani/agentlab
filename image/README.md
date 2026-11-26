@@ -29,9 +29,14 @@ Commands for the agents: `android-emulator` (start/stop/status/wipe) and `compan
 stop/start the companions whose code lives in `/workspace/companions/<name>`; start/stop/restart are requests the
 host's watcher answers through `~/.agentlab/requests/` and `~/.agentlab/results/`).
 
-`agent-t3 busy | inflight | worktrees` answers questions about this agent's T3 chats as JSON: whether a turn is in
-progress, the runs not yet finished (`[[run id, thread id]]`), and per worktree when its last chat finished (`null`
-while one is live). The host asks it through `docker exec -u agent` (agentctl before redeploying, shrinking a disk or
+`agent-t3 busy | inflight | worktrees | worktrees-of <thread>` answers questions about this agent's T3 chats as JSON:
+whether a turn is in progress, the runs not yet finished (`[[run id, thread id]]`), and per worktree when its last
+chat finished (`null` while one is live), for every worktree or only those of one chat and its workers.
+
+`agent-worktree-remove` removes the worktrees named on stdin, keeping unsaved work as `refs/agentlab/removed/<name>`
+first (after `NOTICE_DAYS` untouched; 0 = at once). The host's janitor runs it for idle worktrees; the companion
+bridge's `/api/t3/release` runs it for a finished PR review's chat and its workers, as soon as all of them have
+finished (watched for up to 6 hours, then the janitor has them). The host asks it through `docker exec -u agent` (agentctl before redeploying, shrinking a disk or
 resuming chats, the janitor before removing worktrees) instead of opening the database itself. It reads
 `~/.t3/userdata/statev2.sqlite` read-only through the typed models in `t3schema.py` (`t3state.py`, SQLAlchemy in the
 `/opt/agent-t3` venv, which `agent-updater` uses too). The host counts a stopped agent as idle and an agent that

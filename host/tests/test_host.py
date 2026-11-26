@@ -192,6 +192,22 @@ class Watch(unittest.TestCase):
         self.assertEqual(storage.alert_change(96, 80), ('up', 95))
         self.assertEqual(storage.alert_change(74, 80), ('down', 0))
 
+    def test_a_disk_past_90_percent_starts_the_janitor_now(self):
+        started = []
+        use = {'size': 100, 'used': 85, 'avail': 15}
+        os.makedirs(store.path(), exist_ok=True)
+        with (
+            mock.patch.object(storage.host, 'unit_active', return_value=False),
+            mock.patch.object(storage.host, 'start_unit', side_effect=lambda u: started.append(u) or (0, '')),
+        ):
+            state = {}
+            storage._alert(state, '/p/sara', 'sara disk', use)
+            self.assertEqual(started, [])  # 80 % only alerts
+            storage._alert(state, '/p/sara', 'sara disk', {**use, 'used': 92, 'avail': 8})
+            self.assertEqual(started, ['agentlab-janitor.service'])
+            storage._alert(state, '/p/sara', 'sara disk', {**use, 'used': 93, 'avail': 7})
+            self.assertEqual(len(started), 1)  # once per level
+
     def test_a_finished_cleanup_makes_the_breakdown_stale(self):
         scanned = time.time() - 60
         os.makedirs(store.path(), exist_ok=True)
@@ -514,7 +530,10 @@ class Janitor(unittest.TestCase):
         for wt in ('done', 'recent', 'live', 'orphan', 'orphan-new', 'delegated', 'delegated-now'):
             os.makedirs(f'{root}/workspace/worktrees/app/{wt}')
             open(f'{root}/workspace/worktrees/app/{wt}/.git', 'w').close()
-        os.utime(f'{root}/workspace/worktrees/app/orphan', (now - 5 * 86400, now - 5 * 86400))
+        os.makedirs(f'{root}/workspace/worktrees/review-6148')  # made by a chat's own `git worktree add`
+        open(f'{root}/workspace/worktrees/review-6148/.git', 'w').close()
+        for old in ('app/orphan', 'review-6148'):
+            os.utime(f'{root}/workspace/worktrees/{old}', (now - 5 * 86400, now - 5 * 86400))
         if callable(out):
             out = out(now)
         calls = []
@@ -542,6 +561,7 @@ class Janitor(unittest.TestCase):
                 '/workspace/worktrees/app/delegated',
                 '/workspace/worktrees/app/done',
                 '/workspace/worktrees/app/orphan',
+                '/workspace/worktrees/review-6148',
             ],
         )
 
@@ -733,6 +753,9 @@ class ScratchBuilds(unittest.TestCase):
         self.assertIn('removed 1 unused volumes older than a day', out)
 
 
+REMOVE_WORKTREES = os.path.join(os.path.dirname(__file__), '..', '..', 'image', 'agent-worktree-remove')
+
+
 class WorktreeNotice(unittest.TestCase):
     def git(self, *args, cwd=None):
         env = {
@@ -756,16 +779,17 @@ class WorktreeNotice(unittest.TestCase):
         self.git('commit', '-q', '--allow-empty', '-m', 'base')
         self.git('push', '-q', 'origin', 'HEAD')
         trees = {}
-        for name in ('clean', 'stale', 'fresh'):
+        for name in ('clean', 'stale', 'fresh', 'unborn'):
             trees[name] = f'{tmp}/wt/{name}'
             self.git('worktree', 'add', '-q', '-b', name, trees[name])
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/never-made', cwd=trees['unborn'])  # no commit checked out
         for name, when in (('stale', old), ('fresh', time.time())):
             path = f'{trees[name]}/notes.txt'
             with open(path, 'w') as f:
                 f.write(name)
             os.utime(path, (when, when))
         out = subprocess.run(
-            ['bash', '-c', janitor.REMOVE_WORKTREES],
+            ['bash', REMOVE_WORKTREES],
             input=''.join(f'{t}\n' for t in trees.values()),
             env={
                 **os.environ,
@@ -782,6 +806,8 @@ class WorktreeNotice(unittest.TestCase):
         ).stdout
         self.assertFalse(os.path.exists(trees['clean']))
         self.assertFalse(os.path.exists(trees['stale']))
+        self.assertFalse(os.path.exists(trees['unborn']))
+        self.assertIn('unborn (no commit)', out)
         self.assertTrue(os.path.exists(trees['fresh']))
         self.assertIn('fresh (1 uncommitted; removed ', out)
         ref = 'refs/agentlab/removed/' + trees['stale'].replace('/', '-')

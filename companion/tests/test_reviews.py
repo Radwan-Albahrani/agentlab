@@ -381,6 +381,13 @@ def test_a_clean_review_is_a_thumbs_up_and_nothing_else(gh, told):
     assert task['review']['summary'] == 'no findings · QA not needed'
 
 
+def test_a_finished_review_has_the_agent_remove_its_worktrees(gh, told, fresh_bot):
+    task = started(gh, told)
+    assert not fresh_bot.released  # still reviewing
+    finish(task, {'head': 'a' * 40, 'findings': [], 'qa': {'verdict': 'skipped'}})
+    assert fresh_bot.released == [task['thread']]
+
+
 def test_a_comment_github_cannot_place_moves_into_the_body(gh, told):
     gh.reject_inline = True
     task = started(gh, told)

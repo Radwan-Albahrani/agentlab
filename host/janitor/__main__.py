@@ -33,42 +33,6 @@ done
 [ "$n" -eq 0 ] || echo "removed $n unused volumes older than a day"
 true"""
 
-# Runs as the agent with worktree paths on stdin; unsaved work is kept as refs/agentlab/removed/<name> before removal.
-REMOVE_WORKTREES = r'''removed="" kept="" n=0 now=$(date +%s)
-while read -r wt; do
-  [ -e "${wt}/.git" ] || continue
-  name=${wt#/workspace/worktrees/}
-  main=$(dirname "$(git -C "${wt}" rev-parse --path-format=absolute --git-common-dir)")
-  changes=$(git -C "${wt}" status --porcelain | grep -v node_modules)
-  dirty=$(printf '%s' "${changes}" | grep -c .)
-  unpushed=$(git -C "${wt}" rev-list --count HEAD --not --remotes)
-  if [ "${dirty}" -eq 0 ] && [ "${unpushed}" -eq 0 ]; then
-    if [ -n "${DRY}" ] || git -C "${main}" worktree remove "${wt}" 2>/dev/null; then removed+=" ${name}"; n=$((n + 1));
-    else kept+=" ${name} (git refused)"; fi
-    continue
-  fi
-  why=""
-  [ "${dirty}" -gt 0 ] && why="${dirty} uncommitted"
-  [ "${unpushed}" -gt 0 ] && why="${why:+${why}, }${unpushed} commits on no remote"
-  last=$(git -C "${wt}" log -1 --format=%ct HEAD 2>/dev/null || echo 0)
-  while read -r f; do
-    [ -n "${f}" ] || continue
-    t=$(stat -c %Y "${wt}/${f}" 2>/dev/null || echo 0)
-    [ "${t}" -gt "${last}" ] && last=${t}
-  done <<< "$(printf '%s\n' "${changes}" | cut -c4- | sed 's/.* -> //')"
-  due=$((last + NOTICE_DAYS * 86400))
-  if [ "${now}" -lt "${due}" ]; then kept+=" ${name} (${why}; removed $(date -d "@${due}" +%b-%d) if untouched)"; continue; fi
-  ref="refs/agentlab/removed/${name//\//-}"
-  if [ -n "${DRY}" ]; then removed+=" ${name} (${why}, untouched ${NOTICE_DAYS} days)"; n=$((n + 1)); continue; fi
-  git -C "${wt}" add -A -- . ':!node_modules' 2>/dev/null
-  snap=$(git -C "${wt}" stash create 2>/dev/null)
-  if git -C "${main}" update-ref "${ref}" "${snap:-$(git -C "${wt}" rev-parse HEAD)}" \
-     && git -C "${main}" worktree remove --force "${wt}" 2>/dev/null; then
-    removed+=" ${name} (${why}, untouched ${NOTICE_DAYS} days; saved as ${ref})"; n=$((n + 1))
-  else kept+=" ${name} (git refused)"; fi
-done
-[ -n "${DRY}" ] || for r in /workspace/*/; do [ -d "${r}.git" ] && git -C "${r}" worktree prune; done
-echo "$([ -n "${DRY}" ] && echo "would remove" || echo removed) ${n} idle worktrees:${removed:- none}${kept:+; kept:${kept}}"'''
 
 # Every run. Not bun's cache: its files are hardlinked into every node_modules, so removing it frees nothing and the
 # next install would make full copies again.
@@ -123,19 +87,21 @@ def idle_worktrees(
         return []
     out = []
     base = f'{root}/workspace/worktrees'
+    found = []  # T3 makes worktrees/<repo>/<name>; a chat's own `git worktree add` may make worktrees/<name>
     for repo in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-        if not os.path.isdir(f'{base}/{repo}'):
-            continue
-        for name in sorted(os.listdir(f'{base}/{repo}')):
-            on_host = f'{base}/{repo}/{name}'
-            if not os.path.isfile(f'{on_host}/.git'):
-                continue
-            wt = f'/workspace/worktrees/{repo}/{name}'
-            if wt not in done_since:  # orphan: no chat knows it
-                if now - os.path.getmtime(on_host) > days * 86400:
-                    out.append(wt)
-            elif (since := done_since[wt]) is not None and now - since > hours * 3600:
+        if os.path.isfile(f'{base}/{repo}/.git'):
+            found.append(repo)
+        elif os.path.isdir(f'{base}/{repo}'):
+            found += [
+                f'{repo}/{n}' for n in sorted(os.listdir(f'{base}/{repo}')) if os.path.isfile(f'{base}/{repo}/{n}/.git')
+            ]
+    for rel in found:
+        wt = f'/workspace/worktrees/{rel}'
+        if wt not in done_since:  # orphan: no chat knows it
+            if now - os.path.getmtime(f'{base}/{rel}') > days * 86400:
                 out.append(wt)
+        elif (since := done_since[wt]) is not None and now - since > hours * 3600:
+            out.append(wt)
     return out
 
 
@@ -236,25 +202,9 @@ def tidy(data: str, agent: cluster.Agent) -> tuple[list[str], int]:
         age = ['-e', 'IMAGES_AGE=1h'] if full else []
         pruned = _run(['docker', 'exec', *age, '-u', 'agent', cid, 'sh', '-c', DOCKER_PRUNE])
         lines += [f'{agent_id}: {line}' for line in pruned.splitlines() if line.strip()]
-    trees = '\n'.join(idle_worktrees(cid, root)) + '\n'
-    out = _run(
-        [
-            'docker',
-            'exec',
-            '-i',
-            '-e',
-            f'DRY={"1" if DRY else ""}',
-            '-e',
-            f'NOTICE_DAYS={NOTICE_DAYS}',
-            '-u',
-            'agent',
-            cid,
-            'bash',
-            '-c',
-            REMOVE_WORKTREES,
-        ],
-        stdin=trees,
-    )
+    trees = '\n'.join(idle_worktrees(cid, root, hours=0 if full else SETTLED_HOURS)) + '\n'  # filling: done is enough
+    dry, notice = f'DRY={"1" if DRY else ""}', f'NOTICE_DAYS={NOTICE_DAYS}'
+    out = _run(['docker', 'exec', '-i', '-e', dry, '-e', notice, '-u', 'agent', cid, 'agent-worktree-remove'], trees)
     lines.append(f'{agent_id}: {out.splitlines()[-1] if out else "no worktrees"}')
     gone, freed = clear_builds(root)
     if gone:

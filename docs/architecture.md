@@ -359,7 +359,7 @@ Stacks (one Compose project / Coolify service each, so deploying one never resta
 | `agentlab-throttle.service` | admission control for heavy jobs across all agents |
 | `agentlab-watch.service` | always-on watcher: usage, containers, events, hub requests, agents' companion requests (within ~1 s) |
 | `agentlab-firewall.service` | loads `<data>/rendered/firewall/agentlab.nft` (agents can't open connections to shared services or the host) |
-| `agentlab-janitor.timer` | nightly: settled worktrees, package caches, agents' Docker leftovers |
+| `agentlab-janitor.timer` | twice a day, and at once when an agent's disk passes 90 %: finished worktrees, package caches, agents' Docker leftovers |
 | `agentlab-backup.timer` | nightly backups (`backups.time`), keeps `backups.keep_days`; only with `backups.enabled` |
 | `agentlab-update.timer` | nightly `agentctl update --scheduled` at `updates.time`; only with `updates.agentlab = "daily"` |
 | `cloudflared.service` | the tunnel (token in `<data>/secrets/cloudflare-tunnel.token`) |

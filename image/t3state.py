@@ -1,5 +1,6 @@
-"""What the host and the updater ask about this agent's T3 chats, read from its database with the typed models in
-t3schema.py. `agent-t3 busy | inflight | worktrees` prints the answer as JSON (the host asks through docker exec)."""
+"""What the host, the updater and the companion bridge ask about this agent's T3 chats, read from its database with the
+typed models in t3schema.py. `agent-t3 busy | inflight | worktrees | worktrees-of <thread>` prints the answer as JSON
+(the host asks through docker exec)."""
 
 import json
 import os
@@ -11,12 +12,13 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from t3schema import SETTLED, Run, Thread, in_progress, open_db
+from t3schema import SETTLED, Run, Thread, in_progress, open_db, parent_of
 
 DB = os.path.join(os.path.expanduser('~'), '.t3', 'userdata', 'statev2.sqlite')
-USAGE = 'usage: agent-t3 busy | inflight | worktrees'
+USAGE = 'usage: agent-t3 busy | inflight | worktrees | worktrees-of <thread id>'
 
-# JSON answers: busy -> bool; inflight -> [[run id, thread id]]; worktrees -> {path: finished at (epoch) | null}
+# JSON answers: busy -> bool; inflight -> [[run id, thread id]];
+# worktrees, worktrees-of -> {path: finished at (epoch) | null}
 Answer = bool | list[tuple[str, str]] | dict[str, float | None] | None
 
 
@@ -82,7 +84,20 @@ def worktrees(session: Session) -> dict[str, float | None]:
     return done_since
 
 
-def answer(question: str, path: str = DB) -> Answer:
+def chat_worktrees(session: Session, thread: str) -> dict[str, float | None]:
+    """worktrees(), only for the worktrees a chat and its workers (at any depth) use."""
+    chats, new = {thread}, {thread}
+    while new:
+        new = set(session.scalars(select(Thread.thread_id).where(parent_of(Thread).in_(new)))) - chats
+        chats |= new
+    paths = {
+        (p or {}).get('worktreePath')
+        for p in session.scalars(select(Thread.payload).where(Thread.thread_id.in_(chats)))
+    }
+    return {wt: since for wt, since in worktrees(session).items() if wt in paths}
+
+
+def answer(question: str, path: str = DB, thread: str = '') -> Answer:
     """The answer to one question; no database yet means no chats (worktrees: None, nothing known)."""
     if not os.path.exists(path):
         return False if question == 'busy' else [] if question == 'inflight' else None
@@ -91,15 +106,18 @@ def answer(question: str, path: str = DB) -> Answer:
             return busy(session)
         if question == 'inflight':
             return inflight(session)
+        if question == 'worktrees-of':
+            return chat_worktrees(session, thread)
         return worktrees(session)
 
 
 def main(argv: Sequence[str]) -> int:
-    if len(argv) != 1 or argv[0] not in ('busy', 'inflight', 'worktrees'):
+    question, *rest = argv or ['']
+    if question not in ('busy', 'inflight', 'worktrees', 'worktrees-of') or len(rest) != (question == 'worktrees-of'):
         print(USAGE, file=sys.stderr)
         return 2
     try:
-        got = answer(argv[0], DB)
+        got = answer(question, DB, *rest)
     except SQLAlchemyError as e:
         print(f'agent-t3: {e}', file=sys.stderr)
         return 1
